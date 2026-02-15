@@ -402,10 +402,15 @@ async def run(args) -> int:
     if args.execute and args.confirm_live != "YES":
         raise SystemExit('Refusing live mode: pass --confirm-live YES with --execute')
 
-    api_key = _env_str("SIMMER_API_KEY") or _user_env_from_registry("SIMMER_API_KEY")
+    api_key = _env_str("SIMMER_API_KEY")
+    api_key_source = "process-env" if api_key else ""
+    if not api_key:
+        api_key = _user_env_from_registry("SIMMER_API_KEY")
+        api_key_source = "HKCU\\Environment" if api_key else ""
     if not api_key:
         logger.info(f"[{iso_now()}] fatal: SIMMER_API_KEY is not set (User env). Get it from simmer.markets/dashboard -> SDK.")
         return 2
+    logger.info(f"[{iso_now()}] SIMMER_API_KEY: OK (source={api_key_source})")
 
     state = load_state(state_file)
 
@@ -617,7 +622,9 @@ async def run(args) -> int:
                 parts = []
                 for s in state.market_states.values():
                     parts.append(f"inv={s.inventory_yes_shares:.1f} pnl={s.realized_pnl:+.2f} {s.label[:32]}")
-                maybe_notify_discord(logger, f"SIMMER_PONG summary: pnl_today={today_pnl:+.2f} total={total:+.2f} | " + " | ".join(parts)[:1600])
+                msg = f"SIMMER_PONG summary: pnl_today={today_pnl:+.2f} total={total:+.2f} | " + " | ".join(parts)[:1600]
+                logger.info(f"[{iso_now()}] {msg}")
+                maybe_notify_discord(logger, msg)
 
             # Daily loss guard.
             if float(args.daily_loss_limit_usd or 0.0) > 0:
