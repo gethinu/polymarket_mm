@@ -51,6 +51,34 @@ This repo includes an installer script:
 
 In this environment it may require running PowerShell as Administrator (Task Scheduler permissions).
 
+### Fallback: Reuse An Existing Scheduled Task
+
+If you cannot create a new task (Access denied), you can temporarily repurpose an existing one.
+
+Example: swap `PolymarketClobMM` to run Simmer ping-pong:
+
+```powershell
+$task = 'PolymarketClobMM'
+$py = (Get-ScheduledTask -TaskName $task).Actions.Execute
+$newAction = New-ScheduledTaskAction -Execute $py -Argument '\"C:\Repos\polymarket_mm\scripts\simmer_pingpong_mm.py\"'
+Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+Set-ScheduledTask -TaskName $task -Action $newAction | Out-Null
+Start-ScheduledTask -TaskName $task
+Get-ScheduledTask -TaskName $task | Select TaskName,State
+```
+
+Revert back to the Polymarket MM script:
+
+```powershell
+$task = 'PolymarketClobMM'
+$py = (Get-ScheduledTask -TaskName $task).Actions.Execute
+$newAction = New-ScheduledTaskAction -Execute $py -Argument '\"C:\Repos\polymarket_mm\scripts\polymarket_clob_mm.py\"'
+Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+Set-ScheduledTask -TaskName $task -Action $newAction | Out-Null
+Start-ScheduledTask -TaskName $task
+Get-ScheduledTask -TaskName $task | Select TaskName,State
+```
+
 ## Recommended Settings (Start Small)
 
 ```powershell
