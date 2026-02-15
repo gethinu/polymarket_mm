@@ -63,6 +63,20 @@ def _env_str(name: str) -> str:
     return str(os.environ.get(name, "") or "").strip()
 
 
+def _user_env_from_registry(name: str) -> str:
+    """Best-effort read of HKCU\\Environment for cases where process env isn't populated (Task Scheduler quirks)."""
+    if not sys.platform.startswith("win"):
+        return ""
+    try:
+        import winreg  # type: ignore
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as k:
+            v, _t = winreg.QueryValueEx(k, name)
+            return str(v or "").strip()
+    except Exception:
+        return ""
+
+
 def _env_int(name: str) -> Optional[int]:
     v = _env_str(name)
     if not v:
@@ -121,7 +135,13 @@ def maybe_notify_discord(logger: "Logger", message: str) -> None:
     Optionally set:
       - CLOBBOT_DISCORD_MENTION (e.g. <@123...> or @here)
     """
-    url = _env_str("CLOBBOT_DISCORD_WEBHOOK_URL") or _env_str("DISCORD_WEBHOOK_URL")
+    # Webhook URLs are secrets. Never print them (including indirectly via exception strings).
+    url = (
+        _env_str("CLOBBOT_DISCORD_WEBHOOK_URL")
+        or _user_env_from_registry("CLOBBOT_DISCORD_WEBHOOK_URL")
+        or _env_str("DISCORD_WEBHOOK_URL")
+        or _user_env_from_registry("DISCORD_WEBHOOK_URL")
+    )
     if not url:
         return
 
@@ -132,7 +152,11 @@ def maybe_notify_discord(logger: "Logger", message: str) -> None:
         try:
             _post_json(url, {"content": content}, timeout_sec=5.0)
         except Exception as e:
-            logger.info(f"[{iso_now()}] notify(discord) failed: {e}")
+            code = getattr(e, "code", None)
+            if isinstance(code, int):
+                logger.info(f"[{iso_now()}] notify(discord) failed: HTTP {code}")
+            else:
+                logger.info(f"[{iso_now()}] notify(discord) failed: {type(e).__name__}")
 
     # Never block the trading loop on external webhook IO.
     threading.Thread(target=_send, daemon=True).start()

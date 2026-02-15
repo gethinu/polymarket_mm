@@ -63,8 +63,28 @@ def _post_json(url: str, payload: dict, timeout_sec: float = 7.0) -> None:
         return
 
 
+def _user_env_from_registry(name: str) -> str:
+    """Best-effort read of HKCU\\Environment for cases where process env isn't populated (Task Scheduler quirks)."""
+    if not sys.platform.startswith("win"):
+        return ""
+    try:
+        import winreg  # type: ignore
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as k:
+            v, _t = winreg.QueryValueEx(k, name)
+            return str(v or "").strip()
+    except Exception:
+        return ""
+
+
 def _discord_url() -> str:
-    return (os.getenv("CLOBBOT_DISCORD_WEBHOOK_URL") or os.getenv("DISCORD_WEBHOOK_URL") or "").strip()
+    return (
+        os.getenv("CLOBBOT_DISCORD_WEBHOOK_URL")
+        or _user_env_from_registry("CLOBBOT_DISCORD_WEBHOOK_URL")
+        or os.getenv("DISCORD_WEBHOOK_URL")
+        or _user_env_from_registry("DISCORD_WEBHOOK_URL")
+        or ""
+    ).strip()
 
 
 def _mean(xs: list[float]) -> float:
@@ -317,11 +337,18 @@ def main() -> int:
         content = report
         if len(content) > 1900:
             content = content[:1900] + "\n...(truncated)"
-        _post_json(url, {"content": f"```text\n{content}\n```"})
+        try:
+            _post_json(url, {"content": f"```text\n{content}\n```"})
+        except Exception as e:
+            code = getattr(e, "code", None)
+            if isinstance(code, int):
+                print(f"\nDiscord post failed: HTTP {code}", file=sys.stderr)
+            else:
+                print(f"\nDiscord post failed: {type(e).__name__}", file=sys.stderr)
+            return 4
 
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

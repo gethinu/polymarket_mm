@@ -118,7 +118,13 @@ def _post_json(url: str, payload: dict, timeout_sec: float = 7.0) -> None:
 
 
 def maybe_notify_discord(logger: "Logger", message: str) -> None:
-    url = _env_str("CLOBBOT_DISCORD_WEBHOOK_URL") or _env_str("DISCORD_WEBHOOK_URL")
+    # Webhook URLs are secrets. Never print them (including indirectly via exception strings).
+    url = (
+        _env_str("CLOBBOT_DISCORD_WEBHOOK_URL")
+        or _user_env_from_registry("CLOBBOT_DISCORD_WEBHOOK_URL")
+        or _env_str("DISCORD_WEBHOOK_URL")
+        or _user_env_from_registry("DISCORD_WEBHOOK_URL")
+    )
     if not url:
         return
     mention = _env_str("CLOBBOT_DISCORD_MENTION")
@@ -128,7 +134,11 @@ def maybe_notify_discord(logger: "Logger", message: str) -> None:
         try:
             _post_json(url, {"content": content}, timeout_sec=7.0)
         except Exception as e:
-            logger.info(f"[{iso_now()}] notify(discord) failed: {e}")
+            code = getattr(e, "code", None)
+            if isinstance(code, int):
+                logger.info(f"[{iso_now()}] notify(discord) failed: HTTP {code}")
+            else:
+                logger.info(f"[{iso_now()}] notify(discord) failed: {type(e).__name__}")
 
     threading.Thread(target=_send, daemon=True).start()
 
