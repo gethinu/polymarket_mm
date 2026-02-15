@@ -404,7 +404,7 @@ async def run(args) -> int:
 
     api_key = _env_str("SIMMER_API_KEY") or _user_env_from_registry("SIMMER_API_KEY")
     if not api_key:
-        logger.info("fatal: SIMMER_API_KEY is not set (User env). Get it from simmer.markets/dashboard -> SDK.")
+        logger.info(f"[{iso_now()}] fatal: SIMMER_API_KEY is not set (User env). Get it from simmer.markets/dashboard -> SDK.")
         return 2
 
     state = load_state(state_file)
@@ -437,7 +437,7 @@ async def run(args) -> int:
         )
 
     if not selected:
-        logger.info("fatal: no markets selected (adjust filters or set --market-ids).")
+        logger.info(f"[{iso_now()}] fatal: no markets selected (adjust filters or set --market-ids).")
         maybe_notify_discord(logger, "SIMMER_PONG HALT: no markets selected.")
         return 2
 
