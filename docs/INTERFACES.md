@@ -23,6 +23,9 @@ Simmer ($SIM) ping-pong demo:
   - `python scripts/simmer_pingpong_mm.py`
 - Live (demo trades on `venue=simmer`):
   - `python scripts/simmer_pingpong_mm.py --execute --confirm-live YES`
+- Observation report:
+  - `python scripts/report_simmer_observation.py --hours 24`
+  - `python scripts/report_simmer_observation.py --hours 24 --discord`
 - Status:
   - `python scripts/simmer_status.py`
 
