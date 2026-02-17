@@ -458,11 +458,6 @@ async def run(args) -> int:
     for mid, label in selected:
         logger.info(f"  - {mid} | {label[:120]}")
 
-    lines = []
-    for mid, label in selected[:6]:
-        lines.append(f"- {label[:80]} ({mid[:8]}...)")
-    maybe_notify_discord(logger, "SIMMER_PONG universe:\n" + "\n".join(lines))
-
     # Initialize market state.
     for mid, label in selected:
         if mid not in state.market_states:

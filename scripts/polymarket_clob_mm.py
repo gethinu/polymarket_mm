@@ -672,15 +672,6 @@ async def run(args) -> int:
     for tid, label in tokens:
         logger.info(f"  - {tid} | {label[:120]}")
 
-    # Send selected universe to Discord (single message).
-    token_lines = []
-    for tid, label in tokens[:6]:
-        token_lines.append(f"- {label[:80]} ({tid[:10]}...)")
-    maybe_notify_discord(
-        logger,
-        "CLOBMM universe:\n" + "\n".join(token_lines),
-    )
-
     # Initialize per-token state and metadata.
     for tid, label in tokens:
         if tid not in state.token_states:

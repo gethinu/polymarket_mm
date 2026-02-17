@@ -2330,6 +2330,13 @@ async def run(args) -> int:
         logger.info(f"Max subscribe tokens: {max_tokens}")
     if args.summary_every_sec:
         logger.info(f"Summary: every {float(args.summary_every_sec):.0f}s")
+    maybe_notify_discord(
+        logger,
+        (
+            f"CLOBBOT started ({'LIVE' if args.execute else 'observe'}) | "
+            f"universe={universe} min_edge={args.min_edge_cents:.2f}c strategy={args.strategy}"
+        ),
+    )
 
     exec_backend = "none"
     client = None
@@ -2527,15 +2534,6 @@ async def run(args) -> int:
                 basket.last_signature = sig
                 basket.last_alert_ts = now
 
-                if not args.execute:
-                    # Observe-only: still send a signal so the user doesn't need to tail logs.
-                    maybe_notify_discord(
-                        logger,
-                        (
-                            f"ALERT (observe) {format_candidate_brief(c)}"
-                        ),
-                    )
-
                 if args.execute:
                     if (now - basket.last_exec_ts) < args.exec_cooldown_sec:
                         logger.info("  live: skipped (event execution cooldown)")
@@ -2674,6 +2672,7 @@ async def run(args) -> int:
             )
         else:
             logger.info(f"[{iso_now()}] run summary: candidates={stats.candidates_total} | none")
+    maybe_notify_discord(logger, "CLOBBOT stopped")
     return 0
 
 
