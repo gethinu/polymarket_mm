@@ -1,0 +1,5 @@
+{
+  // Always start new integrated terminals at the workspace root.
+  "terminal.integrated.cwd": "${workspaceFolder}"
+}
+

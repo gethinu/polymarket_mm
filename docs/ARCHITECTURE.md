@@ -24,9 +24,12 @@ All bots can post to Discord via webhook:
 - `CLOBBOT_DISCORD_WEBHOOK_URL` (secret)
 - `CLOBBOT_DISCORD_MENTION` (optional)
 
+Notification policy:
+- Event-driven only: startup, stop, fills, loss-guard halt, error halt, and periodic summaries
+- No quote-by-quote spam
+
 ## Safety Model
 
 - Default mode is "observe-only" wherever possible.
 - Live modes require explicit confirmation flags.
 - Daily loss guards halt and do not auto-resume.
-
