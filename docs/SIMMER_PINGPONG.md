@@ -26,6 +26,7 @@ Goal: run a **demo** auto-trader using Simmer's virtual venue (`venue=simmer`), 
 - Optional Discord notifications:
   - `CLOBBOT_DISCORD_WEBHOOK_URL`
   - `CLOBBOT_DISCORD_MENTION`
+  - Event-driven only (startup / stop / fills / halt / periodic summary). No quote-level spam.
 
 ## Observe-Only (Default)
 

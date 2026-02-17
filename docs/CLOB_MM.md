@@ -49,6 +49,7 @@ The script posts to Discord if you set one of:
 Optional:
 
 - `CLOBBOT_DISCORD_MENTION` (e.g. `<@123...>` or `@here`)
+- Event-driven only (startup / stop / fills / halt / periodic summary). No quote-level spam.
 
 ## Configuration (Env Overrides)
 
