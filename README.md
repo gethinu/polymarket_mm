@@ -13,6 +13,7 @@ This repo is intentionally **separate** from `c:\\Repos\\quant_trading_system` (
   - `scripts/report_clob_observation.py` (arb observation report)
 - Simmer ($SIM) demo trading:
   - `scripts/simmer_pingpong_mm.py` (inventory ping-pong using Simmer SDK on `venue=simmer`)
+  - `scripts/report_simmer_observation.py` (24h observation report)
   - `scripts/simmer_status.py` (portfolio/positions quick check)
 
 ## Install
