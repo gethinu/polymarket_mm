@@ -11,6 +11,15 @@ Goal: run a **demo** auto-trader using Simmer's virtual venue (`venue=simmer`), 
   - buy when `p_yes <= buy_target` (if inventory below cap)
   - sell when `p_yes >= sell_target` (if inventory > 0)
 
+### Buy Sizing Guardrails
+
+- Simmer buy API uses USD `amount` (not direct `shares`).
+- The bot derives buy amount from `trade_shares * p_yes`, then applies min/max amount caps.
+- To prevent accidental oversize buys in very low-probability markets, the bot **skips** a buy when `min_trade_amount` would imply exceeding target/inventory shares.
+- Runtime buys are also blocked when `p_yes` is outside `[prob_min, prob_max]` even if the market was selected earlier.
+- While inventory is open, target bands stay anchored (no chase-recentering) to make exits less likely to be missed.
+- If Simmer returns a per-market trade rate-limit error, the bot backs off and retries after the reported wait window.
+
 ## Files
 
 - Script: `C:\\Repos\\polymarket_mm\\scripts\\simmer_pingpong_mm.py`

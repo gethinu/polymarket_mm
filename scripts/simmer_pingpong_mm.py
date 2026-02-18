@@ -23,13 +23,14 @@ import asyncio
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -332,7 +333,11 @@ def _update_inventory_sell(s: MarketState, shares_sold: float, price_yes: float)
     # Best-effort realized PnL vs avg_cost.
     pnl = (price_yes - s.avg_cost) * shares_sold
     s.realized_pnl += pnl
-    s.inventory_yes_shares = max(0.0, s.inventory_yes_shares - min(shares_sold, s.inventory_yes_shares))
+    remaining = max(0.0, s.inventory_yes_shares - min(shares_sold, s.inventory_yes_shares))
+    # Guard against tiny floating-point dust that can re-trigger sell logic.
+    if remaining < 1e-9:
+        remaining = 0.0
+    s.inventory_yes_shares = remaining
     if s.inventory_yes_shares <= 0:
         s.avg_cost = 0.0
 
@@ -348,6 +353,23 @@ def _extract_fill_metrics(result: dict) -> tuple[float, float]:
     for f in cost_fields:
         cost = max(cost, _as_float(result.get(f), 0.0))
     return shares, cost
+
+
+def _extract_rate_limit_wait_sec(err: str) -> float:
+    text = str(err or "")
+    m = re.search(r"per\s+(\d+)\s*s", text, flags=re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1))
+        except Exception:
+            return 0.0
+    m = re.search(r"wait\s+(\d+)\s*s", text, flags=re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1))
+        except Exception:
+            return 0.0
+    return 0.0
 
 
 def _compute_total_pnl(state: RuntimeState) -> float:
@@ -449,10 +471,10 @@ async def run(args) -> int:
     active_ids = [mid for mid, _ in selected]
     active_set = set(active_ids)
     state.active_market_ids = list(active_ids)
-    # Prune stale markets (avoid state bloat).
+    # Keep stale markets as inactive to preserve PnL continuity across universe changes.
     for mid in list(state.market_states.keys()):
         if mid not in active_set:
-            del state.market_states[mid]
+            state.market_states[mid].active = False
 
     logger.info("Selected markets:")
     for mid, label in selected:
@@ -471,6 +493,7 @@ async def run(args) -> int:
     start_ts = now_ts()
     last_summary = 0.0
     last_metrics = 0.0
+    trade_cooldowns: Dict[Tuple[str, str], float] = {}
 
     while True:
         if int(args.run_seconds or 0) > 0 and (now_ts() - start_ts) >= int(args.run_seconds):
@@ -511,19 +534,54 @@ async def run(args) -> int:
 
                 s.last_price_yes = float(p)
 
-                # Quote refresh: update targets around current price.
-                if (now - float(s.last_quote_ts or 0.0)) >= float(args.quote_refresh_sec or 30.0) or (s.buy_target <= 0 and s.sell_target <= 0):
+                # Quote refresh: avoid chase-recentering while carrying inventory.
+                flat_inventory = float(s.inventory_yes_shares or 0.0) <= 0.0
+                targets_unset = s.buy_target <= 0 and s.sell_target <= 0
+                if targets_unset or (flat_inventory and (now - float(s.last_quote_ts or 0.0)) >= float(args.quote_refresh_sec or 30.0)):
                     s.buy_target = max(0.001, float(p) - half)
                     s.sell_target = min(0.999, float(p) + half)
                     s.last_quote_ts = now
 
                 # Entry (buy).
-                allow_buy = s.inventory_yes_shares < float(args.max_inventory_shares or 0.0) if float(args.max_inventory_shares or 0.0) > 0 else True
-                if allow_buy and float(p) <= float(s.buy_target or 0.0):
+                max_inventory = float(args.max_inventory_shares or 0.0)
+                remaining_shares = (max_inventory - float(s.inventory_yes_shares or 0.0)) if max_inventory > 0 else float("inf")
+                allow_buy = remaining_shares > 0.0
+                buy_cd_until = float(trade_cooldowns.get((mid, "buy"), 0.0))
+                if allow_buy and now >= buy_cd_until and float(p) <= float(s.buy_target or 0.0):
+                    buy_filled = False
+                    # Runtime entry-band guard: avoid buying tail probabilities after a market shifts/resolves.
+                    if float(p) < float(args.prob_min) or float(p) > float(args.prob_max):
+                        logger.info(
+                            f"[{iso_now()}] BUY skipped market={mid}: p={p:.3f} outside entry band "
+                            f"[{float(args.prob_min):.3f}, {float(args.prob_max):.3f}]"
+                        )
+                        s.last_quote_ts = now
+                        continue
+
                     trade_shares = max(1.0, float(args.trade_shares or 1.0))
-                    # For buys, Simmer SDK supports "amount" (cost). Approximate by p * shares.
-                    amount = float(p) * trade_shares
-                    amount = max(float(args.min_trade_amount), min(float(args.max_trade_amount), amount))
+                    target_shares = min(trade_shares, max(0.0, remaining_shares)) if math.isfinite(remaining_shares) else trade_shares
+                    if target_shares <= 0:
+                        continue
+
+                    # Simmer buy API accepts USD amount. Convert target shares -> amount and enforce caps.
+                    min_amount = max(0.0, float(args.min_trade_amount or 0.0))
+                    max_amount = max(0.0, float(args.max_trade_amount or 0.0))
+                    amount = float(p) * target_shares
+                    if max_amount > 0:
+                        amount = min(amount, max_amount)
+
+                    # Never violate share/inventory intent due min-amount floors at tiny probabilities.
+                    if min_amount > 0 and amount + 1e-12 < min_amount:
+                        implied_shares = min_amount / float(p) if float(p) > 0 else float("inf")
+                        logger.info(
+                            f"[{iso_now()}] BUY skipped market={mid}: min_trade_amount={min_amount:.2f} "
+                            f"implies ~{implied_shares:.2f} shares at p={p:.3f} (target={target_shares:.2f}, "
+                            f"inv={s.inventory_yes_shares:.2f}, cap={max_inventory:.2f})"
+                        )
+                        s.last_quote_ts = now
+                        continue
+
+                    amount = max(min_amount, amount)
 
                     if args.execute:
                         result = sdk_request(
@@ -541,22 +599,41 @@ async def run(args) -> int:
                         if isinstance(result, dict) and result.get("success"):
                             shares, cost = _extract_fill_metrics(result)
                             if shares > 0 and cost > 0:
+                                fill_px = cost / shares
                                 _update_inventory_buy(s, shares_bought=shares, cost_spent=cost)
                                 s.buy_trades += 1
-                                logger.info(f"[{iso_now()}] FILL BUY {shares:.2f} shares (amt={amount:.2f}) @ p={p:.3f} | inv={s.inventory_yes_shares:.2f} avg={s.avg_cost:.3f}")
-                                maybe_notify_discord(logger, f"SIMMER_PONG FILL BUY {shares:.2f}@{p:.3f} inv={s.inventory_yes_shares:.2f} avg={s.avg_cost:.3f} | {s.label[:100]}")
+                                logger.info(
+                                    f"[{iso_now()}] FILL BUY {shares:.2f} shares (amt={amount:.2f}, fill={fill_px:.3f}, mark={p:.3f}) "
+                                    f"| inv={s.inventory_yes_shares:.2f} avg={s.avg_cost:.3f}"
+                                )
+                                maybe_notify_discord(
+                                    logger,
+                                    f"SIMMER_PONG FILL BUY {shares:.2f}@{fill_px:.3f} mark={p:.3f} "
+                                    f"inv={s.inventory_yes_shares:.2f} avg={s.avg_cost:.3f} | {s.label[:100]}",
+                                )
+                                anchor = fill_px if fill_px > 0 else float(p)
+                                s.buy_target = max(0.001, anchor - half)
+                                s.sell_target = min(0.999, anchor + half)
+                                s.last_quote_ts = now
+                                buy_filled = True
                         else:
                             err = (result or {}).get("error", "Unknown error") if isinstance(result, dict) else "Unknown error"
                             logger.info(f"[{iso_now()}] BUY failed market={mid}: {err}")
+                            wait_sec = _extract_rate_limit_wait_sec(str(err))
+                            if wait_sec > 0:
+                                trade_cooldowns[(mid, "buy")] = now + wait_sec + 1.0
                     else:
                         logger.info(f"[{iso_now()}] would BUY amt={amount:.2f} @ p={p:.3f} target={s.buy_target:.3f} | {s.label[:80]}")
 
-                    # After a touch/trade, re-center to avoid immediate re-trigger.
-                    s.last_quote_ts = 0.0
+                    # Cool down before next re-evaluation. Filled trades anchor targets explicitly above.
+                    if not buy_filled:
+                        s.last_quote_ts = now
 
                 # Exit (sell).
-                allow_sell = s.inventory_yes_shares > 0.0
-                if allow_sell and float(p) >= float(s.sell_target or 0.0):
+                allow_sell = s.inventory_yes_shares > 1e-9
+                sell_cd_until = float(trade_cooldowns.get((mid, "sell"), 0.0))
+                if allow_sell and now >= sell_cd_until and float(p) >= float(s.sell_target or 0.0):
+                    sell_filled = False
                     sell_shares = min(float(args.trade_shares or 1.0), float(s.inventory_yes_shares))
                     if sell_shares <= 0:
                         continue
@@ -576,18 +653,31 @@ async def run(args) -> int:
                         )
                         if isinstance(result, dict) and result.get("success"):
                             shares, _ = _extract_fill_metrics(result)
-                            filled = shares if shares > 0 else sell_shares
-                            _update_inventory_sell(s, shares_sold=filled, price_yes=float(p))
-                            s.sell_trades += 1
-                            logger.info(f"[{iso_now()}] FILL SELL {filled:.2f} shares @ p={p:.3f} | inv={s.inventory_yes_shares:.2f} pnl={s.realized_pnl:+.3f}")
-                            maybe_notify_discord(logger, f"SIMMER_PONG FILL SELL {filled:.2f}@{p:.3f} inv={s.inventory_yes_shares:.2f} pnl={s.realized_pnl:+.3f} | {s.label[:100]}")
+                            filled = min(float(shares), float(sell_shares)) if shares > 0 else 0.0
+                            if filled <= 0:
+                                logger.info(f"[{iso_now()}] SELL success but 0 fill market={mid}; retry in 30s")
+                                trade_cooldowns[(mid, "sell")] = now + 30.0
+                            else:
+                                _update_inventory_sell(s, shares_sold=filled, price_yes=float(p))
+                                s.sell_trades += 1
+                                logger.info(f"[{iso_now()}] FILL SELL {filled:.2f} shares @ p={p:.3f} | inv={s.inventory_yes_shares:.2f} pnl={s.realized_pnl:+.3f}")
+                                maybe_notify_discord(logger, f"SIMMER_PONG FILL SELL {filled:.2f}@{p:.3f} inv={s.inventory_yes_shares:.2f} pnl={s.realized_pnl:+.3f} | {s.label[:100]}")
+                                anchor = float(p)
+                                s.buy_target = max(0.001, anchor - half)
+                                s.sell_target = min(0.999, anchor + half)
+                                s.last_quote_ts = now
+                                sell_filled = True
                         else:
                             err = (result or {}).get("error", "Unknown error") if isinstance(result, dict) else "Unknown error"
                             logger.info(f"[{iso_now()}] SELL failed market={mid}: {err}")
+                            wait_sec = _extract_rate_limit_wait_sec(str(err))
+                            if wait_sec > 0:
+                                trade_cooldowns[(mid, "sell")] = now + wait_sec + 1.0
                     else:
                         logger.info(f"[{iso_now()}] would SELL {sell_shares:.2f} @ p={p:.3f} target={s.sell_target:.3f} | {s.label[:80]}")
 
-                    s.last_quote_ts = 0.0
+                    if not sell_filled:
+                        s.last_quote_ts = now
 
             # Metrics sampling.
             if float(args.metrics_sample_sec or 0.0) > 0 and (now_ts() - last_metrics) >= float(args.metrics_sample_sec):
@@ -616,6 +706,8 @@ async def run(args) -> int:
                 today_pnl = total - float(state.day_pnl_anchor or 0.0)
                 parts = []
                 for s in state.market_states.values():
+                    if not s.active:
+                        continue
                     parts.append(f"inv={s.inventory_yes_shares:.1f} pnl={s.realized_pnl:+.2f} {s.label[:32]}")
                 msg = f"SIMMER_PONG summary: pnl_today={today_pnl:+.2f} total={total:+.2f} | " + " | ".join(parts)[:1600]
                 logger.info(f"[{iso_now()}] {msg}")
@@ -668,9 +760,9 @@ def parse_args():
     p.add_argument("--prob-max", type=float, default=0.95, help="Filter: max probability")
 
     p.add_argument("--spread-cents", type=float, default=3.0, help="Total ping-pong band (cents)")
-    p.add_argument("--trade-shares", type=float, default=5.0, help="Target shares per leg (approx; buy uses amount=price*shares)")
+    p.add_argument("--trade-shares", type=float, default=5.0, help="Target shares per leg (buy amount is derived from this)")
     p.add_argument("--max-inventory-shares", type=float, default=10.0, help="Inventory cap (shares)")
-    p.add_argument("--min-trade-amount", type=float, default=1.0, help="Buy amount floor")
+    p.add_argument("--min-trade-amount", type=float, default=1.0, help="Buy amount floor (trade skipped if this implies oversize)")
     p.add_argument("--max-trade-amount", type=float, default=5.0, help="Buy amount cap")
 
     p.add_argument("--poll-sec", type=float, default=2.0, help="Polling interval")

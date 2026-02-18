@@ -15,6 +15,10 @@ This repo is intentionally **separate** from `c:\\Repos\\quant_trading_system` (
   - `scripts/simmer_pingpong_mm.py` (inventory ping-pong using Simmer SDK on `venue=simmer`)
   - `scripts/report_simmer_observation.py` (24h observation report)
   - `scripts/simmer_status.py` (portfolio/positions quick check)
+- Crypto MM observe simulator:
+  - `scripts/bitflyer_mm_observe.py` (bitFlyer public board based maker simulation, observe-only)
+  - `scripts/report_bitflyer_mm_observation.py` (window report from observe metrics/log/state)
+  - `scripts/optimize_bitflyer_mm_params.py` (grid search by replaying observe metrics)
 
 ## Install
 

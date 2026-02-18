@@ -257,6 +257,8 @@ def build_report(rows: list[MetricRow], state: dict, counts: dict, since: dt.dat
 
             s = ms.get(mid) if isinstance(ms.get(mid), dict) else {}
             inv = float(s.get("inventory_yes_shares") or 0.0)
+            if abs(inv) < 1e-9:
+                inv = 0.0
             avg = float(s.get("avg_cost") or 0.0)
             realized = float(s.get("realized_pnl") or 0.0)
             last_p = float(s.get("last_price_yes") or 0.0)

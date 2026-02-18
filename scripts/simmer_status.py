@@ -70,6 +70,18 @@ def format_usd(amount: float) -> str:
     return f"${amount:,.2f}"
 
 
+def _effective_position_count(positions: list[dict], eps: float = 0.005) -> int:
+    count = 0
+    for pos in positions or []:
+        if not isinstance(pos, dict):
+            continue
+        shares_yes = float(pos.get("shares_yes", 0) or 0)
+        shares_no = float(pos.get("shares_no", 0) or 0)
+        if abs(shares_yes) > eps or abs(shares_no) > eps:
+            count += 1
+    return count
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Simmer account status")
     ap.add_argument("--positions", action="store_true", help="Show detailed positions")
@@ -85,14 +97,15 @@ def main() -> int:
     settings = api_request(api_key, "/api/sdk/settings", fail_on_error=False)
     using_fallback = isinstance(portfolio, dict) and "_error" in portfolio
 
-    positions_result = None
+    positions_result = api_request(api_key, "/api/sdk/positions", fail_on_error=False)
+    positions = positions_result.get("positions", []) if isinstance(positions_result, dict) else []
+    effective_positions_count = _effective_position_count(positions)
+
     if using_fallback:
         agent = api_request(api_key, "/api/sdk/agents/me", fail_on_error=False)
-        positions_result = api_request(api_key, "/api/sdk/positions", fail_on_error=False)
-        positions = positions_result.get("positions", []) if isinstance(positions_result, dict) else []
         balance = float(agent.get("balance", 0) if isinstance(agent, dict) else 0)
         exposure = 0.0
-        positions_count = len(positions)
+        positions_count = effective_positions_count
         pnl_total = agent.get("total_pnl") if isinstance(agent, dict) else None
         account_label = "SIM Balance"
     else:
@@ -111,6 +124,10 @@ def main() -> int:
         ):
             balance = float(settings.get("polymarket_usdc_balance", balance))
 
+        # /portfolio can intermittently report zero positions while /positions still has non-zero holdings.
+        if positions_count <= 0 and effective_positions_count > 0:
+            positions_count = effective_positions_count
+
     _safe_print("=" * 50)
     _safe_print("ACCOUNT SUMMARY")
     _safe_print("=" * 50)
@@ -126,8 +143,6 @@ def main() -> int:
     if args.positions:
         _safe_print("\nOPEN POSITIONS")
         _safe_print("=" * 50)
-        result = positions_result if positions_result else api_request(api_key, "/api/sdk/positions", fail_on_error=False)
-        positions = result.get("positions", []) if isinstance(result, dict) else []
         if not positions:
             _safe_print("No open positions")
         else:
@@ -139,10 +154,10 @@ def main() -> int:
                 current_price = float(pos.get("current_price", 0) or 0)
                 cost_basis = float(pos.get("cost_basis", 0) or 0)
                 pnl = float(pos.get("pnl", 0) or 0)
-                if shares_yes > 0:
+                if shares_yes > 0.005:
                     side = "YES"
                     shares = shares_yes
-                elif shares_no > 0:
+                elif shares_no > 0.005:
                     side = "NO"
                     shares = shares_no
                 else:
@@ -157,4 +172,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

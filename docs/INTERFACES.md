@@ -29,6 +29,18 @@ Simmer ($SIM) ping-pong demo:
 - Status:
   - `python scripts/simmer_status.py`
 
+bitFlyer BTC/JPY MM simulator (observe-only):
+- Observe:
+  - `python scripts/bitflyer_mm_observe.py`
+- Tuning example:
+  - `python scripts/bitflyer_mm_observe.py --quote-half-spread-yen 350 --order-size-btc 0.001 --max-inventory-btc 0.01 --run-seconds 3600`
+- Observation report:
+  - `python scripts/report_bitflyer_mm_observation.py --hours 24`
+  - `python scripts/report_bitflyer_mm_observation.py --hours 24 --discord`
+- Parameter optimization (metrics replay):
+  - `python scripts/optimize_bitflyer_mm_params.py --hours 24`
+  - `python scripts/optimize_bitflyer_mm_params.py --hours 24 --half-spreads-yen 150,250,350,500 --order-sizes-btc 0.0005,0.001 --top-n 8`
+
 ## Secrets (Environment)
 
 - `SIMMER_API_KEY` (required for Simmer SDK)
