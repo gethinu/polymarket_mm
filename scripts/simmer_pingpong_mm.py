@@ -58,6 +58,15 @@ def _env_str(name: str) -> str:
     return str(os.environ.get(name, "") or "").strip()
 
 
+def _resolve_repo_path(raw_path: str) -> Path:
+    p = Path(str(raw_path or "").strip())
+    if not p:
+        return DEFAULT_REPO_ROOT
+    if p.is_absolute():
+        return p
+    return (DEFAULT_REPO_ROOT / p).resolve()
+
+
 def _user_env_from_registry(name: str) -> str:
     """Best-effort read of HKCU\\Environment for cases where process env isn't populated (Task Scheduler quirks)."""
     if not sys.platform.startswith("win"):
@@ -166,6 +175,38 @@ class Logger:
         self._append(msg)
 
 
+def acquire_instance_lock(lock_file: Path, logger: Logger):
+    """Best-effort single-instance lock per state file."""
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    fp = lock_file.open("a+", encoding="utf-8")
+    try:
+        if os.name == "nt":
+            import msvcrt  # type: ignore
+
+            fp.seek(0)
+            msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl  # type: ignore
+
+            fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            fp.close()
+        except Exception:
+            pass
+        logger.info(f"[{iso_now()}] skipped: another instance is already running (lock={lock_file})")
+        return None
+
+    try:
+        fp.seek(0)
+        fp.truncate(0)
+        fp.write(str(os.getpid()))
+        fp.flush()
+    except Exception:
+        pass
+    return fp
+
+
 def sdk_request(api_key: str, method: str, endpoint: str, data: dict | None = None, timeout_sec: float = 30.0) -> dict:
     url = f"{SIMMER_API_BASE}{endpoint}"
     headers = {
@@ -216,9 +257,64 @@ def _as_float(x, default: float = 0.0) -> float:
         return default
 
 
-def _choose_markets_auto(markets: list[dict], count: int, min_to_resolve_min: float, prob_min: float, prob_max: float) -> list[tuple[str, str]]:
+def _asset_bucket_from_label(label: str) -> str:
+    t = str(label or "").lower()
+    if "bitcoin" in t or " btc " in f" {t} ":
+        return "bitcoin"
+    if "ethereum" in t or " eth " in f" {t} ":
+        return "ethereum"
+    if "solana" in t or " sol " in f" {t} ":
+        return "solana"
+    if "dogecoin" in t or "doge" in t:
+        return "doge"
+    if "xrp" in t or "ripple" in t:
+        return "xrp"
+    return "other"
+
+
+def _parse_asset_quotas(raw: str) -> Dict[str, int]:
+    out: Dict[str, int] = {}
+    text = str(raw or "").strip()
+    if not text:
+        return out
+    for part in text.split(","):
+        item = str(part or "").strip()
+        if not item or ":" not in item:
+            continue
+        name, value = item.split(":", 1)
+        asset = str(name or "").strip().lower()
+        if not asset:
+            continue
+        try:
+            q = int(float(str(value or "").strip()))
+        except Exception:
+            continue
+        if q > 0:
+            out[asset] = q
+    return out
+
+
+def _str_to_bool(s: str) -> Optional[bool]:
+    v = str(s or "").strip().lower()
+    if not v:
+        return None
+    if v in {"1", "true", "yes", "y", "on"}:
+        return True
+    if v in {"0", "false", "no", "n", "off"}:
+        return False
+    return None
+
+
+def _choose_markets_auto(
+    markets: list[dict],
+    count: int,
+    min_to_resolve_min: float,
+    prob_min: float,
+    prob_max: float,
+    asset_quotas: Optional[Dict[str, int]] = None,
+) -> list[tuple[str, str]]:
     now = datetime.now().astimezone()
-    scored: list[tuple[float, str, str]] = []
+    scored: list[tuple[float, str, str, str]] = []
     for m in markets or []:
         mid = str(m.get("id") or "").strip()
         q = str(m.get("question") or "").strip()
@@ -246,12 +342,50 @@ def _choose_markets_auto(markets: list[dict], count: int, min_to_resolve_min: fl
         if div is not None:
             score += min(0.5, abs(_as_float(div, 0.0)))
 
-        scored.append((score, mid, q))
+        scored.append((score, mid, q, _asset_bucket_from_label(q)))
 
     scored.sort(key=lambda x: x[0], reverse=True)
+
+    max_count = max(0, int(count or 0))
+    if max_count <= 0:
+        return []
+
+    quotas = dict(asset_quotas or {})
+    if not quotas:
+        out: list[tuple[str, str]] = []
+        for _, mid, q, _asset in scored[:max_count]:
+            out.append((mid, q))
+        return out
+
     out: list[tuple[str, str]] = []
-    for _, mid, q in scored[: max(0, int(count or 0))]:
-        out.append((mid, q))
+    used: set[str] = set()
+    # First pass: satisfy asset minimum quotas.
+    for asset, quota in quotas.items():
+        need = min(max(0, int(quota or 0)), max_count - len(out))
+        if need <= 0:
+            continue
+        picked = 0
+        for _, mid, q, bucket in scored:
+            if mid in used or bucket != asset:
+                continue
+            out.append((mid, q))
+            used.add(mid)
+            picked += 1
+            if picked >= need:
+                break
+        if len(out) >= max_count:
+            break
+
+    # Second pass: fill remaining slots by global score.
+    if len(out) < max_count:
+        for _, mid, q, _bucket in scored:
+            if mid in used:
+                continue
+            out.append((mid, q))
+            used.add(mid)
+            if len(out) >= max_count:
+                break
+
     return out
 
 
@@ -268,6 +402,7 @@ class MarketState:
     last_quote_ts: float = 0.0
     buy_target: float = 0.0
     sell_target: float = 0.0
+    last_fill_ts: float = 0.0
 
     buy_trades: int = 0
     sell_trades: int = 0
@@ -394,8 +529,24 @@ def _append_metrics(metrics_file: str, payload: dict) -> None:
 
 
 def _apply_env_overrides(args):
+    # CLI args take precedence over env vars.
+    cli_flags: set[str] = set()
+    for tok in sys.argv[1:]:
+        t = str(tok or "").strip()
+        if not t.startswith("--"):
+            continue
+        key = t[2:].split("=", 1)[0].strip().lower()
+        if key:
+            cli_flags.add(key)
+
     prefix = "SIMMER_PONG_"
     for k, v in vars(args).items():
+        # Live execution must be explicitly enabled via CLI args.
+        if k in {"execute", "confirm_live"}:
+            continue
+        cli_name = k.replace("_", "-").lower()
+        if cli_name in cli_flags:
+            continue
         env_name = prefix + k.upper()
         if isinstance(v, bool):
             b = _env_bool(env_name)
@@ -417,12 +568,25 @@ def _apply_env_overrides(args):
 
 
 async def run(args) -> int:
-    log_file = args.log_file or DEFAULT_LOG_FILE
-    state_file = Path(args.state_file or DEFAULT_STATE_FILE)
+    log_file = str(_resolve_repo_path(args.log_file or DEFAULT_LOG_FILE))
+    state_file = _resolve_repo_path(args.state_file or DEFAULT_STATE_FILE)
+    args.metrics_file = str(_resolve_repo_path(args.metrics_file or DEFAULT_METRICS_FILE))
+    lock_file = Path(str(state_file) + ".lock")
     logger = Logger(log_file)
+    _instance_lock = acquire_instance_lock(lock_file, logger)
+    if _instance_lock is None:
+        return 0
+
+    env_exec = _str_to_bool(_env_str("SIMMER_PONG_EXECUTE"))
+    reg_exec = _str_to_bool(_user_env_from_registry("SIMMER_PONG_EXECUTE"))
+    if not args.execute and (env_exec is True or reg_exec is True):
+        logger.info(f"[{iso_now()}] note: SIMMER_PONG_EXECUTE=1 is ignored. Live mode requires CLI --execute --confirm-live YES.")
 
     if args.execute and args.confirm_live != "YES":
         raise SystemExit('Refusing live mode: pass --confirm-live YES with --execute')
+    paper_mode = bool(args.paper_trades and (not args.execute))
+    if args.paper_trades and args.execute:
+        logger.info(f"[{iso_now()}] note: --paper-trades is ignored in LIVE mode.")
 
     api_key = _env_str("SIMMER_API_KEY")
     api_key_source = "process-env" if api_key else ""
@@ -439,9 +603,15 @@ async def run(args) -> int:
     logger.info("Simmer Ping-Pong Bot")
     logger.info("=" * 56)
     logger.info(f"Mode: {'LIVE' if args.execute else 'observe-only'} | venue={args.venue}")
+    logger.info(f"Paper trades: {'on' if paper_mode else 'off'}")
     logger.info(f"Universe: {'manual' if args.market_ids else 'auto'} | markets_target={args.auto_select_count if not args.market_ids else len(args.market_ids.split(','))}")
     logger.info(f"Spread: {args.spread_cents:.2f}c | trade_shares={args.trade_shares:.2f} | max_inventory_shares={args.max_inventory_shares:.2f}")
     logger.info(f"Poll: {args.poll_sec:.2f}s | refresh: {args.quote_refresh_sec:.1f}s | metrics_every={args.metrics_sample_sec:.0f}s")
+    logger.info(
+        "Exit controls: "
+        f"max_hold_sec={float(args.max_hold_sec or 0.0):.0f} "
+        f"sell_decay={float(args.sell_target_decay_cents_per_min or 0.0):.3f}c/min"
+    )
     logger.info(f"Loss guard: daily_limit=${args.daily_loss_limit_usd:.2f} (0=disabled)")
     logger.info(f"Log: {log_file}")
     logger.info(f"State: {state_file}")
@@ -449,6 +619,10 @@ async def run(args) -> int:
     maybe_notify_discord(logger, f"SIMMER_PONG started ({'LIVE' if args.execute else 'observe'}) | spread={args.spread_cents:.2f}c shares={args.trade_shares:g} venue={args.venue}")
 
     # Select markets.
+    asset_quotas = _parse_asset_quotas(str(args.asset_quotas or ""))
+    if asset_quotas:
+        logger.info("Asset quotas: " + ", ".join([f"{k}:{v}" for k, v in asset_quotas.items()]))
+
     selected: list[tuple[str, str]] = []
     if args.market_ids:
         for mid in [x.strip() for x in args.market_ids.split(",") if x.strip()]:
@@ -461,6 +635,7 @@ async def run(args) -> int:
             min_to_resolve_min=float(args.min_time_to_resolve_min or 0.0),
             prob_min=float(args.prob_min),
             prob_max=float(args.prob_max),
+            asset_quotas=asset_quotas,
         )
 
     if not selected:
@@ -494,6 +669,8 @@ async def run(args) -> int:
     last_summary = 0.0
     last_metrics = 0.0
     trade_cooldowns: Dict[Tuple[str, str], float] = {}
+    signal_log_cooldowns: Dict[Tuple[str, str], float] = {}
+    signal_log_every_sec = max(15.0, min(120.0, float(args.quote_refresh_sec or 30.0)))
 
     while True:
         if int(args.run_seconds or 0) > 0 and (now_ts() - start_ts) >= int(args.run_seconds):
@@ -533,6 +710,9 @@ async def run(args) -> int:
                     continue
 
                 s.last_price_yes = float(p)
+                hold_sec = 0.0
+                if float(s.inventory_yes_shares or 0.0) > 1e-9 and float(s.last_fill_ts or 0.0) > 0:
+                    hold_sec = max(0.0, now - float(s.last_fill_ts or 0.0))
 
                 # Quote refresh: avoid chase-recentering while carrying inventory.
                 flat_inventory = float(s.inventory_yes_shares or 0.0) <= 0.0
@@ -547,14 +727,23 @@ async def run(args) -> int:
                 remaining_shares = (max_inventory - float(s.inventory_yes_shares or 0.0)) if max_inventory > 0 else float("inf")
                 allow_buy = remaining_shares > 0.0
                 buy_cd_until = float(trade_cooldowns.get((mid, "buy"), 0.0))
-                if allow_buy and now >= buy_cd_until and float(p) <= float(s.buy_target or 0.0):
+                seed_interval_sec = float(args.paper_seed_every_sec or 0.0)
+                seed_trigger = False
+                if paper_mode and seed_interval_sec > 0 and float(s.inventory_yes_shares or 0.0) <= 1e-9:
+                    last_fill = float(s.last_fill_ts or 0.0)
+                    seed_trigger = (last_fill <= 0.0) or ((now - last_fill) >= seed_interval_sec)
+                buy_signal = float(p) <= float(s.buy_target or 0.0)
+                if allow_buy and now >= buy_cd_until and (buy_signal or seed_trigger):
                     buy_filled = False
                     # Runtime entry-band guard: avoid buying tail probabilities after a market shifts/resolves.
-                    if float(p) < float(args.prob_min) or float(p) > float(args.prob_max):
-                        logger.info(
-                            f"[{iso_now()}] BUY skipped market={mid}: p={p:.3f} outside entry band "
-                            f"[{float(args.prob_min):.3f}, {float(args.prob_max):.3f}]"
-                        )
+                    if (not seed_trigger) and (float(p) < float(args.prob_min) or float(p) > float(args.prob_max)):
+                        key = (mid, "skip_entry_band")
+                        if now >= float(signal_log_cooldowns.get(key, 0.0)):
+                            logger.info(
+                                f"[{iso_now()}] BUY skipped market={mid}: p={p:.3f} outside entry band "
+                                f"[{float(args.prob_min):.3f}, {float(args.prob_max):.3f}]"
+                            )
+                            signal_log_cooldowns[key] = now + signal_log_every_sec
                         s.last_quote_ts = now
                         continue
 
@@ -573,11 +762,14 @@ async def run(args) -> int:
                     # Never violate share/inventory intent due min-amount floors at tiny probabilities.
                     if min_amount > 0 and amount + 1e-12 < min_amount:
                         implied_shares = min_amount / float(p) if float(p) > 0 else float("inf")
-                        logger.info(
-                            f"[{iso_now()}] BUY skipped market={mid}: min_trade_amount={min_amount:.2f} "
-                            f"implies ~{implied_shares:.2f} shares at p={p:.3f} (target={target_shares:.2f}, "
-                            f"inv={s.inventory_yes_shares:.2f}, cap={max_inventory:.2f})"
-                        )
+                        key = (mid, "skip_min_amount")
+                        if now >= float(signal_log_cooldowns.get(key, 0.0)):
+                            logger.info(
+                                f"[{iso_now()}] BUY skipped market={mid}: min_trade_amount={min_amount:.2f} "
+                                f"implies ~{implied_shares:.2f} shares at p={p:.3f} (target={target_shares:.2f}, "
+                                f"inv={s.inventory_yes_shares:.2f}, cap={max_inventory:.2f})"
+                            )
+                            signal_log_cooldowns[key] = now + signal_log_every_sec
                         s.last_quote_ts = now
                         continue
 
@@ -615,6 +807,7 @@ async def run(args) -> int:
                                 s.buy_target = max(0.001, anchor - half)
                                 s.sell_target = min(0.999, anchor + half)
                                 s.last_quote_ts = now
+                                s.last_fill_ts = now
                                 buy_filled = True
                         else:
                             err = (result or {}).get("error", "Unknown error") if isinstance(result, dict) else "Unknown error"
@@ -622,8 +815,29 @@ async def run(args) -> int:
                             wait_sec = _extract_rate_limit_wait_sec(str(err))
                             if wait_sec > 0:
                                 trade_cooldowns[(mid, "buy")] = now + wait_sec + 1.0
+                    elif paper_mode:
+                        fill_px = float(p)
+                        shares = (amount / fill_px) if fill_px > 0 else 0.0
+                        shares = min(shares, max(0.0, remaining_shares))
+                        cost = shares * fill_px
+                        if shares > 0 and cost > 0:
+                            _update_inventory_buy(s, shares_bought=shares, cost_spent=cost)
+                            s.buy_trades += 1
+                            logger.info(
+                                f"[{iso_now()}] FILL BUY {shares:.2f} shares (paper:{'seed' if seed_trigger else 'signal'}, amt={amount:.2f}, fill={fill_px:.3f}, mark={p:.3f}) "
+                                f"| inv={s.inventory_yes_shares:.2f} avg={s.avg_cost:.3f}"
+                            )
+                            anchor = fill_px
+                            s.buy_target = max(0.001, anchor - half)
+                            s.sell_target = min(0.999, anchor + half)
+                            s.last_quote_ts = now
+                            s.last_fill_ts = now
+                            buy_filled = True
                     else:
-                        logger.info(f"[{iso_now()}] would BUY amt={amount:.2f} @ p={p:.3f} target={s.buy_target:.3f} | {s.label[:80]}")
+                        key = (mid, "would_buy")
+                        if now >= float(signal_log_cooldowns.get(key, 0.0)):
+                            logger.info(f"[{iso_now()}] would BUY amt={amount:.2f} @ p={p:.3f} target={s.buy_target:.3f} | {s.label[:80]}")
+                            signal_log_cooldowns[key] = now + signal_log_every_sec
 
                     # Cool down before next re-evaluation. Filled trades anchor targets explicitly above.
                     if not buy_filled:
@@ -632,7 +846,21 @@ async def run(args) -> int:
                 # Exit (sell).
                 allow_sell = s.inventory_yes_shares > 1e-9
                 sell_cd_until = float(trade_cooldowns.get((mid, "sell"), 0.0))
-                if allow_sell and now >= sell_cd_until and float(p) >= float(s.sell_target or 0.0):
+                sell_target_eff = float(s.sell_target or 0.0)
+                if allow_sell and hold_sec > 0 and float(args.sell_target_decay_cents_per_min or 0.0) > 0:
+                    decay_prob = (float(args.sell_target_decay_cents_per_min) / 100.0) * (hold_sec / 60.0)
+                    sell_target_eff = max(0.001, sell_target_eff - decay_prob)
+                force_unwind = bool(float(args.max_hold_sec or 0.0) > 0 and hold_sec >= float(args.max_hold_sec or 0.0))
+                if force_unwind:
+                    key = (mid, "force_unwind")
+                    if now >= float(signal_log_cooldowns.get(key, 0.0)):
+                        logger.info(
+                            f"[{iso_now()}] FORCE SELL market={mid}: hold={hold_sec:.0f}s >= max_hold_sec={float(args.max_hold_sec):.0f}s "
+                            f"(p={p:.3f}, target={sell_target_eff:.3f})"
+                        )
+                        signal_log_cooldowns[key] = now + signal_log_every_sec
+
+                if allow_sell and now >= sell_cd_until and (force_unwind or float(p) >= sell_target_eff):
                     sell_filled = False
                     sell_shares = min(float(args.trade_shares or 1.0), float(s.inventory_yes_shares))
                     if sell_shares <= 0:
@@ -666,6 +894,7 @@ async def run(args) -> int:
                                 s.buy_target = max(0.001, anchor - half)
                                 s.sell_target = min(0.999, anchor + half)
                                 s.last_quote_ts = now
+                                s.last_fill_ts = now
                                 sell_filled = True
                         else:
                             err = (result or {}).get("error", "Unknown error") if isinstance(result, dict) else "Unknown error"
@@ -673,8 +902,29 @@ async def run(args) -> int:
                             wait_sec = _extract_rate_limit_wait_sec(str(err))
                             if wait_sec > 0:
                                 trade_cooldowns[(mid, "sell")] = now + wait_sec + 1.0
+                    elif paper_mode:
+                        filled = min(float(sell_shares), float(s.inventory_yes_shares))
+                        if filled > 0:
+                            _update_inventory_sell(s, shares_sold=filled, price_yes=float(p))
+                            s.sell_trades += 1
+                            logger.info(
+                                f"[{iso_now()}] FILL SELL {filled:.2f} shares @ p={p:.3f} (paper) "
+                                f"| inv={s.inventory_yes_shares:.2f} pnl={s.realized_pnl:+.3f}"
+                            )
+                            anchor = float(p)
+                            s.buy_target = max(0.001, anchor - half)
+                            s.sell_target = min(0.999, anchor + half)
+                            s.last_quote_ts = now
+                            s.last_fill_ts = now
+                            sell_filled = True
                     else:
-                        logger.info(f"[{iso_now()}] would SELL {sell_shares:.2f} @ p={p:.3f} target={s.sell_target:.3f} | {s.label[:80]}")
+                        key = (mid, "would_sell")
+                        if now >= float(signal_log_cooldowns.get(key, 0.0)):
+                            logger.info(
+                                f"[{iso_now()}] would SELL {sell_shares:.2f} @ p={p:.3f} "
+                                f"target={sell_target_eff:.3f} hold={hold_sec:.0f}s | {s.label[:80]}"
+                            )
+                            signal_log_cooldowns[key] = now + signal_log_every_sec
 
                     if not sell_filled:
                         s.last_quote_ts = now
@@ -755,6 +1005,11 @@ def parse_args():
     p.add_argument("--auto-select-count", type=int, default=3, help="Auto-select N markets from public list")
     p.add_argument("--public-limit", type=int, default=200, help="Public markets fetch limit")
     p.add_argument("--public-tag", default="crypto", help="Public markets filter tag (empty=all)")
+    p.add_argument(
+        "--asset-quotas",
+        default="",
+        help="Optional minimum asset quotas for auto-universe (e.g. bitcoin:2,ethereum:1,solana:1)",
+    )
     p.add_argument("--min-time-to-resolve-min", type=float, default=30.0, help="Filter: minimum minutes until resolves_at")
     p.add_argument("--prob-min", type=float, default=0.05, help="Filter: min probability")
     p.add_argument("--prob-max", type=float, default=0.95, help="Filter: max probability")
@@ -767,6 +1022,13 @@ def parse_args():
 
     p.add_argument("--poll-sec", type=float, default=2.0, help="Polling interval")
     p.add_argument("--quote-refresh-sec", type=float, default=30.0, help="Re-center targets every N sec")
+    p.add_argument("--max-hold-sec", type=float, default=0.0, help="Force inventory unwind after this holding time (0=disabled)")
+    p.add_argument(
+        "--sell-target-decay-cents-per-min",
+        type=float,
+        default=0.0,
+        help="Lower sell target over time while inventory is open (0=disabled)",
+    )
     p.add_argument("--summary-every-sec", type=float, default=3600.0, help="Discord summary interval (0=disabled)")
     p.add_argument("--metrics-file", default=DEFAULT_METRICS_FILE, help="Metrics JSONL path")
     p.add_argument("--metrics-sample-sec", type=float, default=60.0, help="Metrics sample interval (0=disabled)")
@@ -775,6 +1037,8 @@ def parse_args():
     p.add_argument("--max-consecutive-errors", type=int, default=7, help="Halt after N consecutive errors")
 
     p.add_argument("--run-seconds", type=int, default=0, help="Auto-exit after N seconds (0=run forever)")
+    p.add_argument("--paper-trades", action="store_true", help="Observe-only synthetic fills on signal (no API trades)")
+    p.add_argument("--paper-seed-every-sec", type=float, default=0.0, help="Observe-only: force a synthetic entry when flat every N sec (0=disabled)")
     p.add_argument("--execute", action="store_true", help="Enable live trades")
     p.add_argument("--confirm-live", default="", help='Must be "YES" when --execute is enabled')
 
