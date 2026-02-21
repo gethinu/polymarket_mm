@@ -1,0 +1,76 @@
+{
+  "name": "observe-suite-default",
+  "description": "Observe-only multi-bot profile for local monitoring.",
+  "log_file": "logs/bot-supervisor.log",
+  "state_file": "logs/bot_supervisor_state.json",
+  "jobs": [
+    {
+      "name": "btc5m_lag",
+      "enabled": true,
+      "command": [
+        "python",
+        "scripts/polymarket_btc5m_lag_observe.py",
+        "--poll-sec",
+        "1",
+        "--summary-every-sec",
+        "30",
+        "--metrics-sample-sec",
+        "5"
+      ],
+      "restart": "on-failure",
+      "restart_delay_sec": 4,
+      "max_restarts_per_hour": 30
+    },
+    {
+      "name": "btc5m_panic",
+      "enabled": true,
+      "command": [
+        "python",
+        "scripts/polymarket_btc5m_panic_observe.py",
+        "--poll-sec",
+        "1",
+        "--summary-every-sec",
+        "30",
+        "--metrics-sample-sec",
+        "5"
+      ],
+      "restart": "on-failure",
+      "restart_delay_sec": 4,
+      "max_restarts_per_hour": 30
+    },
+    {
+      "name": "event_driven",
+      "enabled": true,
+      "command": [
+        "python",
+        "scripts/polymarket_event_driven_observe.py",
+        "--poll-sec",
+        "120",
+        "--min-edge-cents",
+        "0.8",
+        "--top-n",
+        "20"
+      ],
+      "restart": "on-failure",
+      "restart_delay_sec": 8,
+      "max_restarts_per_hour": 20
+    },
+    {
+      "name": "clob_fade",
+      "enabled": false,
+      "command": [
+        "python",
+        "scripts/polymarket_clob_fade_observe.py",
+        "--max-tokens",
+        "12",
+        "--poll-sec",
+        "2",
+        "--summary-every-sec",
+        "60"
+      ],
+      "restart": "on-failure",
+      "restart_delay_sec": 8,
+      "max_restarts_per_hour": 20
+    }
+  ]
+}

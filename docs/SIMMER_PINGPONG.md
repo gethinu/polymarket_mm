@@ -19,12 +19,14 @@ Goal: run a **demo** auto-trader using Simmer's virtual venue (`venue=simmer`), 
 - Runtime buys are also blocked when `p_yes` is outside `[prob_min, prob_max]` even if the market was selected earlier.
 - While inventory is open, target bands stay anchored (no chase-recentering) to make exits less likely to be missed.
 - If Simmer returns a per-market trade rate-limit error, the bot backs off and retries after the reported wait window.
+- Single-instance guard: starting the bot with the same `--state-file` while another instance is active is rejected.
 
 ## Files
 
 - Script: `C:\\Repos\\polymarket_mm\\scripts\\simmer_pingpong_mm.py`
 - Log: `C:\\Repos\\polymarket_mm\\logs\\simmer-pingpong.log`
 - State: `C:\\Repos\\polymarket_mm\\logs\\simmer_pingpong_state.json`
+- Lock: `C:\\Repos\\polymarket_mm\\logs\\simmer_pingpong_state.json.lock`
 - Metrics: `C:\\Repos\\polymarket_mm\\logs\\simmer-pingpong-metrics.jsonl`
 
 ## Prereqs
@@ -45,6 +47,20 @@ python C:\Repos\polymarket_mm\scripts\simmer_pingpong_mm.py
 
 It will print/log `would BUY` / `would SELL` when thresholds are crossed.
 
+To evaluate inventory rotation without live execution, enable paper fills:
+
+```powershell
+python C:\Repos\polymarket_mm\scripts\simmer_pingpong_mm.py --paper-trades
+```
+
+This mode keeps observe-only safety while updating inventory/PnL state on synthetic fills.
+
+If signals are too sparse, you can inject periodic synthetic entries while flat:
+
+```powershell
+python C:\Repos\polymarket_mm\scripts\simmer_pingpong_mm.py --paper-trades --paper-seed-every-sec 120
+```
+
 ## Live (Demo Trades on $SIM)
 
 This will place trades on Simmer with virtual funds:
@@ -53,17 +69,24 @@ This will place trades on Simmer with virtual funds:
 python C:\Repos\polymarket_mm\scripts\simmer_pingpong_mm.py --execute --confirm-live YES
 ```
 
+Important:
+- `SIMMER_PONG_EXECUTE=1` environment variable alone does **not** enable live mode.
+- Live execution is accepted only when CLI explicitly includes `--execute --confirm-live YES`.
+- For non-live parameters, CLI flags override `SIMMER_PONG_*` environment variables.
+
 ## Autostart (Optional)
 
 This repo includes an installer script:
 
 `C:\Repos\polymarket_mm\scripts\install_simmer_pingpong_task.ps1`
 
-In this environment it may require running PowerShell as Administrator (Task Scheduler permissions).
+Default behavior:
+- Tries to create/update `SimmerPingPong`.
+- If new task creation is denied, automatically falls back to reusing existing `PolymarketClobMM` and points it to `simmer_pingpong_mm.py`.
 
 ### Fallback: Reuse An Existing Scheduled Task
 
-If you cannot create a new task (Access denied), you can temporarily repurpose an existing one.
+If you need to do it manually, you can temporarily repurpose an existing one.
 
 Example: swap `PolymarketClobMM` to run Simmer ping-pong:
 
@@ -102,6 +125,14 @@ Get-ScheduledTask -TaskName $task | Select TaskName,State
 [Environment]::SetEnvironmentVariable('SIMMER_PONG_POLL_SEC','2','User')
 [Environment]::SetEnvironmentVariable('SIMMER_PONG_QUOTE_REFRESH_SEC','30','User')
 [Environment]::SetEnvironmentVariable('SIMMER_PONG_DAILY_LOSS_LIMIT_USD','5','User')
+```
+
+Optional (inventory rotation + universe diversification):
+
+```powershell
+[Environment]::SetEnvironmentVariable('SIMMER_PONG_ASSET_QUOTAS','bitcoin:2,ethereum:1,solana:1','User')
+[Environment]::SetEnvironmentVariable('SIMMER_PONG_MAX_HOLD_SEC','1800','User')
+[Environment]::SetEnvironmentVariable('SIMMER_PONG_SELL_TARGET_DECAY_CENTS_PER_MIN','0.10','User')
 ```
 
 Enable 1h Discord summary:

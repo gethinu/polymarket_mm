@@ -233,11 +233,17 @@ def build_report(rows: list[MetricRow], state: dict, counts: dict, since: dt.dat
 
         buy_touches = sum(1 for r in rows if r.quote_bid_jpy > 0 and r.best_ask_jpy > 0 and r.best_ask_jpy <= r.quote_bid_jpy)
         sell_touches = sum(1 for r in rows if r.quote_ask_jpy > 0 and r.best_bid_jpy > 0 and r.best_bid_jpy >= r.quote_ask_jpy)
-        half_spreads = [
-            min(r.mid_jpy - r.quote_bid_jpy, r.quote_ask_jpy - r.mid_jpy)
-            for r in rows
-            if r.mid_jpy > 0 and r.quote_bid_jpy > 0 and r.quote_ask_jpy > 0 and r.quote_ask_jpy > r.quote_bid_jpy
-        ]
+        half_spreads: list[float] = []
+        quote_crossed = 0
+        for r in rows:
+            if r.mid_jpy <= 0 or r.quote_bid_jpy <= 0 or r.quote_ask_jpy <= 0 or r.quote_ask_jpy <= r.quote_bid_jpy:
+                continue
+            d_bid = r.mid_jpy - r.quote_bid_jpy
+            d_ask = r.quote_ask_jpy - r.mid_jpy
+            if d_bid < 0 or d_ask < 0:
+                quote_crossed += 1
+                continue
+            half_spreads.append(min(d_bid, d_ask))
 
         lines.append(f"Samples: {len(rows)} | products: {','.join(products) if products else '-'}")
         lines.append(f"Observed: {ts0:%Y-%m-%d %H:%M:%S} -> {ts1:%Y-%m-%d %H:%M:%S}")
@@ -249,7 +255,7 @@ def build_report(rows: list[MetricRow], state: dict, counts: dict, since: dt.dat
         lines.append(
             "Quote/touch: "
             f"half_spread(mean)={_mean(half_spreads):.1f} JPY "
-            f"buy_touch={buy_touches} sell_touch={sell_touches}"
+            f"buy_touch={buy_touches} sell_touch={sell_touches} quote_crossed={quote_crossed}"
         )
 
         latest = rows[-1]

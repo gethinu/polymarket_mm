@@ -267,9 +267,20 @@ def _load_plaintext_secret_file(path: str) -> str:
 
 def _apply_env_overrides(args):
     # Only override when CLI left defaults intact; this keeps manual testing predictable.
+    cli_tokens = list(sys.argv[1:])
+
+    def _flag_explicit(attr: str) -> bool:
+        flag = f"--{attr.replace('_', '-')}"
+        for tok in cli_tokens:
+            if tok == flag or tok.startswith(flag + "="):
+                return True
+        return False
+
     def maybe(attr: str, env: str, default, cast):
         raw = _env_str(env)
         if not raw:
+            return
+        if _flag_explicit(attr):
             return
         if getattr(args, attr) != default:
             return
@@ -298,6 +309,8 @@ def _apply_env_overrides(args):
     maybe("gamma_score_halflife_days", "CLOBBOT_GAMMA_SCORE_HALFLIFE_DAYS", 30.0, float)
     maybe("gamma_include_regex", "CLOBBOT_GAMMA_INCLUDE_REGEX", "", str)
     maybe("gamma_exclude_regex", "CLOBBOT_GAMMA_EXCLUDE_REGEX", "", str)
+    maybe("sports_live_prestart_min", "CLOBBOT_SPORTS_LIVE_PRESTART_MIN", 10.0, float)
+    maybe("sports_live_postend_min", "CLOBBOT_SPORTS_LIVE_POSTEND_MIN", 30.0, float)
 
     maybe("btc_5m_windows_back", "CLOBBOT_BTC_5M_WINDOWS_BACK", 1, lambda s: int(float(s)))
     maybe("btc_5m_windows_forward", "CLOBBOT_BTC_5M_WINDOWS_FORWARD", 1, lambda s: int(float(s)))
@@ -325,6 +338,7 @@ def _apply_env_overrides(args):
     maybe("max_subscribe_tokens", "CLOBBOT_MAX_SUBSCRIBE_TOKENS", 0, lambda s: int(float(s)))
     maybe("min_eval_interval_ms", "CLOBBOT_MIN_EVAL_INTERVAL_MS", 0, lambda s: int(float(s)))
     maybe("max_markets_per_event", "CLOBBOT_MAX_MARKETS_PER_EVENT", 0, lambda s: int(float(s)))
+    maybe("observe_notify_min_interval_sec", "CLOBBOT_OBSERVE_NOTIFY_MIN_INTERVAL_SEC", 30.0, float)
 
     maybe("log_file", "CLOBBOT_LOG_FILE", "", str)
     maybe("state_file", "CLOBBOT_STATE_FILE", "", str)
@@ -340,12 +354,20 @@ def _apply_env_overrides(args):
     if allow_best_only is True and not getattr(args, "allow_best_only", False):
         args.allow_best_only = True
 
+    sports_live_only = _env_bool("CLOBBOT_SPORTS_LIVE_ONLY")
+    if sports_live_only is True and not getattr(args, "sports_live_only", False):
+        args.sports_live_only = True
+
+    notify_observe_signals = _env_bool("CLOBBOT_NOTIFY_OBSERVE_SIGNALS")
+    if notify_observe_signals is True and not getattr(args, "notify_observe_signals", False):
+        args.notify_observe_signals = True
+
     # Normalize a few option-like env vars (avoid crashing on bad values).
     if args.exec_backend not in {"auto", "clob", "simmer"}:
         args.exec_backend = "auto"
     if getattr(args, "universe", "weather") not in {"weather", "gamma-active", "btc-5m"}:
         args.universe = "weather"
-    if args.strategy not in {"buckets", "yes-no", "both"}:
+    if args.strategy not in {"buckets", "yes-no", "event-pair", "both", "all"}:
         args.strategy = "both"
 
     return args
@@ -477,6 +499,62 @@ def parse_iso_or_epoch_to_ms(value) -> Optional[int]:
     return None
 
 
+def gamma_first_event(m: dict) -> dict:
+    events = m.get("events")
+    if isinstance(events, list):
+        for e in events:
+            if isinstance(e, dict):
+                return e
+    return {}
+
+
+def is_likely_sports_market(m: dict) -> bool:
+    if m.get("sportsMarketType"):
+        return True
+
+    e0 = gamma_first_event(m)
+    # Sports markets commonly expose these fields in Gamma event payloads.
+    sports_keys = ("gameId", "startTime", "finishedTimestamp", "score", "period", "elapsed")
+    if any(e0.get(k) not in (None, "") for k in sports_keys):
+        return True
+
+    slug = str(e0.get("slug") or m.get("slug") or "").lower()
+    if slug.startswith(("nba-", "nfl-", "mlb-", "nhl-", "cbb-", "ncaa-", "epl-", "khl-", "soccer-")):
+        return True
+
+    q = str(m.get("question") or e0.get("title") or "").lower()
+    return (" vs. " in q) or (" vs " in q)
+
+
+def is_in_sports_live_window(m: dict, now_ms: int, prestart_min: float, postend_min: float) -> bool:
+    if not is_likely_sports_market(m):
+        return False
+
+    e0 = gamma_first_event(m)
+    if bool(e0.get("live")):
+        return True
+    if bool(e0.get("ended")):
+        return False
+
+    pre_ms = int(max(0.0, float(prestart_min or 0.0)) * 60_000)
+    post_ms = int(max(0.0, float(postend_min or 0.0)) * 60_000)
+
+    start_ms = parse_iso_or_epoch_to_ms(
+        e0.get("startTime") or m.get("gameStartTime") or e0.get("startDate") or m.get("startDate")
+    )
+    finish_ms = parse_iso_or_epoch_to_ms(e0.get("finishedTimestamp") or m.get("closedTime"))
+    end_ms = parse_iso_or_epoch_to_ms(e0.get("endDate") or m.get("endDate"))
+
+    if start_ms is None:
+        return False
+
+    if finish_ms is not None:
+        return (start_ms - pre_ms) <= now_ms <= (finish_ms + post_ms)
+    if end_ms is not None:
+        return (start_ms - pre_ms) <= now_ms <= (end_ms + post_ms)
+    return (start_ms - pre_ms) <= now_ms <= (start_ms + post_ms)
+
+
 class Logger:
     def __init__(self, log_file: Optional[str] = None):
         self.log_file = Path(log_file) if log_file else None
@@ -490,7 +568,12 @@ class Logger:
             f.write(msg + "\n")
 
     def info(self, msg: str):
-        print(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            enc = (getattr(sys.stdout, "encoding", None) or "utf-8")
+            safe = str(msg).encode(enc, errors="replace").decode(enc, errors="replace")
+            print(safe)
         self._append(msg)
 
 
@@ -750,6 +833,9 @@ def build_gamma_yes_no_baskets(
     max_days_to_end: float = 0.0,
     include_re: Optional[re.Pattern] = None,
     exclude_re: Optional[re.Pattern] = None,
+    sports_live_only: bool = False,
+    sports_live_prestart_min: float = 10.0,
+    sports_live_postend_min: float = 30.0,
 ) -> List[EventBasket]:
     """
     Build a universe of generic YES+NO baskets from Polymarket Gamma active markets.
@@ -798,6 +884,13 @@ def build_gamma_yes_no_baskets(
             # For pure sum-to-one arbitrage we skip them by default.
             if m.get("feesEnabled") is True:
                 continue
+            if sports_live_only and not is_in_sports_live_window(
+                m,
+                now_ms=now_ms,
+                prestart_min=sports_live_prestart_min,
+                postend_min=sports_live_postend_min,
+            ):
+                continue
 
             liq = as_float(m.get("liquidityNum", m.get("liquidity", 0.0)), 0.0)
             vol24 = as_float(m.get("volume24hr", 0.0), 0.0)
@@ -832,7 +925,7 @@ def build_gamma_yes_no_baskets(
             seen.add(market_id)
 
             question = str(m.get("question") or f"market {market_id}").strip()
-            event_slug = str(((m.get("events") or [{}])[0] or {}).get("slug") or "").strip()
+            event_slug = str(gamma_first_event(m).get("slug") or "").strip()
             hay = f"{question}\n{event_slug}\n{market_id}"
             if include_re and not include_re.search(hay):
                 continue
@@ -866,7 +959,7 @@ def build_gamma_yes_no_baskets(
                     legs=legs,
                     strategy="yes-no",
                     market_id=market_id,
-                    event_id=str(((m.get("events") or [{}])[0] or {}).get("id") or "").strip(),
+                    event_id=str(gamma_first_event(m).get("id") or "").strip(),
                     event_slug=event_slug,
                     liquidity_num=float(liq),
                     volume24hr=float(vol24),
@@ -877,6 +970,250 @@ def build_gamma_yes_no_baskets(
                     price_tick_size=as_float(m.get("orderPriceMinTickSize"), 0.0),
                 )
             )
+
+    return baskets
+
+
+def build_gamma_event_pair_baskets(
+    gamma_limit: int,
+    gamma_offset: int,
+    min_liquidity: float,
+    min_volume24hr: float,
+    max_legs: int,
+    scan_max_markets: int = 5000,
+    max_days_to_end: float = 0.0,
+    include_re: Optional[re.Pattern] = None,
+    exclude_re: Optional[re.Pattern] = None,
+) -> List[EventBasket]:
+    """
+    Build binary event pair baskets from Gamma active markets.
+
+    Target structure:
+      - one negRisk event has exactly two categorical outcomes (non-numeric labels)
+      - each outcome is represented as its own YES/NO market
+
+    For each such event we build:
+      - YES+YES pair basket
+      - NO+NO pair basket
+    """
+    grouped: Dict[str, List[dict]] = {}
+
+    offset = max(0, int(gamma_offset or 0))
+    want = max(0, int(gamma_limit or 0))
+    scan_cap = max(0, int(scan_max_markets or 0))
+    scanned = 0
+    page_size = 500
+    now_ms = int(time.time() * 1000)
+    max_end_ms: Optional[int] = None
+    if float(max_days_to_end or 0.0) > 0:
+        max_end_ms = now_ms + int(float(max_days_to_end) * 86400000.0)
+
+    while (scan_cap <= 0 or scanned < scan_cap):
+        batch = page_size
+        if scan_cap > 0:
+            batch = min(batch, scan_cap - scanned)
+            if batch <= 0:
+                break
+
+        markets = fetch_active_markets(limit=batch, offset=offset)
+        if not markets:
+            break
+        offset += batch
+        scanned += len(markets)
+
+        for m in markets:
+            if m.get("enableOrderBook") is False:
+                continue
+            if m.get("feesEnabled") is True:
+                continue
+
+            # Keep this strategy constrained to negRisk grouped markets.
+            neg_risk_id = str(m.get("negRiskMarketID") or "").strip()
+            if not neg_risk_id:
+                continue
+
+            token_list = parse_json_string_field(m.get("clobTokenIds"))
+            outcomes_list = parse_json_string_field(m.get("outcomes"))
+            if len(token_list) != 2:
+                continue
+            if outcomes_list and len(outcomes_list) != 2:
+                continue
+
+            label = str(m.get("groupItemTitle") or "").strip()
+            if not label:
+                continue
+            label_lc = label.lower()
+            # Keep this strategy on categorical binary outcomes; reject numeric/comparator-style labels.
+            if re.search(r"\d", label_lc):
+                continue
+            if any(sym in label_lc for sym in ("<", ">", "%", "$", "°", "\"")):
+                continue
+            if re.search(r"\b(or more|or less|or below|or above|between|under|over|at least|at most)\b", label_lc):
+                continue
+            # Skip numeric bucket ladders (handled by the buckets strategy).
+            if parse_bucket_bounds(label) is not None:
+                continue
+
+            yes_tid, no_tid = extract_yes_no_token_ids(m)
+            if not yes_tid or not no_tid:
+                continue
+
+            grouped.setdefault(neg_risk_id, []).append(
+                {
+                    "market": m,
+                    "label": label,
+                    "yes_tid": str(yes_tid),
+                    "no_tid": str(no_tid),
+                }
+            )
+
+    baskets: List[EventBasket] = []
+    for neg_risk_id, rows in grouped.items():
+        if want > 0 and len(baskets) >= want:
+            break
+
+        by_label: Dict[str, dict] = {}
+        for row in rows:
+            label_key = str(row.get("label") or "").strip().lower()
+            if not label_key:
+                continue
+            cur = by_label.get(label_key)
+            if cur is None:
+                by_label[label_key] = row
+                continue
+            # Prefer the row with deeper liquidity when duplicate labels appear.
+            cur_liq = as_float((cur.get("market") or {}).get("liquidityNum", 0.0), 0.0)
+            new_liq = as_float((row.get("market") or {}).get("liquidityNum", 0.0), 0.0)
+            if new_liq > cur_liq:
+                by_label[label_key] = row
+
+        clean_rows = list(by_label.values())
+        # This strategy is specifically for binary outcome pairs.
+        if len(clean_rows) != 2:
+            continue
+        if max_legs > 0 and 2 > max_legs:
+            continue
+
+        clean_rows.sort(key=lambda x: str(x.get("label") or "").lower())
+
+        first_market = (clean_rows[0].get("market") or {}) if clean_rows else {}
+        e0 = ((first_market.get("events") or [{}])[0] or {}) if isinstance(first_market, dict) else {}
+        event_slug = str(e0.get("slug") or "").strip()
+        title = event_title_for_market(first_market) if isinstance(first_market, dict) else neg_risk_id
+        labels_joined = " | ".join(str(r.get("label") or "") for r in clean_rows)
+        hay = f"{title}\n{event_slug}\n{labels_joined}"
+        if include_re and not include_re.search(hay):
+            continue
+        if exclude_re and exclude_re.search(hay):
+            continue
+
+        # Apply market-level viability filters after verifying full binary structure,
+        # so we never accidentally treat a 3-way market as a 2-way pair.
+        legs_meet_filters = True
+        for row in clean_rows:
+            m = row.get("market") or {}
+            liq = as_float(m.get("liquidityNum", m.get("liquidity", 0.0)), 0.0)
+            vol24 = as_float(m.get("volume24hr", 0.0), 0.0)
+            if liq < float(min_liquidity or 0.0) or vol24 < float(min_volume24hr or 0.0):
+                legs_meet_filters = False
+                break
+            end_ms = parse_iso_or_epoch_to_ms(m.get("endDate") or m.get("endDateIso"))
+            # Require a valid non-stale end date for pair baskets.
+            if end_ms is None:
+                legs_meet_filters = False
+                break
+            if end_ms < (now_ms - 86400000):
+                legs_meet_filters = False
+                break
+            if max_end_ms is not None and end_ms is not None and end_ms > max_end_ms:
+                legs_meet_filters = False
+                break
+        if not legs_meet_filters:
+            continue
+
+        yes_legs: List[Leg] = []
+        no_legs: List[Leg] = []
+        liqs: List[float] = []
+        vols: List[float] = []
+        spreads: List[float] = []
+        changes: List[float] = []
+        min_sizes: List[float] = []
+        tick_sizes: List[float] = []
+        end_ms_vals: List[int] = []
+
+        for row in clean_rows:
+            m = row.get("market") or {}
+            market_id = str(m.get("id") or "").strip()
+            question = str(m.get("question") or "").strip()
+            label = str(row.get("label") or "").strip()
+            if not market_id or not label:
+                continue
+
+            yes_legs.append(
+                Leg(
+                    market_id=market_id,
+                    question=question,
+                    label=label,
+                    token_id=str(row.get("yes_tid") or ""),
+                    side="yes",
+                )
+            )
+            no_legs.append(
+                Leg(
+                    market_id=market_id,
+                    question=question,
+                    label=label,
+                    token_id=str(row.get("no_tid") or ""),
+                    side="no",
+                )
+            )
+
+            liqs.append(as_float(m.get("liquidityNum", m.get("liquidity", 0.0)), 0.0))
+            vols.append(as_float(m.get("volume24hr", 0.0), 0.0))
+            spreads.append(as_float(m.get("spread", 0.0), 0.0))
+            changes.append(as_float(m.get("oneDayPriceChange", 0.0), 0.0))
+            min_sizes.append(as_float(m.get("orderMinSize"), 0.0))
+            tick_sizes.append(as_float(m.get("orderPriceMinTickSize"), 0.0))
+            em = parse_iso_or_epoch_to_ms(m.get("endDate") or m.get("endDateIso"))
+            if em:
+                end_ms_vals.append(int(em))
+
+        if len(yes_legs) != 2 or len(no_legs) != 2:
+            continue
+
+        event_id = str(e0.get("id") or "").strip()
+        basket_end_ms = min(end_ms_vals) if end_ms_vals else None
+        common_kwargs = {
+            "market_id": neg_risk_id,
+            "event_id": event_id,
+            "event_slug": event_slug,
+            "liquidity_num": float(min(liqs) if liqs else 0.0),
+            "volume24hr": float(sum(vols) if vols else 0.0),
+            "spread": float(max(spreads) if spreads else 0.0),
+            "one_day_price_change": float(max((abs(x) for x in changes), default=0.0)),
+            "end_ms": basket_end_ms,
+            "min_order_size": float(max(min_sizes) if min_sizes else 0.0),
+            "price_tick_size": float(max(tick_sizes) if tick_sizes else 0.0),
+        }
+
+        baskets.append(
+            EventBasket(
+                key=f"ey:{neg_risk_id}",
+                title=f"{title} [YES+YES]",
+                legs=yes_legs,
+                strategy="event-yes",
+                **common_kwargs,
+            )
+        )
+        baskets.append(
+            EventBasket(
+                key=f"en:{neg_risk_id}",
+                title=f"{title} [NO+NO]",
+                legs=no_legs,
+                strategy="event-no",
+                **common_kwargs,
+            )
+        )
 
     return baskets
 
@@ -2130,6 +2467,9 @@ async def run(args) -> int:
         min_vol24 = getattr(args, "gamma_min_volume24hr", 0.0)
         scan_max = getattr(args, "gamma_scan_max_markets", 5000)
         max_days = float(getattr(args, "gamma_max_days_to_end", 0.0) or 0.0)
+        sports_live_only = bool(getattr(args, "sports_live_only", False))
+        sports_live_prestart_min = float(getattr(args, "sports_live_prestart_min", 10.0) or 10.0)
+        sports_live_postend_min = float(getattr(args, "sports_live_postend_min", 30.0) or 30.0)
         build_max_legs = int(args.max_legs) if int(args.max_legs or 0) > 0 else 12
 
         if args.strategy == "yes-no":
@@ -2142,6 +2482,9 @@ async def run(args) -> int:
                 max_days_to_end=max_days,
                 include_re=gamma_include_re,
                 exclude_re=gamma_exclude_re,
+                sports_live_only=sports_live_only,
+                sports_live_prestart_min=sports_live_prestart_min,
+                sports_live_postend_min=sports_live_postend_min,
             )
         elif args.strategy == "buckets":
             baskets = build_gamma_bucket_baskets(
@@ -2156,8 +2499,20 @@ async def run(args) -> int:
                 include_re=gamma_include_re,
                 exclude_re=gamma_exclude_re,
             )
+        elif args.strategy == "event-pair":
+            baskets = build_gamma_event_pair_baskets(
+                gamma_limit=gamma_limit,
+                gamma_offset=gamma_offset,
+                min_liquidity=min_liq,
+                min_volume24hr=min_vol24,
+                max_legs=build_max_legs,
+                scan_max_markets=scan_max,
+                max_days_to_end=max_days,
+                include_re=gamma_include_re,
+                exclude_re=gamma_exclude_re,
+            )
         else:
-            # "both": merge; selection later will cap subscriptions.
+            # "both"/"all": merge; selection later will cap subscriptions.
             baskets = []
             baskets.extend(
                 build_gamma_bucket_baskets(
@@ -2183,8 +2538,25 @@ async def run(args) -> int:
                     max_days_to_end=max_days,
                     include_re=gamma_include_re,
                     exclude_re=gamma_exclude_re,
+                    sports_live_only=sports_live_only,
+                    sports_live_prestart_min=sports_live_prestart_min,
+                    sports_live_postend_min=sports_live_postend_min,
                 )
             )
+            if args.strategy == "all":
+                baskets.extend(
+                    build_gamma_event_pair_baskets(
+                        gamma_limit=gamma_limit,
+                        gamma_offset=gamma_offset,
+                        min_liquidity=min_liq,
+                        min_volume24hr=min_vol24,
+                        max_legs=build_max_legs,
+                        scan_max_markets=scan_max,
+                        max_days_to_end=max_days,
+                        include_re=gamma_include_re,
+                        exclude_re=gamma_exclude_re,
+                    )
+                )
         if not baskets:
             logger.info("No valid Gamma baskets found.")
             maybe_notify_discord(logger, "CLOBBOT: gamma-active universe empty (no baskets). Check filters / Gamma API.")
@@ -2326,10 +2698,18 @@ async def run(args) -> int:
             f"score_halflife_days={getattr(args, 'gamma_score_halflife_days', 30.0)} "
             f"max_markets_per_event={getattr(args, 'max_markets_per_event', 0)}"
         )
+        if bool(getattr(args, "sports_live_only", False)):
+            logger.info(
+                "Sports live filter (gamma yes-no): "
+                f"enabled prestart={float(getattr(args, 'sports_live_prestart_min', 10.0)):.1f}m "
+                f"postend={float(getattr(args, 'sports_live_postend_min', 30.0)):.1f}m"
+            )
     if max_tokens > 0:
         logger.info(f"Max subscribe tokens: {max_tokens}")
     if args.summary_every_sec:
         logger.info(f"Summary: every {float(args.summary_every_sec):.0f}s")
+    if (not args.execute) and bool(getattr(args, "notify_observe_signals", False)):
+        logger.info("Observe signal Discord notify: enabled")
     maybe_notify_discord(
         logger,
         (
@@ -2424,6 +2804,10 @@ async def run(args) -> int:
     stats = RunStats()
     summary_every = max(0.0, float(getattr(args, "summary_every_sec", 0.0) or 0.0))
     min_eval_interval = max(0.0, float(getattr(args, "min_eval_interval_ms", 0) or 0)) / 1000.0
+    observe_notify_min_interval = max(
+        0.0, float(getattr(args, "observe_notify_min_interval_sec", 30.0) or 0.0)
+    )
+    last_observe_notify_ts = 0.0
 
     async with websockets.connect(args.ws_url, ping_interval=20, ping_timeout=20, max_size=2**24) as ws:
         await ws.send(json.dumps({"type": "market", "assets_ids": token_ids}))
@@ -2533,6 +2917,18 @@ async def run(args) -> int:
                 logger.info(format_candidate(c))
                 basket.last_signature = sig
                 basket.last_alert_ts = now
+
+                if not args.execute and bool(getattr(args, "notify_observe_signals", False)):
+                    if observe_notify_min_interval <= 0 or (now - last_observe_notify_ts) >= observe_notify_min_interval:
+                        maybe_notify_discord(
+                            logger,
+                            (
+                                f"OBSERVE SIGNAL {c.title} | "
+                                f"edge {c.edge_pct:.2%} (${c.net_edge:.4f}) | "
+                                f"cost ${c.basket_cost:.4f} | legs={len(c.leg_costs)}"
+                            ),
+                        )
+                        last_observe_notify_ts = now
 
                 if args.execute:
                     if (now - basket.last_exec_ts) < args.exec_cooldown_sec:
@@ -2724,6 +3120,23 @@ def parse_args():
         help="Exclude Gamma markets whose question/event slug matches this regex (case-insensitive)",
     )
     p.add_argument(
+        "--sports-live-only",
+        action="store_true",
+        help="For gamma yes-no baskets, only include likely sports markets that are live/near start-end window.",
+    )
+    p.add_argument(
+        "--sports-live-prestart-min",
+        type=float,
+        default=10.0,
+        help="With --sports-live-only: include markets this many minutes before scheduled start.",
+    )
+    p.add_argument(
+        "--sports-live-postend-min",
+        type=float,
+        default=30.0,
+        help="With --sports-live-only: keep markets this many minutes after finish/end timestamp.",
+    )
+    p.add_argument(
         "--btc-5m-windows-back",
         type=int,
         default=1,
@@ -2737,9 +3150,9 @@ def parse_args():
     )
     p.add_argument(
         "--strategy",
-        choices=("buckets", "yes-no", "both"),
+        choices=("buckets", "yes-no", "event-pair", "both", "all"),
         default="both",
-        help="Arbitrage strategy to monitor",
+        help="Arbitrage strategy to monitor (all=buckets+yes-no+event-pair, event-pair=YES+YES/NO+NO on binary negRisk events)",
     )
 
     p.add_argument("--shares", type=float, default=5.0, help="Shares per bucket leg")
@@ -2750,6 +3163,17 @@ def parse_args():
     p.add_argument("--alert-cooldown-sec", type=float, default=10.0, help="Suppress duplicate alerts")
     p.add_argument("--run-seconds", type=int, default=0, help="Auto-exit after N seconds (0=run forever)")
     p.add_argument("--summary-every-sec", type=float, default=0.0, help="Emit periodic summary line (0=disabled)")
+    p.add_argument(
+        "--notify-observe-signals",
+        action="store_true",
+        help="In observe-only mode, send Discord notification when threshold signal is detected.",
+    )
+    p.add_argument(
+        "--observe-notify-min-interval-sec",
+        type=float,
+        default=30.0,
+        help="With --notify-observe-signals: minimum seconds between observe signal notifications (global).",
+    )
     p.add_argument(
         "--max-subscribe-tokens",
         type=int,

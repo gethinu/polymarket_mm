@@ -1,0 +1,8 @@
+{
+  "updated_utc": "2026-02-21T06:50:00Z",
+  "note": "Fallback map for profile handles that are unstable/unavailable. Verify periodically.",
+  "handles": {
+    "c0o0oli0o0o0": "0xfedc381bf3fb5d20433bb4a0216b15dbbc5c6398"
+  }
+}
+

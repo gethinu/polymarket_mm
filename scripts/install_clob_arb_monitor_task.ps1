@@ -1,10 +1,48 @@
 param(
   [string]$TaskName = "PolymarketClobArbMonitor",
   [int]$IntervalMinutes = 2,
-  [int]$DurationDays = 3650
+  [int]$DurationDays = 3650,
+  [switch]$Background,
+  [switch]$NoBackground
 )
 
 $ErrorActionPreference = "Stop"
+
+function Start-BackgroundSelf {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [Parameter(Mandatory = $true)][hashtable]$BoundParameters
+  )
+
+  $argList = @(
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $ScriptPath,
+    "-Background"
+  )
+
+  foreach ($key in ($BoundParameters.Keys | Sort-Object)) {
+    if ($key -in @("Background", "NoBackground")) { continue }
+    $value = $BoundParameters[$key]
+    if ($value -is [System.Management.Automation.SwitchParameter]) {
+      if ($value.IsPresent) { $argList += "-$key" }
+      continue
+    }
+    if ($null -eq $value) { continue }
+    $argList += "-$key"
+    $argList += [string]$value
+  }
+
+  $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -WindowStyle Hidden -PassThru
+  Write-Host ("Started in background: pid={0} script={1}" -f $proc.Id, $ScriptPath)
+  exit 0
+}
+
+if (-not $Background -and -not $NoBackground) {
+  Start-BackgroundSelf -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
+}
 
 $baseDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $scriptPath = Join-Path $baseDir "scripts\\run_clob_arb_monitor.ps1"

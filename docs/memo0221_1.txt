@@ -1,0 +1,15 @@
+This file is deprecated (temporary memo format).
+
+Canonical output moved to:
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto/00_overview.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto/01_aleiah-on-x-how-to-make-money-on-the-wea.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto/02_blaze-on-x-the-most-profitable-strategy.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto/03_polymarket-com-c0o0oli0o0o0.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto/04_velon-on-x-in-1962-a-mathematician-beat.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto/05_roan-on-x-how-to-use-prediction-market-d.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links/00_overview.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links/01_aleiah_weather.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links/02_browomo_small-edge.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links/03_c0_profile_wallet.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links/04_velon_micro-moves.md
+- docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links/05_roh_dataset_kelly.md

@@ -9,10 +9,48 @@ param(
   [Parameter(Mandatory = $false)]
   [int]$RunSeconds = 115,
   [Parameter(Mandatory = $false)]
-  [switch]$RestartTask
+  [switch]$RestartTask,
+  [switch]$Background,
+  [switch]$NoBackground
 )
 
 $ErrorActionPreference = "Stop"
+
+function Start-BackgroundSelf {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptPath,
+    [Parameter(Mandatory = $true)][hashtable]$BoundParameters
+  )
+
+  $argList = @(
+    "-NoLogo",
+    "-NoProfile",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $ScriptPath,
+    "-Background"
+  )
+
+  foreach ($key in ($BoundParameters.Keys | Sort-Object)) {
+    if ($key -in @("Background", "NoBackground")) { continue }
+    $value = $BoundParameters[$key]
+    if ($value -is [System.Management.Automation.SwitchParameter]) {
+      if ($value.IsPresent) { $argList += "-$key" }
+      continue
+    }
+    if ($null -eq $value) { continue }
+    $argList += "-$key"
+    $argList += [string]$value
+  }
+
+  # setup_clob_backend.ps1 is interactive, so keep the spawned console visible.
+  $proc = Start-Process -FilePath "powershell.exe" -ArgumentList $argList -WindowStyle Normal -PassThru
+  Write-Host ("Started in background (interactive window): pid={0} script={1}" -f $proc.Id, $ScriptPath)
+  exit 0
+}
+
+if (-not $Background -and -not $NoBackground) {
+  Start-BackgroundSelf -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
+}
 
 function Read-SecretSecureString {
   param([string]$Prompt)

@@ -207,6 +207,59 @@ def _compute_total_pnl_from_state(state: dict) -> float:
     return float(total)
 
 
+def _compute_kpis(rows: list[MetricRow], counts: dict, since: dt.datetime, until: dt.datetime) -> dict:
+    window_sec = max(1.0, (until - since).total_seconds())
+    window_days = window_sec / 86400.0
+    fills_buy = int(counts.get("fill_buys") or 0)
+    fills_sell = int(counts.get("fill_sells") or 0)
+    turnover_per_day = float(fills_buy + fills_sell) / window_days
+
+    if not rows:
+        return {
+            "turnover_per_day": turnover_per_day,
+            "closed_cycles": 0,
+            "median_hold_sec": 0.0,
+            "expectancy_est": 0.0,
+        }
+
+    by_market: dict[str, list[MetricRow]] = {}
+    for r in rows:
+        by_market.setdefault(r.market_id, []).append(r)
+
+    hold_durations: list[float] = []
+    cycle_pnls_est: list[float] = []
+
+    for _mid, rs in by_market.items():
+        seq = sorted(rs, key=lambda x: x.ts_ms)
+        open_ts: Optional[dt.datetime] = None
+        open_price = 0.0
+        open_inv = 0.0
+        for r in seq:
+            inv = max(0.0, float(r.inv or 0.0))
+            if open_ts is None and inv > 1e-9:
+                open_ts = r.ts
+                open_price = float(r.p_yes or 0.0)
+                open_inv = inv
+                continue
+            if open_ts is not None and inv <= 1e-9:
+                dur = max(0.0, (r.ts - open_ts).total_seconds())
+                hold_durations.append(dur)
+                if open_price > 0 and float(r.p_yes or 0.0) > 0 and open_inv > 0:
+                    cycle_pnls_est.append((float(r.p_yes) - open_price) * open_inv)
+                open_ts = None
+                open_price = 0.0
+                open_inv = 0.0
+
+    median_hold_sec = float(statistics.median(hold_durations)) if hold_durations else 0.0
+    expectancy_est = float(statistics.mean(cycle_pnls_est)) if cycle_pnls_est else 0.0
+    return {
+        "turnover_per_day": turnover_per_day,
+        "closed_cycles": len(hold_durations),
+        "median_hold_sec": median_hold_sec,
+        "expectancy_est": expectancy_est,
+    }
+
+
 def build_report(rows: list[MetricRow], state: dict, counts: dict, since: dt.datetime, until: dt.datetime) -> str:
     lines: list[str] = []
     lines.append(f"Window: {since:%Y-%m-%d %H:%M:%S} -> {until:%Y-%m-%d %H:%M:%S} (local)")
@@ -289,6 +342,14 @@ def build_report(rows: list[MetricRow], state: dict, counts: dict, since: dt.dat
         f"fills_sell={int(counts.get('fill_sells') or 0)} "
         f"halts={int(counts.get('halts') or 0)} "
         f"errors={int(counts.get('errors') or 0)}"
+    )
+    kpis = _compute_kpis(rows, counts=counts, since=since, until=until)
+    lines.append(
+        "KPI(est): "
+        f"turnover/day={kpis['turnover_per_day']:.2f} "
+        f"closed_cycles={int(kpis['closed_cycles'])} "
+        f"median_hold={kpis['median_hold_sec']/60.0:.1f}m "
+        f"expectancy/cycle~{kpis['expectancy_est']:+.4f}"
     )
     return "\n".join(lines)
 

@@ -11,8 +11,9 @@ Simulation model (simple):
 - Quote around current mid:
   bid_quote = mid - quote_half_spread_yen
   ask_quote = mid + quote_half_spread_yen
-- A BUY fill is simulated if market ask <= bid_quote.
-- A SELL fill is simulated if market bid >= ask_quote.
+- Keep quotes live for quote_refresh_sec.
+- A BUY fill is simulated if market ask <= active_bid_quote.
+- A SELL fill is simulated if market bid >= active_ask_quote.
 
 This is a rough approximation for strategy tuning only.
 It does not represent real fill probability, queue position, or slippage.
@@ -150,6 +151,7 @@ class RuntimeState:
     last_mid_jpy: float = 0.0
     quote_bid_jpy: float = 0.0
     quote_ask_jpy: float = 0.0
+    quote_set_ts: float = 0.0
     total_buy_fills: int = 0
     total_sell_fills: int = 0
     day_key: str = ""
@@ -173,6 +175,7 @@ def _load_state(path: Path) -> RuntimeState:
             last_mid_jpy=float(raw.get("last_mid_jpy") or 0.0),
             quote_bid_jpy=float(raw.get("quote_bid_jpy") or 0.0),
             quote_ask_jpy=float(raw.get("quote_ask_jpy") or 0.0),
+            quote_set_ts=float(raw.get("quote_set_ts") or 0.0),
             total_buy_fills=int(raw.get("total_buy_fills") or 0),
             total_sell_fills=int(raw.get("total_sell_fills") or 0),
             day_key=str(raw.get("day_key") or local_day_key()),
@@ -271,6 +274,13 @@ def parse_args():
     p.add_argument("--poll-sec", type=float, default=2.0, help="Board polling interval seconds")
     p.add_argument("--tick-size-jpy", type=float, default=1.0, help="Quote price tick in JPY")
     p.add_argument("--quote-half-spread-yen", type=float, default=250.0, help="Half spread from mid for quoted bid/ask")
+    p.add_argument("--quote-refresh-sec", type=float, default=30.0, help="Hold quote for N sec before recentering")
+    p.add_argument(
+        "--unwind-half-spread-yen",
+        type=float,
+        default=0.0,
+        help="When inventory > max, temporarily use this smaller half spread to unwind (0=disabled)",
+    )
     p.add_argument("--order-size-btc", type=float, default=0.001, help="Simulated order size (BTC)")
     p.add_argument("--max-inventory-btc", type=float, default=0.01, help="Max simulated inventory (BTC)")
     p.add_argument("--maker-fee-bps", type=float, default=0.0, help="Assumed maker fee in bps")
@@ -298,7 +308,8 @@ def main() -> int:
     logger.info(f"Market: {args.product_code}")
     logger.info(
         f"Quote: half_spread={args.quote_half_spread_yen:.1f} JPY | size={args.order_size_btc:.6f} BTC "
-        f"| max_inventory={args.max_inventory_btc:.6f} BTC | maker_fee={args.maker_fee_bps:.4f} bps"
+        f"| max_inventory={args.max_inventory_btc:.6f} BTC | maker_fee={args.maker_fee_bps:.4f} bps "
+        f"| refresh={args.quote_refresh_sec:.1f}s | unwind_half={args.unwind_half_spread_yen:.1f}"
     )
     logger.info(
         f"Poll: {args.poll_sec:.2f}s | summary_every={args.summary_every_sec:.1f}s | "
@@ -324,34 +335,56 @@ def main() -> int:
             if not (math.isfinite(best_bid) and math.isfinite(best_ask) and best_bid > 0 and best_ask > 0 and best_ask >= best_bid):
                 raise RuntimeError("invalid top-of-book")
 
+            ts_now = now_ts()
             state.consecutive_errors = 0
             mid = (best_bid + best_ask) / 2.0
             spread = max(0.0, best_ask - best_bid)
 
-            half = max(float(args.quote_half_spread_yen), float(args.tick_size_jpy))
-            bid_quote = _q_down(mid - half, float(args.tick_size_jpy))
-            ask_quote = _q_up(mid + half, float(args.tick_size_jpy))
-            if ask_quote <= bid_quote:
-                ask_quote = bid_quote + max(float(args.tick_size_jpy), 1.0)
-
             state.last_mid_jpy = mid
-            state.quote_bid_jpy = bid_quote
-            state.quote_ask_jpy = ask_quote
+            bid_quote = float(state.quote_bid_jpy or 0.0)
+            ask_quote = float(state.quote_ask_jpy or 0.0)
+            quote_age_sec = (ts_now - float(state.quote_set_ts or 0.0)) if state.quote_set_ts > 0 else 0.0
 
             if not state.halted:
-                if best_ask <= bid_quote and state.inventory_btc + args.order_size_btc <= args.max_inventory_btc + 1e-12:
+                if bid_quote > 0 and best_ask <= bid_quote and state.inventory_btc + args.order_size_btc <= args.max_inventory_btc + 1e-12:
                     _buy_fill(state, bid_quote, args.order_size_btc, args.maker_fee_bps)
                     logger.info(
                         f"[{iso_now()}] fill BUY  px={bid_quote:.0f} size={args.order_size_btc:.6f} "
                         f"inv={state.inventory_btc:.6f} avg={state.avg_entry_jpy:.1f}"
                     )
 
-                if best_bid >= ask_quote and state.inventory_btc >= args.order_size_btc - 1e-12:
-                    _sell_fill(state, ask_quote, args.order_size_btc, args.maker_fee_bps)
+                sell_size = min(float(args.order_size_btc), float(state.inventory_btc))
+                if ask_quote > 0 and best_bid >= ask_quote and sell_size > 1e-12:
+                    _sell_fill(state, ask_quote, sell_size, args.maker_fee_bps)
                     logger.info(
-                        f"[{iso_now()}] fill SELL px={ask_quote:.0f} size={args.order_size_btc:.6f} "
+                        f"[{iso_now()}] fill SELL px={ask_quote:.0f} size={sell_size:.6f} "
                         f"inv={state.inventory_btc:.6f} realized={state.realized_pnl_jpy:+.1f}"
                     )
+
+            need_refresh = (
+                bid_quote <= 0
+                or ask_quote <= 0
+                or state.quote_set_ts <= 0
+                or quote_age_sec >= float(args.quote_refresh_sec)
+            )
+            if need_refresh:
+                half = max(float(args.quote_half_spread_yen), float(args.tick_size_jpy))
+                if (
+                    float(args.unwind_half_spread_yen) > 0
+                    and float(state.inventory_btc) > (float(args.max_inventory_btc) + 1e-12)
+                ):
+                    half = max(float(args.unwind_half_spread_yen), float(args.tick_size_jpy))
+                bid_quote = _q_down(mid - half, float(args.tick_size_jpy))
+                ask_quote = _q_up(mid + half, float(args.tick_size_jpy))
+                if ask_quote <= bid_quote:
+                    ask_quote = bid_quote + max(float(args.tick_size_jpy), 1.0)
+                state.quote_bid_jpy = bid_quote
+                state.quote_ask_jpy = ask_quote
+                state.quote_set_ts = ts_now
+                quote_age_sec = 0.0
+            else:
+                state.quote_bid_jpy = bid_quote
+                state.quote_ask_jpy = ask_quote
 
             day_pnl = _day_pnl_jpy(state)
             total_pnl = _total_pnl_jpy(state)
@@ -361,12 +394,11 @@ def main() -> int:
                 state.halt_reason = f"Daily loss limit reached ({day_pnl:+.1f} JPY <= -{args.daily_loss_limit_jpy:.1f} JPY)"
                 logger.info(f"[{iso_now()}] HALT: {state.halt_reason}")
 
-            ts_now = now_ts()
             if args.summary_every_sec > 0 and (ts_now - last_summary_ts) >= args.summary_every_sec:
                 logger.info(
                     f"[{iso_now()}] summary "
                     f"bid/ask={best_bid:.0f}/{best_ask:.0f} mid={mid:.1f} spread={spread:.1f} "
-                    f"q={bid_quote:.0f}/{ask_quote:.0f} inv={state.inventory_btc:.6f} "
+                    f"q={bid_quote:.0f}/{ask_quote:.0f} q_age={quote_age_sec:.1f}s inv={state.inventory_btc:.6f} "
                     f"realized={state.realized_pnl_jpy:+.1f} total={total_pnl:+.1f} day={day_pnl:+.1f} "
                     f"fills={state.total_buy_fills + state.total_sell_fills} halted={state.halted}"
                 )
@@ -385,6 +417,8 @@ def main() -> int:
                         "spread_jpy": spread,
                         "quote_bid_jpy": bid_quote,
                         "quote_ask_jpy": ask_quote,
+                        "quote_age_sec": quote_age_sec,
+                        "quote_refresh_sec": float(args.quote_refresh_sec),
                         "inventory_btc": state.inventory_btc,
                         "avg_entry_jpy": state.avg_entry_jpy,
                         "realized_pnl_jpy": state.realized_pnl_jpy,
