@@ -214,6 +214,30 @@ function Run-Python([string[]]$CmdArgs) {
   }
 }
 
+function Run-PythonSafe([string[]]$CmdArgs, [string]$Label) {
+  try {
+    & $PythonExe @CmdArgs
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+      Log "$Label failed: exit=$code"
+      return $false
+    }
+    return $true
+  } catch {
+    Log "$Label failed: exception=$($_.Exception.GetType().Name)"
+    return $false
+  }
+}
+
+function Remove-FileSafe([string]$Path) {
+  try {
+    if (Test-Path $Path) {
+      Remove-Item -Path $Path -Force
+    }
+  } catch {
+  }
+}
+
 function Read-GapCounts([string]$SummaryPath) {
   $ret = @{
     markets_total = 0
@@ -375,8 +399,12 @@ Run-Python @(
   "--out-json", $screenJson
 )
 
+$fastScreenStatus = "not_run"
+$fastScreenOk = $false
 Log "screen fast candidates for near-term realized tracking"
-Run-Python @(
+Remove-FileSafe -Path $fastScreenCsv
+Remove-FileSafe -Path $fastScreenJson
+$fastScreenOk = Run-PythonSafe @(
   $tool, "screen",
   "--max-pages", "$realizedFastMaxPages",
   "--page-size", "500",
@@ -392,10 +420,18 @@ Run-Python @(
   "--top-n", "30",
   "--out-csv", $fastScreenCsv,
   "--out-json", $fastScreenJson
-)
+) -Label "screen fast"
+if ($fastScreenOk) {
+  $fastScreenStatus = "ok"
+} else {
+  $fastScreenStatus = "failed"
+}
 
 Log "scan logical gaps"
-Run-Python @(
+$gapScanStage = "primary"
+Remove-FileSafe -Path $gapCsv
+Remove-FileSafe -Path $gapJson
+$gapPrimaryOk = Run-PythonSafe @(
   $tool, "gap",
   "--max-pages", "$GapMaxPages",
   "--relation", "$GapRelation",
@@ -415,20 +451,25 @@ Run-Python @(
   "--top-n", "$GapTopN",
   "--out-csv", $gapCsv,
   "--out-json", $gapJson
-)
+ ) -Label "gap primary"
 
 $gapRows = @()
-if (Test-Path $gapCsv) {
+if ($gapPrimaryOk -and (Test-Path $gapCsv)) {
   $gapRows = Import-Csv -Path $gapCsv
 }
 $gapCounts = Read-GapCounts -SummaryPath $gapJson
 $gapScanDaysUsed = [double]$GapMaxDaysToEnd
 $gapScanHoursUsed = [double]$GapMaxHoursToEnd
 $gapFallbackUsed = $false
-$gapScanStage = "primary"
+if (-not $gapPrimaryOk) {
+  $gapScanStage = "primary_error"
+}
 if (($gapRows.Count -eq 0) -and (($GapFallbackMaxDaysToEnd -gt $GapMaxDaysToEnd) -or ($GapFallbackMaxHoursToEnd -gt $GapMaxHoursToEnd) -or ($GapFallbackMaxPages -gt $GapMaxPages))) {
+  $gapScanStage = "fallback_window"
   Log "scan logical gaps fallback max_d=$GapFallbackMaxDaysToEnd max_h=$GapFallbackMaxHoursToEnd max_pages=$GapFallbackMaxPages"
-  Run-Python @(
+  Remove-FileSafe -Path $gapCsv
+  Remove-FileSafe -Path $gapJson
+  $gapFallbackWindowOk = Run-PythonSafe @(
     $tool, "gap",
     "--max-pages", "$GapFallbackMaxPages",
     "--relation", "$GapRelation",
@@ -448,16 +489,18 @@ if (($gapRows.Count -eq 0) -and (($GapFallbackMaxDaysToEnd -gt $GapMaxDaysToEnd)
     "--top-n", "$GapTopN",
     "--out-csv", $gapCsv,
     "--out-json", $gapJson
-  )
+   ) -Label "gap fallback_window"
   $gapRows = @()
-  if (Test-Path $gapCsv) {
+  if ($gapFallbackWindowOk -and (Test-Path $gapCsv)) {
     $gapRows = Import-Csv -Path $gapCsv
   }
   $gapCounts = Read-GapCounts -SummaryPath $gapJson
   $gapScanDaysUsed = [double]$GapFallbackMaxDaysToEnd
   $gapScanHoursUsed = [double]$GapFallbackMaxHoursToEnd
   $gapFallbackUsed = $true
-  $gapScanStage = "fallback_window"
+  if (-not $gapFallbackWindowOk) {
+    $gapScanStage = "fallback_window_error"
+  }
 }
 
 $shouldRunNoHourFallback = $GapFallbackNoHourCap.IsPresent -or ($gapCounts.interval_markets -eq 0)
@@ -469,7 +512,9 @@ if (($gapRows.Count -eq 0) -and $shouldRunNoHourFallback) {
     $gapScanStage = "fallback_no_hour_cap_auto"
   }
   Log "scan logical gaps fallback no hour cap max_pages=$GapFallbackMaxPages reason=$fallbackReason"
-  Run-Python @(
+  Remove-FileSafe -Path $gapCsv
+  Remove-FileSafe -Path $gapJson
+  $gapNoHourOk = Run-PythonSafe @(
     $tool, "gap",
     "--max-pages", "$GapFallbackMaxPages",
     "--relation", "$GapRelation",
@@ -489,15 +534,18 @@ if (($gapRows.Count -eq 0) -and $shouldRunNoHourFallback) {
     "--top-n", "$GapTopN",
     "--out-csv", $gapCsv,
     "--out-json", $gapJson
-  )
+   ) -Label "gap fallback_no_hour_cap"
   $gapRows = @()
-  if (Test-Path $gapCsv) {
+  if ($gapNoHourOk -and (Test-Path $gapCsv)) {
     $gapRows = Import-Csv -Path $gapCsv
   }
   $gapCounts = Read-GapCounts -SummaryPath $gapJson
   $gapScanDaysUsed = [double]$GapFallbackMaxDaysToEnd
   $gapScanHoursUsed = 0.0
   $gapFallbackUsed = $true
+  if (-not $gapNoHourOk) {
+    $gapScanStage = ("{0}_error" -f $gapScanStage)
+  }
 }
 $gapSummaryThresholds = Parse-FloatList -raw $GapSummaryThresholdGrid
 if ($gapSummaryThresholds.Count -eq 0) {
@@ -624,7 +672,7 @@ if (Test-Path $screenCsv) {
     $realizedEntryCandidates = 0
   }
 }
-if (Test-Path $fastScreenCsv) {
+if ($fastScreenOk -and (Test-Path $fastScreenCsv)) {
   try {
     $fastRows = Import-Csv -Path $fastScreenCsv
     if ($fastRows.Count -gt 0) {
@@ -634,6 +682,8 @@ if (Test-Path $fastScreenCsv) {
     }
   } catch {
   }
+} elseif (-not $fastScreenOk) {
+  Log "fast screen unavailable -> fallback to primary screen"
 }
 if (Test-Path $realizedTool) {
   Log "update realized monthly tracker source=$realizedEntrySource candidates=$realizedEntryCandidates"
@@ -805,6 +855,7 @@ $lines = @(
   ("- fast screen max pages: {0}" -f [int]$realizedFastMaxPages)
   ("- fast screen yes range: [{0},{1}]" -f [double]$realizedFastYesMin, [double]$realizedFastYesMax)
   ("- fast screen max hours to end: {0}" -f [double]$realizedFastMaxHoursToEnd)
+  ("- fast screen status: {0}" -f $fastScreenStatus)
   ("- gap max pages: {0}" -f [int]$GapMaxPages)
   ("- gap fallback max pages: {0}" -f [int]$GapFallbackMaxPages)
   ("- gap min liquidity: {0}" -f [double]$GapMinLiquidity)

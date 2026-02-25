@@ -786,6 +786,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - gap候補が0件なら `GapFallbackMaxHoursToEnd` と `GapFallbackMaxPages` に自動拡張して再スキャン。
   - それでも `interval_markets=0` の場合は、`max-hours-to-end` 制約なしの再スキャンを自動実行（`gap scan stage: fallback_no_hour_cap_auto`）。
   - `-GapFallbackNoHourCap` を付けると、`interval_markets` の値に関係なく、候補0件時に `max-hours-to-end` 制約なし再スキャンを強制追加。
+  - `gap` ステージは外部APIタイムアウト時も runner 全体は継続し、`gap scan stage` に `*_error` を記録（例: `primary_error`, `fallback_window_error`, `fallback_no_hour_cap_auto_error`）。
   - Summaryの `Logical gaps now` は `raw` / `filtered` / `unique_events` を併記し、表示上位はイベント単位で最良1件に圧縮。
   - Summaryの `Logical gaps threshold stats` で `target_unique_events(applied)` と `net>=0.50c/1.00c/2.00c` ごとの件数を併記し、しきい値調整の判断材料を可視化。
   - gap artifacts: `logs/no_longshot_daily_gap.csv`, `logs/no_longshot_daily_gap.json`
