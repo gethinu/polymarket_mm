@@ -197,6 +197,16 @@ def _metric_value(v: VariantStats, metric: str) -> float:
     m = str(metric or "per_exit").strip().lower()
     if m == "cumulative":
         return float(v.realized)
+    if m == "total_cumulative":
+        return float(v.total)
+    if m == "total_per_exit":
+        denom = max(1, int(v.exits))
+        return float(v.total) / float(denom)
+    if m == "day_cumulative":
+        return float(v.day_pnl)
+    if m == "day_per_exit":
+        denom = max(1, int(v.exits))
+        return float(v.day_pnl) / float(denom)
     denom = max(1, int(v.exits))
     return float(v.realized) / float(denom)
 
@@ -205,6 +215,14 @@ def _metric_label(metric: str) -> str:
     m = str(metric or "per_exit").strip().lower()
     if m == "cumulative":
         return "realized"
+    if m == "total_cumulative":
+        return "realized+unrealized"
+    if m == "total_per_exit":
+        return "(realized+unrealized)/exits"
+    if m == "day_cumulative":
+        return "day(realized+unrealized)"
+    if m == "day_per_exit":
+        return "day(realized+unrealized)/exits"
     return "realized/exits"
 
 
@@ -220,6 +238,16 @@ def _choose_side(
     both_keep_margin_usd: float,
     hold_side_sec: float,
 ) -> Tuple[str, str]:
+    parse_errors = []
+    for name, v in (("long", long_v), ("short", short_v), ("both", both_v)):
+        if v is None:
+            continue
+        if str(v.reason or "").startswith("parse-error"):
+            parse_errors.append(name)
+    if parse_errors:
+        names = ",".join(parse_errors)
+        return current_side, f"hold {current_side}; parse-error in {names}"
+
     long_ok = _eligible(long_v, min_exits=min_exits)
     short_ok = _eligible(short_v, min_exits=min_exits)
     both_ok = _eligible(both_v, min_exits=min_exits) if both_v else False
@@ -282,7 +310,34 @@ def _write_control(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    delay = 0.01
+    for i in range(10):
+        try:
+            tmp.replace(path)
+            return
+        except Exception as e:
+            winerr = int(getattr(e, "winerror", 0) or 0)
+            sharing = isinstance(e, PermissionError) or winerr in (5, 32)
+            if (not sharing) or i >= 9:
+                raise
+            time.sleep(delay)
+            delay = min(0.2, delay * 2.0)
+
+
+def _load_existing_overrides(path: Path) -> Dict[str, object]:
+    """Best-effort load of existing manual overrides from control file."""
+    try:
+        if not path.exists():
+            return {}
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    overrides = raw.get("overrides")
+    if not isinstance(overrides, dict):
+        return {}
+    return dict(overrides)
 
 
 def parse_args():
@@ -312,7 +367,14 @@ def parse_args():
     p.add_argument("--min-exits", type=int, default=6, help="Min exits required for a canary to be eligible")
     p.add_argument(
         "--decision-metric",
-        choices=("per_exit", "cumulative"),
+        choices=(
+            "per_exit",
+            "cumulative",
+            "total_per_exit",
+            "total_cumulative",
+            "day_per_exit",
+            "day_cumulative",
+        ),
         default="per_exit",
         help="Metric used for side comparison (default: realized per exit)",
     )
@@ -385,30 +447,36 @@ def run(args) -> int:
             last_switch_ts = now_ts()
             logger.info(f"[{iso_now()}] switch {prev}->{current_side} | {reason}")
 
+        merged_overrides = _load_existing_overrides(out_control)
+        merged_overrides["allowed_sides"] = current_side
+
         payload = {
             "generated_at": iso_now(),
             "source": "fade_side_router",
             "reason": reason,
-            "overrides": {
-                "allowed_sides": current_side,
-            },
-            "decision_metric": metric_name,
+            "overrides": merged_overrides,
+            "decision_metric": str(args.decision_metric),
+            "decision_metric_label": metric_name,
             "variants": {
                 "long": _to_dict(long_v),
                 "short": _to_dict(short_v),
                 "both": _to_dict(both_v) if both_v else {"ok": False, "reason": "disabled"},
             },
         }
-        _write_control(out_control, payload)
+        try:
+            _write_control(out_control, payload)
+        except Exception as e:
+            logger.info(f"[{iso_now()}] control-write error: {type(e).__name__}: {e}")
 
         long_metric = _metric_value(long_v, args.decision_metric)
         short_metric = _metric_value(short_v, args.decision_metric)
         both_metric = _metric_value(both_v, args.decision_metric) if both_v else 0.0
         logger.info(
             f"[{iso_now()}] decision={current_side} "
-            f"| long={long_metric:+.6f}({long_v.realized:+.4f}/ex{long_v.exits})/{long_v.reason} "
-            f"| short={short_metric:+.6f}({short_v.realized:+.4f}/ex{short_v.exits})/{short_v.reason} "
-            f"| both={both_metric:+.6f}({(both_v.realized if both_v else 0.0):+.4f})"
+            f"| metric={str(args.decision_metric)} "
+            f"| long={long_metric:+.6f}(day={long_v.day_pnl:+.4f} total={long_v.total:+.4f} ex={long_v.exits})/{long_v.reason} "
+            f"| short={short_metric:+.6f}(day={short_v.day_pnl:+.4f} total={short_v.total:+.4f} ex={short_v.exits})/{short_v.reason} "
+            f"| both={both_metric:+.6f}(day={(both_v.day_pnl if both_v else 0.0):+.4f} total={(both_v.total if both_v else 0.0):+.4f})"
         )
 
         if args.once:

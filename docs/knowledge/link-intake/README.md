@@ -33,6 +33,3 @@ Session overview schema:
 Automation:
 - `python C:\Users\stair\.codex\skills\polymarket-link-intake\scripts\intake_links.py --urls-file logs/link_queue.txt --session-topic polymarket-5links`
 - This writes both `logs/` artifacts and canonical session docs under `docs/knowledge/link-intake/sessions/`.
-- Optional fallback map for unstable profile URLs:
-  - `docs/knowledge/link-intake/profile_wallet_map.json`
-  - Used by `scripts/fetch_trades.py` when live profile-handle resolution fails.

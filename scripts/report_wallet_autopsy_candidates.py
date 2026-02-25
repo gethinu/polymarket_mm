@@ -11,8 +11,19 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import sys
 from pathlib import Path
 from typing import Iterable, List
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+TIMING_PROFILES = {
+    "none": {"p10": -1.0, "p50": -1.0, "p90": -1.0},
+    "endgame_loose": {"p10": -1.0, "p50": 3600.0, "p90": -1.0},
+    "endgame_consistent": {"p10": -1.0, "p50": 3600.0, "p90": 5400.0},
+    "endgame_tight": {"p10": 1200.0, "p50": 3600.0, "p90": 5400.0},
+}
 
 
 def parse_iso_dt(value: str) -> dt.datetime:
@@ -36,6 +47,103 @@ def load_json(path: Path):
         return None
 
 
+def safe_print(msg: str) -> None:
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        try:
+            enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+            print(msg.encode(enc, errors="replace").decode(enc, errors="replace"))
+        except Exception:
+            pass
+
+
+def as_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def fetch_json(url: str, timeout_sec: float = 25.0, retries: int = 4):
+    req = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; wallet-autopsy-candidates/1.0)", "Accept": "application/json"})
+    for i in range(retries):
+        try:
+            with urlopen(req, timeout=timeout_sec) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, ValueError):
+            if i >= retries - 1:
+                return None
+    return None
+
+
+def fetch_user_market_trade_timestamps(wallet: str, condition_id: str, max_trades: int, sides: set[str]) -> List[int]:
+    rows: List[int] = []
+    limit = min(max(1, int(max_trades)), 500)
+    offset = 0
+    target = max(1, int(max_trades))
+    while len(rows) < target:
+        batch = min(limit, target - len(rows))
+        q = urlencode({"user": wallet, "market": condition_id, "limit": str(batch), "offset": str(offset)})
+        url = f"https://data-api.polymarket.com/trades?{q}"
+        data = fetch_json(url)
+        if not isinstance(data, list) or not data:
+            break
+        for t in data:
+            if not isinstance(t, dict):
+                continue
+            side = str(t.get("side") or "").upper()
+            if sides and side not in sides:
+                continue
+            ts = as_int(t.get("timestamp"), 0)
+            if ts > 0:
+                rows.append(ts)
+        if len(data) < batch:
+            break
+        offset += batch
+    rows.sort()
+    return rows
+
+
+def fetch_market_end_ts(condition_id: str) -> int:
+    q = urlencode({"condition_ids": condition_id})
+    url = f"https://gamma-api.polymarket.com/markets?{q}"
+    data = fetch_json(url)
+    if not isinstance(data, list) or not data:
+        return 0
+    end_iso = str(data[0].get("endDate") or "")
+    if not end_iso:
+        return 0
+    try:
+        return int(dt.datetime.fromisoformat(end_iso.replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return 0
+
+
+def median(values: List[float]) -> float:
+    if not values:
+        return float("nan")
+    values = sorted(values)
+    n = len(values)
+    m = n // 2
+    if n % 2 == 1:
+        return values[m]
+    return (values[m - 1] + values[m]) / 2.0
+
+
+def percentile(values: List[float], p: float) -> float:
+    if not values:
+        return float("nan")
+    vals = sorted(values)
+    if len(vals) == 1:
+        return float(vals[0])
+    pos = (len(vals) - 1) * p
+    lo = int(pos)
+    hi = min(lo + 1, len(vals) - 1)
+    w = pos - lo
+    return float(vals[lo] * (1 - w) + vals[hi] * w)
+
+
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -49,6 +157,53 @@ def main() -> int:
         help="Comma-separated hedge statuses to include",
     )
     p.add_argument("--min-profitable-pct", type=float, default=0.0, help="Minimum time-profitable pct")
+    p.add_argument(
+        "--min-hedge-edge-pct",
+        type=float,
+        default=-999.0,
+        help="Minimum hedge edge pct (computed as (1-combined_avg)*100 when combined_avg exists)",
+    )
+    p.add_argument(
+        "--timing-profile",
+        choices=["none", "endgame_loose", "endgame_consistent", "endgame_tight"],
+        default="none",
+        help="Preset timing thresholds; explicit --max-time-* flags override each field",
+    )
+    p.add_argument(
+        "--max-time-to-end-p10-sec",
+        type=float,
+        default=-1.0,
+        help="Optional max p10(seconds-to-end) filter; <0 disables timing filter",
+    )
+    p.add_argument(
+        "--max-time-to-end-p50-sec",
+        type=float,
+        default=-1.0,
+        help="Optional max p50(seconds-to-end) filter; <0 disables timing filter",
+    )
+    p.add_argument(
+        "--max-time-to-end-p90-sec",
+        type=float,
+        default=-1.0,
+        help="Optional max p90(seconds-to-end) filter; <0 disables timing filter",
+    )
+    p.add_argument(
+        "--timing-sides",
+        default="BUY",
+        help="Comma-separated sides for timing filter (e.g., BUY or BUY,SELL)",
+    )
+    p.add_argument(
+        "--timing-max-trades",
+        type=int,
+        default=1500,
+        help="Max trades fetched per candidate when timing filter is enabled",
+    )
+    p.add_argument(
+        "--min-timing-trade-count",
+        type=int,
+        default=1,
+        help="Minimum fetched trades required per candidate when timing filter is enabled",
+    )
     p.add_argument("--min-trades", type=int, default=1, help="Minimum trade count")
     p.add_argument("--latest-per-market", action="store_true", help="Keep only latest scan file per market")
     p.add_argument("--top", type=int, default=50, help="Max rows to print")
@@ -58,10 +213,24 @@ def main() -> int:
     logs_dir = repo_root() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     allowed = {s.strip() for s in args.statuses.split(",") if s.strip()}
+    timing_sides = {s.strip().upper() for s in str(args.timing_sides).split(",") if s.strip()}
+
+    profile = TIMING_PROFILES.get(str(args.timing_profile), TIMING_PROFILES["none"])
+    p10_limit = float(args.max_time_to_end_p10_sec)
+    p50_limit = float(args.max_time_to_end_p50_sec)
+    p90_limit = float(args.max_time_to_end_p90_sec)
+    if p10_limit < 0.0:
+        p10_limit = float(profile["p10"])
+    if p50_limit < 0.0:
+        p50_limit = float(profile["p50"])
+    if p90_limit < 0.0:
+        p90_limit = float(profile["p90"])
+    timing_filter_on = (p10_limit >= 0.0) or (p50_limit >= 0.0) or (p90_limit >= 0.0)
+    min_timing_trade_count = max(1, int(args.min_timing_trade_count))
 
     files = list(iter_target_files(logs_dir, args.glob))
     if not files:
-        print(f"No files matched: {logs_dir / args.glob}")
+        safe_print(f"No files matched: {logs_dir / args.glob}")
         return 1
 
     selected_files: List[Path] = []
@@ -90,6 +259,8 @@ def main() -> int:
         meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
         market = meta.get("market") if isinstance(meta.get("market"), dict) else {}
         market_title = str(market.get("market_question") or market.get("event_title") or "")
+        condition_id = str(market.get("condition_id") or "").strip()
+        market_slug = str(market.get("market_slug") or "").strip()
         generated_at = str(meta.get("generated_at_utc") or "")
         summary = obj.get("summary")
         if not isinstance(summary, list):
@@ -104,6 +275,12 @@ def main() -> int:
                 prof_f = float(prof) if prof is not None else None
             except (TypeError, ValueError):
                 prof_f = None
+            combined_avg = r.get("combined_avg")
+            try:
+                combined_avg_f = float(combined_avg) if combined_avg is not None else None
+            except (TypeError, ValueError):
+                combined_avg_f = None
+            hedge_edge_pct = ((1.0 - combined_avg_f) * 100.0) if combined_avg_f is not None else None
 
             if allowed and hedge_status not in allowed:
                 continue
@@ -111,42 +288,112 @@ def main() -> int:
                 continue
             if prof_f is not None and prof_f < float(args.min_profitable_pct):
                 continue
+            if hedge_edge_pct is None or hedge_edge_pct < float(args.min_hedge_edge_pct):
+                continue
 
             rows.append(
                 {
                     "generated_at_utc": generated_at,
                     "market": market_title,
+                    "condition_id": condition_id,
+                    "market_slug": market_slug,
                     "wallet": str(r.get("wallet") or ""),
                     "rank": int(r.get("rank") or 0),
                     "trade_count": trades,
                     "time_profitable_pct": prof_f,
-                    "combined_avg": r.get("combined_avg"),
+                    "combined_avg": combined_avg_f,
+                    "hedge_edge_pct": hedge_edge_pct,
                     "hedge_status": hedge_status,
                     "source_file": str(fp),
                 }
             )
 
+    if timing_filter_on and rows:
+        market_end_cache: dict[str, int] = {}
+        filtered: List[dict] = []
+        for row in rows:
+            cond = str(row.get("condition_id") or "")
+            wallet = str(row.get("wallet") or "")
+            if not cond or not wallet:
+                continue
+
+            end_ts = market_end_cache.get(cond)
+            if end_ts is None:
+                end_ts = fetch_market_end_ts(cond)
+                market_end_cache[cond] = end_ts
+            if end_ts <= 0:
+                continue
+
+            ts_rows = fetch_user_market_trade_timestamps(
+                wallet=wallet,
+                condition_id=cond,
+                max_trades=int(args.timing_max_trades),
+                sides=timing_sides,
+            )
+            if len(ts_rows) < min_timing_trade_count:
+                continue
+
+            sec_to_end = [float(end_ts - ts) for ts in ts_rows]
+            p10 = percentile(sec_to_end, 0.10)
+            p50 = median(sec_to_end)
+            p90 = percentile(sec_to_end, 0.90)
+            row["timing_side_filter"] = ",".join(sorted(timing_sides))
+            row["timing_trade_count"] = len(ts_rows)
+            row["time_to_end_sec_p10"] = p10
+            row["time_to_end_sec_p50"] = p50
+            row["time_to_end_sec_p90"] = p90
+            if p10_limit >= 0.0 and p10 > p10_limit:
+                continue
+            if p50_limit >= 0.0 and p50 > p50_limit:
+                continue
+            if p90_limit >= 0.0 and p90 > p90_limit:
+                continue
+            if (p10_limit >= 0.0) or (p50_limit >= 0.0) or (p90_limit >= 0.0):
+                filtered.append(row)
+        rows = filtered
+
     rows.sort(
         key=lambda x: (
             0 if x.get("hedge_status") == "ARBITRAGE_CANDIDATE" else 1,
+            float(x.get("time_to_end_sec_p90") or float("inf")),
+            float(x.get("time_to_end_sec_p50") or float("inf")),
+            float(x.get("time_to_end_sec_p10") or float("inf")),
+            -(float(x.get("hedge_edge_pct") or 0.0)),
             -(float(x.get("time_profitable_pct") or 0.0)),
             int(x.get("rank") or 9999),
         )
     )
 
-    print(f"Scanned files: {len(selected_files)}")
-    print(f"Candidate rows: {len(rows)}")
-    print("-" * 110)
-    print(f"{'status':<20} {'prof%':>7} {'trades':>7} {'comb_avg':>9} {'wallet':<42} market")
+    safe_print(f"Scanned files: {len(selected_files)}")
+    safe_print(f"Candidate rows: {len(rows)}")
+    safe_print("-" * 110)
+    if timing_filter_on:
+        safe_print(f"{'status':<20} {'tte_p10':>9} {'tte_p50':>9} {'tte_p90':>9} {'edge%':>7} {'prof%':>7} {'trades':>7} {'comb_avg':>9} {'wallet':<42} market")
+    else:
+        safe_print(f"{'status':<20} {'edge%':>7} {'prof%':>7} {'trades':>7} {'comb_avg':>9} {'wallet':<42} market")
     for r in rows[: max(1, int(args.top))]:
         prof = r.get("time_profitable_pct")
         prof_s = f"{float(prof):.1f}" if prof is not None else "-"
         comb = r.get("combined_avg")
         comb_s = f"{float(comb):.4f}" if comb is not None else "-"
-        print(
-            f"{str(r['hedge_status']):<20} {prof_s:>7} {int(r['trade_count']):>7} {comb_s:>9} "
-            f"{str(r['wallet']):<42} {str(r['market'])}"
-        )
+        edge = r.get("hedge_edge_pct")
+        edge_s = f"{float(edge):.2f}" if edge is not None else "-"
+        if timing_filter_on:
+            tte10 = r.get("time_to_end_sec_p10")
+            tte50 = r.get("time_to_end_sec_p50")
+            tte90 = r.get("time_to_end_sec_p90")
+            tte10_s = f"{float(tte10):.0f}" if tte10 is not None else "-"
+            tte50_s = f"{float(tte50):.0f}" if tte50 is not None else "-"
+            tte90_s = f"{float(tte90):.0f}" if tte90 is not None else "-"
+            safe_print(
+                f"{str(r['hedge_status']):<20} {tte10_s:>9} {tte50_s:>9} {tte90_s:>9} {edge_s:>7} {prof_s:>7} {int(r['trade_count']):>7} {comb_s:>9} "
+                f"{str(r['wallet']):<42} {str(r['market'])}"
+            )
+        else:
+            safe_print(
+                f"{str(r['hedge_status']):<20} {edge_s:>7} {prof_s:>7} {int(r['trade_count']):>7} {comb_s:>9} "
+                f"{str(r['wallet']):<42} {str(r['market'])}"
+            )
 
     if args.out:
         out = Path(args.out)
@@ -162,6 +409,14 @@ def main() -> int:
                 "glob": args.glob,
                 "statuses": sorted(list(allowed)),
                 "min_profitable_pct": float(args.min_profitable_pct),
+                "min_hedge_edge_pct": float(args.min_hedge_edge_pct),
+                "timing_profile": str(args.timing_profile),
+                "max_time_to_end_p10_sec": p10_limit,
+                "max_time_to_end_p50_sec": p50_limit,
+                "max_time_to_end_p90_sec": p90_limit,
+                "timing_sides": sorted(list(timing_sides)),
+                "timing_max_trades": int(args.timing_max_trades),
+                "min_timing_trade_count": int(min_timing_trade_count),
                 "min_trades": int(args.min_trades),
                 "latest_per_market": bool(args.latest_per_market),
                 "rows": len(rows),
@@ -170,12 +425,11 @@ def main() -> int:
         }
         with out.open("w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
-        print()
-        print(f"Saved: {out}")
+        safe_print("")
+        safe_print(f"Saved: {out}")
 
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

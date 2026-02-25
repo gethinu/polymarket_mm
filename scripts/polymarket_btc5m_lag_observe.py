@@ -6,6 +6,7 @@ Purpose:
 - Observe Polymarket BTC up/down short-window market pricing vs external BTC spot.
 - Estimate a simple fair probability for "UP" using a diffusion model.
 - Emit mispricing signals and simulate one taker-style paper entry per window.
+- Optional entry filters can emulate "low-price panic + reversal" style setups.
 
 Supported window sizes:
 - 5 minutes (default)
@@ -250,6 +251,48 @@ def fair_up_probability(spot: float, open_price: float, remaining_sec: float, si
     denom = max(1e-9, sigma_per_s * math.sqrt(max(remaining_sec, 1e-6)))
     z = log_m / denom
     return _clamp01(_norm_cdf(z))
+
+
+def _first_price_at_or_after(history: Deque[Tuple[float, float]], ts_cutoff: float) -> Optional[float]:
+    for t, p in history:
+        if t >= ts_cutoff and math.isfinite(p) and p > 0:
+            return float(p)
+    return None
+
+
+def has_two_leg_reversal(
+    history: Deque[Tuple[float, float]],
+    side: str,
+    lookback_sec: float,
+    min_move_usd: float,
+) -> bool:
+    """
+    Reversal check over one lookback window:
+      - UP: older half down by >= min_move, newer half up by >= min_move
+      - DOWN: older half up by >= min_move, newer half down by >= min_move
+    """
+    lb = max(1.0, float(lookback_sec))
+    move = max(0.0, float(min_move_usd))
+    if len(history) < 6:
+        return False
+
+    t_now = now_ts()
+    t0 = t_now - lb
+    tm = t_now - (0.5 * lb)
+    p0 = _first_price_at_or_after(history, t0)
+    pm = _first_price_at_or_after(history, tm)
+    p2 = float(history[-1][1]) if history and math.isfinite(history[-1][1]) and history[-1][1] > 0 else None
+    if p0 is None or pm is None or p2 is None:
+        return False
+
+    first_leg = pm - p0
+    second_leg = p2 - pm
+    s = str(side or "").strip().upper()
+    if s == "UP":
+        return (first_leg <= -move) and (second_leg >= move)
+    if s == "DOWN":
+        return (first_leg >= move) and (second_leg <= -move)
+    return False
 
 
 def fetch_coinbase_price() -> Optional[float]:
@@ -633,6 +676,35 @@ def parse_args():
     p.add_argument("--shares", type=float, default=25.0, help="Paper entry size in shares")
     p.add_argument("--entry-edge-cents", type=float, default=1.5, help="Paper entry threshold in cents")
     p.add_argument("--alert-edge-cents", type=float, default=0.8, help="Signal alert threshold in cents")
+    p.add_argument(
+        "--entry-price-min",
+        type=float,
+        default=0.0,
+        help="Optional lower bound for entry price (0-1; default no lower bound)",
+    )
+    p.add_argument(
+        "--entry-price-max",
+        type=float,
+        default=1.0,
+        help="Optional upper bound for entry price (0-1; default no upper bound)",
+    )
+    p.add_argument(
+        "--require-reversal",
+        action="store_true",
+        help="Require a two-leg spot reversal pattern before paper entry (panic/reversal style filter)",
+    )
+    p.add_argument(
+        "--reversal-lookback-sec",
+        type=float,
+        default=30.0,
+        help="Lookback window seconds for --require-reversal",
+    )
+    p.add_argument(
+        "--reversal-min-move-usd",
+        type=float,
+        default=5.0,
+        help="Minimum USD move per half-leg for reversal confirmation",
+    )
     p.add_argument("--min-remaining-sec", type=float, default=20.0, help="Do not enter if less than this many sec remain")
     p.add_argument(
         "--no-max-one-entry-per-window",
@@ -673,11 +745,17 @@ def parse_args():
 def main() -> int:
     args = parse_args()
     window_sec = int(args.window_minutes) * 60
+    args.entry_price_min = max(0.0, min(1.0, float(args.entry_price_min)))
+    args.entry_price_max = max(0.0, min(1.0, float(args.entry_price_max)))
+    if args.entry_price_max < args.entry_price_min:
+        args.entry_price_min, args.entry_price_max = args.entry_price_max, args.entry_price_min
     logger = Logger(args.log_file)
     state_path = Path(args.state_file)
     state = _load_state(state_path)
     history: Deque[Tuple[float, float]] = deque(maxlen=1200)
     entered_windows: Dict[int, bool] = {}
+    filter_skip_price_band = 0
+    filter_skip_reversal = 0
 
     logger.info(f"Polymarket BTC {int(args.window_minutes)}m Lag Observer")
     logger.info("=" * 64)
@@ -687,6 +765,11 @@ def main() -> int:
         f"metrics={args.metrics_sample_sec:.1f}s shares={args.shares:.2f} "
         f"entry_edge={args.entry_edge_cents:.2f}c alert_edge={args.alert_edge_cents:.2f}c "
         f"taker_fee={args.taker_fee_rate:.4f}"
+    )
+    logger.info(
+        f"Entry filters: price_band=[{args.entry_price_min:.3f},{args.entry_price_max:.3f}] "
+        f"reversal={'on' if args.require_reversal else 'off'} "
+        f"lb={float(args.reversal_lookback_sec):.1f}s move={float(args.reversal_min_move_usd):.2f}"
     )
     logger.info(f"Log: {args.log_file}")
     logger.info(f"State: {args.state_file}")
@@ -847,6 +930,17 @@ def main() -> int:
                         else:
                             entry_px = math.nan
                         if math.isfinite(entry_px) and entry_px > 0:
+                            if (entry_px < float(args.entry_price_min)) or (entry_px > float(args.entry_price_max)):
+                                filter_skip_price_band += 1
+                                continue
+                            if args.require_reversal and not has_two_leg_reversal(
+                                history=history,
+                                side=best_side,
+                                lookback_sec=float(args.reversal_lookback_sec),
+                                min_move_usd=float(args.reversal_min_move_usd),
+                            ):
+                                filter_skip_reversal += 1
+                                continue
                             state.active_position = {
                                 "window_start_ts": current_window.start_ts,
                                 "window_slug": current_window.slug,
@@ -883,7 +977,9 @@ def main() -> int:
                     f"fair_up={fair_up:.4f} ask_up={up_ask:.4f} ask_dn={down_ask:.4f} "
                     f"edge_up={edge_up:+.4f} edge_dn={edge_down:+.4f} "
                     f"active={active_txt} day={d_pnl:+.4f} total={state.pnl_total_usd:+.4f} "
-                    f"W/L/P={state.wins}/{state.losses}/{state.pushes} src=[{src}] halted={state.halted}"
+                    f"W/L/P={state.wins}/{state.losses}/{state.pushes} "
+                    f"fskip_price={filter_skip_price_band} fskip_rev={filter_skip_reversal} "
+                    f"src=[{src}] halted={state.halted}"
                 )
                 last_summary_ts = ts_now
 
@@ -915,6 +1011,8 @@ def main() -> int:
                         "wins": state.wins,
                         "losses": state.losses,
                         "pushes": state.pushes,
+                        "filter_skip_price_band": int(filter_skip_price_band),
+                        "filter_skip_reversal": int(filter_skip_reversal),
                         "halted": state.halted,
                     },
                 )

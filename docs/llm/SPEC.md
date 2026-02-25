@@ -6,9 +6,10 @@ This document is the highest-priority behavioral spec for assistant-driven chang
 
 When implementing or reviewing changes, treat these files as authoritative in this order:
 1. `docs/llm/SPEC.md`
-2. `docs/ARCHITECTURE.md`
-3. `docs/INTERFACES.md`
-4. `docs/STATE.md`
+2. `docs/llm/ARCHITECTURE.md`
+3. `docs/llm/INTERFACES.md`
+4. `docs/llm/STATE.md`
+5. `docs/llm/STRATEGY.md`
 
 If documents conflict, do not guess. Resolve by asking for clarification and then update docs before code changes.
 
@@ -21,8 +22,8 @@ If documents conflict, do not guess. Resolve by asking for clarification and the
 ## Runtime Artifacts
 
 - Runtime outputs must stay under `logs/` (gitignored).
-- New long-lived state files must be documented in `docs/STATE.md`.
-- New CLI entrypoints or new flags must be documented in `docs/INTERFACES.md`.
+- New long-lived state files must be documented in `docs/llm/STATE.md`.
+- New CLI entrypoints or new flags must be documented in `docs/llm/INTERFACES.md`.
 
 ## PowerShell Task Policy
 

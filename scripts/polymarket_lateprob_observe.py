@@ -29,6 +29,7 @@ GAMMA_API_BASE = "https://gamma-api.polymarket.com"
 CLOB_API_BASE = "https://clob.polymarket.com"
 USER_AGENT = "Mozilla/5.0 (compatible; lateprob-observe/1.0)"
 DEFAULT_EXCLUDE_KEYWORDS = ["draft", "inflation", "unemployment", "interest rate", "fed "]
+DEFAULT_WEATHER_INCLUDE_REGEX = r"weather|temperature|precipitation|forecast|\brain\b|\bsnow\b|\bwind\b|humidity"
 
 
 def safe_print(msg: str) -> None:
@@ -183,6 +184,7 @@ def run_screen(args: argparse.Namespace) -> int:
     exclude_keywords = parse_keywords(args.exclude_keywords)
     now_ts = int(now_utc().timestamp())
     rows: List[ScreenRow] = []
+    dropped_stale_active = 0
 
     for page in range(args.max_pages):
         params = {"active": "true", "closed": "false", "limit": str(args.page_size), "offset": str(page * args.page_size)}
@@ -199,6 +201,9 @@ def run_screen(args: argparse.Namespace) -> int:
             if end_ts is None:
                 continue
             hours_to_end = (end_ts - now_ts) / 3600.0
+            if args.max_active_stale_hours >= 0 and hours_to_end < (-1.0 * args.max_active_stale_hours):
+                dropped_stale_active += 1
+                continue
             if hours_to_end < args.min_hours_to_end:
                 continue
             if args.max_hours_to_end > 0 and hours_to_end > args.max_hours_to_end:
@@ -237,7 +242,10 @@ def run_screen(args: argparse.Namespace) -> int:
             )
 
     rows.sort(key=lambda r: (r.hours_to_end, r.entry_price))
-    safe_print(f"[screen] candidates={len(rows)} side={args.side_mode}")
+    safe_print(
+        f"[screen] candidates={len(rows)} side={args.side_mode} "
+        f"dropped_stale_active={dropped_stale_active} max_stale_h={args.max_active_stale_hours:g}"
+    )
     for r in rows[: args.top_n]:
         max_profit = 1.0 - r.entry_price
         net_est = max_profit - args.per_trade_cost
@@ -260,6 +268,7 @@ def run_screen(args: argparse.Namespace) -> int:
         "generated_utc": now_utc().isoformat(),
         "settings": vars(args),
         "count": len(rows),
+        "dropped_stale_active": dropped_stale_active,
         "top": [asdict(r) for r in rows[: args.top_n]],
         "artifacts": {"csv": out_csv},
     }
@@ -281,6 +290,9 @@ class ClosedSample:
     cutoff_ts: int
     entry_ts: int
     stale_h: float
+    target_hours_before_end: float
+    actual_hours_before_end: float
+    timing_abs_error_h: float
     entry_yes_price: float
     side: str
     entry_price: float
@@ -374,6 +386,9 @@ def fetch_entry_sample(candidate: dict, args: argparse.Namespace) -> Optional[Cl
     stale_h = float(candidate["cutoff_ts"] - entry_ts) / 3600.0
     if stale_h > args.max_stale_hours:
         return None
+    target_h = float(args.hours_before_end)
+    actual_h = float(candidate["end_ts"] - entry_ts) / 3600.0
+    timing_abs_err_h = abs(actual_h - target_h)
     decision = decide_side(
         yes_price=entry_yes,
         side_mode=args.side_mode,
@@ -399,6 +414,9 @@ def fetch_entry_sample(candidate: dict, args: argparse.Namespace) -> Optional[Cl
         cutoff_ts=int(candidate["cutoff_ts"]),
         entry_ts=entry_ts,
         stale_h=float(stale_h),
+        target_hours_before_end=target_h,
+        actual_hours_before_end=actual_h,
+        timing_abs_error_h=timing_abs_err_h,
         entry_yes_price=float(entry_yes),
         side=side,
         entry_price=float(entry_price),
@@ -449,6 +467,65 @@ def metrics(rows: Iterable[ClosedSample], per_trade_cost: float) -> dict:
     }
 
 
+def _percentile(values: List[float], q: float) -> float:
+    if not values:
+        return 0.0
+    xs = sorted(values)
+    if q <= 0.0:
+        return float(xs[0])
+    if q >= 1.0:
+        return float(xs[-1])
+    pos = (len(xs) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(xs) - 1)
+    frac = pos - lo
+    return float(xs[lo] * (1.0 - frac) + xs[hi] * frac)
+
+
+def timing_quality(rows: Iterable[ClosedSample], target_hours_before_end: float) -> dict:
+    xs = list(rows)
+    if not xs:
+        return {
+            "n": 0,
+            "target_hours_before_end": float(target_hours_before_end),
+            "actual_hours_before_end": {"min": 0.0, "median": 0.0, "p90": 0.0, "p99": 0.0, "max": 0.0},
+            "abs_error_hours": {"median": 0.0, "p90": 0.0, "p99": 0.0, "max": 0.0},
+            "within_5m_ratio": 0.0,
+            "within_15m_ratio": 0.0,
+            "early_entry_ratio": 0.0,
+            "late_entry_ratio": 0.0,
+        }
+
+    actual = [float(r.actual_hours_before_end) for r in xs]
+    abs_err = [float(r.timing_abs_error_h) for r in xs]
+    n = len(xs)
+    eps = 1.0 / 60.0
+    early = sum(1 for x in actual if x > float(target_hours_before_end) + eps)
+    late = sum(1 for x in actual if x < float(target_hours_before_end) - eps)
+
+    return {
+        "n": n,
+        "target_hours_before_end": float(target_hours_before_end),
+        "actual_hours_before_end": {
+            "min": min(actual),
+            "median": statistics.median(actual),
+            "p90": _percentile(actual, 0.90),
+            "p99": _percentile(actual, 0.99),
+            "max": max(actual),
+        },
+        "abs_error_hours": {
+            "median": statistics.median(abs_err),
+            "p90": _percentile(abs_err, 0.90),
+            "p99": _percentile(abs_err, 0.99),
+            "max": max(abs_err),
+        },
+        "within_5m_ratio": sum(1 for e in abs_err if e <= (5.0 / 60.0)) / n,
+        "within_15m_ratio": sum(1 for e in abs_err if e <= (15.0 / 60.0)) / n,
+        "early_entry_ratio": early / n,
+        "late_entry_ratio": late / n,
+    }
+
+
 def run_backtest(args: argparse.Namespace) -> int:
     include_rx = compile_regex(args.include_regex)
     exclude_rx = compile_regex(args.exclude_regex)
@@ -477,9 +554,14 @@ def run_backtest(args: argparse.Namespace) -> int:
             writer.writerow(asdict(r))
 
     overall = metrics(rows, per_trade_cost=args.per_trade_cost)
+    overall_timing = timing_quality(rows, target_hours_before_end=args.hours_before_end)
     by_side = {
         "yes": metrics([r for r in rows if r.side == "yes"], per_trade_cost=args.per_trade_cost),
         "no": metrics([r for r in rows if r.side == "no"], per_trade_cost=args.per_trade_cost),
+    }
+    timing_by_side = {
+        "yes": timing_quality([r for r in rows if r.side == "yes"], target_hours_before_end=args.hours_before_end),
+        "no": timing_quality([r for r in rows if r.side == "no"], target_hours_before_end=args.hours_before_end),
     }
     by_quarter: Dict[str, dict] = {}
     for r in rows:
@@ -489,13 +571,16 @@ def run_backtest(args: argparse.Namespace) -> int:
         by_quarter.setdefault(k, {"rows": []})["rows"].append(r)
     for k, v in by_quarter.items():
         v["metrics"] = metrics(v["rows"], per_trade_cost=args.per_trade_cost)
+        v["timing_quality"] = timing_quality(v["rows"], target_hours_before_end=args.hours_before_end)
         v.pop("rows", None)
 
     summary = {
         "generated_utc": now_utc().isoformat(),
         "settings": vars(args),
         "overall": overall,
+        "timing_quality": overall_timing,
         "by_side": by_side,
+        "timing_quality_by_side": timing_by_side,
         "by_quarter": by_quarter,
         "artifacts": {"samples_csv": out_samples},
     }
@@ -503,6 +588,12 @@ def run_backtest(args: argparse.Namespace) -> int:
     Path(out_json).parent.mkdir(parents=True, exist_ok=True)
     Path(out_json).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     safe_print(f"[backtest] n={overall['n']} ret={overall['capital_return']:+.4%} win={overall['win_rate']:.2%}")
+    safe_print(
+        f"[backtest] timing target={args.hours_before_end:g}h "
+        f"actual_median={overall_timing['actual_hours_before_end']['median']:.3f}h "
+        f"abs_err_med={overall_timing['abs_error_hours']['median']*60.0:.1f}m "
+        f"within15m={overall_timing['within_15m_ratio']:.1%}"
+    )
     safe_print(f"[backtest] wrote {out_samples}")
     safe_print(f"[backtest] wrote {out_json}")
     return 0 if rows else 2
@@ -517,6 +608,7 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--page-size", type=int, default=500)
     ps.add_argument("--min-hours-to-end", type=float, default=0.0)
     ps.add_argument("--max-hours-to-end", type=float, default=0.5)
+    ps.add_argument("--max-active-stale-hours", type=float, default=6.0)
     ps.add_argument("--side-mode", choices=["both", "yes-only", "no-only"], default="both")
     ps.add_argument("--yes-high-min", type=float, default=0.90)
     ps.add_argument("--yes-high-max", type=float, default=0.99)
@@ -526,7 +618,7 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--min-volume-24h", type=float, default=0.0)
     ps.add_argument("--per-trade-cost", type=float, default=0.0)
     ps.add_argument("--exclude-keywords", default=",".join(DEFAULT_EXCLUDE_KEYWORDS))
-    ps.add_argument("--include-regex", default="")
+    ps.add_argument("--include-regex", default=DEFAULT_WEATHER_INCLUDE_REGEX)
     ps.add_argument("--exclude-regex", default="")
     ps.add_argument("--top-n", type=int, default=30)
     ps.add_argument("--out-csv", default="")

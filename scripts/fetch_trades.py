@@ -26,6 +26,7 @@ DATA_API_BASE = "https://data-api.polymarket.com"
 USER_AGENT = "Mozilla/5.0 (compatible; polymarket-fetch-trades/1.0)"
 WALLET_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 HANDLE_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+HANDLE_WALLET_PREFIX_RE = re.compile(r"^(0x[a-fA-F0-9]{40})(?:[-_].*)?$")
 
 
 def now_utc() -> dt.datetime:
@@ -82,6 +83,21 @@ def extract_profile_handle(value: str) -> Optional[str]:
     if not HANDLE_RE.match(candidate):
         return None
     return candidate
+
+
+def extract_wallet_from_handle_prefix(handle: str) -> Optional[str]:
+    """
+    Accept profile handle forms like:
+      - 0x<40hex>
+      - 0x<40hex>-<suffix>
+      - 0x<40hex>_<suffix>
+    and return the wallet prefix.
+    """
+    h = (handle or "").strip().lstrip("@")
+    m = HANDLE_WALLET_PREFIX_RE.match(h)
+    if not m:
+        return None
+    return str(m.group(1)).lower()
 
 
 def fetch_json(url: str, timeout_sec: float = 25.0, retries: int = 4) -> Optional[object]:
@@ -141,45 +157,6 @@ def resolve_wallet_from_profile_handle(handle: str) -> Optional[str]:
     return None
 
 
-def resolve_wallet_from_local_map(handle: str) -> Optional[str]:
-    """
-    Optional fallback for handles that no longer resolve via live profile HTML.
-
-    Mapping file (if present):
-      docs/knowledge/link-intake/profile_wallet_map.json
-
-    Shape:
-      {
-        "handles": {
-          "example_handle": "0x..."
-        }
-      }
-    """
-    h = (handle or "").strip().lstrip("@").lower()
-    if not HANDLE_RE.match(h):
-        return None
-
-    map_path = Path(__file__).resolve().parents[1] / "docs" / "knowledge" / "link-intake" / "profile_wallet_map.json"
-    if not map_path.exists():
-        return None
-
-    try:
-        obj = json.loads(map_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-
-    if not isinstance(obj, dict):
-        return None
-    handles = obj.get("handles")
-    if not isinstance(handles, dict):
-        return None
-
-    wallet = str(handles.get(h) or "").strip().lower()
-    if is_wallet_address(wallet):
-        return wallet
-    return None
-
-
 def resolve_user_identifier(raw_user: str) -> Tuple[Optional[str], Dict[str, str]]:
     user = (raw_user or "").strip()
     meta: Dict[str, str] = {"input_user": user}
@@ -191,14 +168,14 @@ def resolve_user_identifier(raw_user: str) -> Tuple[Optional[str], Dict[str, str
     if not handle:
         return None, meta
 
+    wallet_from_prefix = extract_wallet_from_handle_prefix(handle)
+    if wallet_from_prefix:
+        meta["resolved_via"] = "handle_wallet_prefix"
+        meta["profile_handle"] = f"@{handle}"
+        meta["profile_url"] = f"https://polymarket.com/@{handle}"
+        return wallet_from_prefix, meta
+
     wallet = resolve_wallet_from_profile_handle(handle)
-    if not wallet:
-        wallet = resolve_wallet_from_local_map(handle)
-        if wallet:
-            meta["resolved_via"] = "profile_map"
-            meta["profile_handle"] = f"@{handle}"
-            meta["profile_url"] = f"https://polymarket.com/@{handle}"
-            return wallet, meta
     if not wallet:
         return None, meta
 
@@ -330,10 +307,8 @@ def main() -> int:
             json.dump(payload, f, separators=(",", ":"), ensure_ascii=False)
 
     resolved_via = resolve_meta.get("resolved_via", "")
-    if resolved_via in {"profile", "profile_map"}:
+    if resolved_via in {"profile", "handle_wallet_prefix"}:
         print(f"Resolved profile {resolve_meta.get('profile_handle', '')} -> {user}")
-        if resolved_via == "profile_map":
-            print("Resolution source: local profile wallet map fallback")
     print(f"Fetched trades: {len(rows)}")
     print(f"Saved: {out_path}")
     return 0

@@ -11,9 +11,11 @@ param(
   [double]$MaxStaleHours = 1.0,
   [int]$MaxOpenPositions = 20,
   [int]$MaxOpenPerCategory = 4,
-  [int]$AllMinTrainN = 30,
+  [int]$GuardMaxOpenPositions = 16,
+  [int]$GuardMaxOpenPerCategory = 3,
+  [int]$AllMinTrainN = 20,
   [int]$AllMinTestN = 1,
-  [int]$GuardMinTrainN = 60,
+  [int]$GuardMinTrainN = 20,
   [int]$GuardMinTestN = 20,
   [int]$ScreenMaxPages = 6,
   [double]$ScreenMinLiquidity = 50000,
@@ -22,9 +24,18 @@ param(
   [int]$GapFallbackMaxPages = 20,
   [double]$GapYesMin = 0.01,
   [double]$GapYesMax = 0.99,
+  [double]$GapMinLiquidity = 1000,
+  [double]$GapMinVolume24h = 0,
   [double]$GapMinGrossEdgeCents = 0.3,
   [double]$GapMinNetEdgeCents = 0.0,
+  [double]$GapSummaryMinNetEdgeCents = 0.5,
+  [ValidateSet("auto", "fixed")]
+  [string]$GapSummaryMode = "auto",
+  [int]$GapSummaryTargetUniqueEvents = 3,
+  [string]$GapSummaryThresholdGrid = "0.5,1.0,2.0",
   [double]$GapPerLegCost = 0.002,
+  [double]$GapMaxDaysToEnd = 180.0,
+  [double]$GapFallbackMaxDaysToEnd = 180.0,
   [double]$GapMaxHoursToEnd = 6.0,
   [double]$GapFallbackMaxHoursToEnd = 48.0,
   [switch]$GapFallbackNoHourCap,
@@ -77,12 +88,24 @@ $logDir = Join-Path $RepoRoot "logs"
 $sampleCsv = Join-Path $logDir "no_longshot_daily_samples.csv"
 $screenCsv = Join-Path $logDir "no_longshot_daily_screen.csv"
 $screenJson = Join-Path $logDir "no_longshot_daily_screen.json"
+$fastScreenCsv = Join-Path $logDir "no_longshot_fast_screen_lowyes_latest.csv"
+$fastScreenJson = Join-Path $logDir "no_longshot_fast_screen_lowyes_latest.json"
 $gapCsv = Join-Path $logDir "no_longshot_daily_gap.csv"
 $gapJson = Join-Path $logDir "no_longshot_daily_gap.json"
 $oosAllJson = Join-Path $logDir "no_longshot_daily_oos_allfolds.json"
 $oosGuardJson = Join-Path $logDir "no_longshot_daily_oos_guarded.json"
 $summaryTxt = Join-Path $logDir "no_longshot_daily_summary.txt"
 $runLog = Join-Path $logDir "no_longshot_daily_run.log"
+$realizedTool = Join-Path $RepoRoot "scripts\record_no_longshot_realized_daily.py"
+$realizedPositionsJson = Join-Path $logDir "no_longshot_forward_positions.json"
+$realizedDailyJsonl = Join-Path $logDir "no_longshot_realized_daily.jsonl"
+$realizedLatestJson = Join-Path $logDir "no_longshot_realized_latest.json"
+$realizedMonthlyTxt = Join-Path $logDir "no_longshot_monthly_return_latest.txt"
+$realizedEntryTopN = 10
+$realizedFastMaxPages = 120
+$realizedFastYesMin = 0.01
+$realizedFastYesMax = 0.20
+$realizedFastMaxHoursToEnd = 72.0
 
 if (-not (Test-Path $logDir)) {
   New-Item -Path $logDir -ItemType Directory -Force | Out-Null
@@ -106,6 +129,30 @@ function Parse-Bool([string]$v) {
     "on" { return $true }
     default { return $false }
   }
+}
+
+function Parse-FloatList([string]$raw) {
+  if ([string]::IsNullOrWhiteSpace($raw)) {
+    return @()
+  }
+  $vals = @()
+  foreach ($token in $raw.Split(",")) {
+    $t = $token.Trim()
+    if ([string]::IsNullOrWhiteSpace($t)) {
+      continue
+    }
+    try {
+      $v = [double]$t
+      if ($v -ge 0.0) {
+        $vals += $v
+      }
+    } catch {
+    }
+  }
+  if ($vals.Count -eq 0) {
+    return @()
+  }
+  return @($vals | Sort-Object -Unique)
 }
 
 function Get-EnvAny([string]$name) {
@@ -162,9 +209,77 @@ function Run-Python([string[]]$CmdArgs) {
   }
 }
 
-$discordRequested = $Discord.IsPresent -or (Parse-Bool (Get-EnvAny "NO_LONGSHOT_DAILY_DISCORD"))
+function Read-GapCounts([string]$SummaryPath) {
+  $ret = @{
+    markets_total = 0
+    interval_markets = 0
+    events_considered = 0
+    pairs_scanned = 0
+    candidates = 0
+  }
+  if (-not (Test-Path $SummaryPath)) {
+    return $ret
+  }
+  try {
+    $obj = Get-Content -Path $SummaryPath -Raw | ConvertFrom-Json
+    if ($null -ne $obj -and $obj.PSObject.Properties["counts"]) {
+      $ret.markets_total = [int]($obj.counts.markets_total)
+      $ret.interval_markets = [int]($obj.counts.interval_markets)
+      $ret.events_considered = [int]($obj.counts.events_considered)
+      $ret.pairs_scanned = [int]($obj.counts.pairs_scanned)
+      $ret.candidates = [int]($obj.counts.candidates)
+    }
+  } catch {
+  }
+  return $ret
+}
 
-Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation discord_req=$discordRequested"
+function Select-BestGapRowsPerEvent([object[]]$Rows) {
+  if ($null -eq $Rows -or $Rows.Count -eq 0) {
+    return @()
+  }
+  $bestRows = @()
+  $groups = $Rows | Group-Object -Property event_key
+  foreach ($g in $groups) {
+    $best = $g.Group |
+      Sort-Object `
+        @{ Expression = { [double]($_.net_edge_cents) }; Descending = $true }, `
+        @{ Expression = { [double]($_.gross_edge_cents) }; Descending = $true }, `
+        @{ Expression = { [double]($_.liquidity_sum) }; Descending = $true } |
+      Select-Object -First 1
+    if ($null -ne $best) {
+      $bestRows += $best
+    }
+  }
+  $bestRows = $bestRows |
+    Sort-Object `
+      @{ Expression = { [double]($_.net_edge_cents) }; Descending = $true }, `
+      @{ Expression = { [double]($_.gross_edge_cents) }; Descending = $true }, `
+      @{ Expression = { [double]($_.liquidity_sum) }; Descending = $true }
+  return @($bestRows)
+}
+
+trap {
+  try {
+    Log ("fatal: {0}" -f $_.Exception.Message)
+  } catch {
+  }
+  exit 1
+}
+
+Log "bootstrap init"
+
+$discordRequested = $Discord.IsPresent
+if (-not $discordRequested) {
+  try {
+    $discordRequested = Parse-Bool (Get-EnvAny "NO_LONGSHOT_DAILY_DISCORD")
+  } catch {
+    Log "warn: discord flag env lookup failed ($($_.Exception.GetType().Name))"
+    $discordRequested = $false
+  }
+}
+
+Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target=$GapSummaryTargetUniqueEvents max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation discord_req=$discordRequested"
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
@@ -229,8 +344,8 @@ Run-Python @(
   "--yes-max-grid", "$YesMax",
   "--exclude-keywords", $ExcludeKeywordsArg,
   "--per-trade-cost", "$PerTradeCost",
-  "--max-open-positions", "$MaxOpenPositions",
-  "--max-open-per-category", "$MaxOpenPerCategory",
+  "--max-open-positions", "$GuardMaxOpenPositions",
+  "--max-open-per-category", "$GuardMaxOpenPerCategory",
   "--min-liquidity", "0",
   "--min-volume-24h", "0",
   "--min-history-points", "$MinHistoryPoints",
@@ -255,6 +370,25 @@ Run-Python @(
   "--out-json", $screenJson
 )
 
+Log "screen fast candidates for near-term realized tracking"
+Run-Python @(
+  $tool, "screen",
+  "--max-pages", "$realizedFastMaxPages",
+  "--page-size", "500",
+  "--yes-min", "$realizedFastYesMin",
+  "--yes-max", "$realizedFastYesMax",
+  "--min-days-to-end", "0",
+  "--max-hours-to-end", "$realizedFastMaxHoursToEnd",
+  "--min-liquidity", "1000",
+  "--min-volume-24h", "0",
+  "--exclude-keywords", $ExcludeKeywordsArg,
+  "--per-trade-cost", "$PerTradeCost",
+  "--sort-by", "net_yield_per_day_desc",
+  "--top-n", "30",
+  "--out-csv", $fastScreenCsv,
+  "--out-json", $fastScreenJson
+)
+
 Log "scan logical gaps"
 Run-Python @(
   $tool, "gap",
@@ -263,8 +397,11 @@ Run-Python @(
   "--yes-min", "$GapYesMin",
   "--yes-max", "$GapYesMax",
   "--min-days-to-end", "0",
+  "--max-days-to-end", "$GapMaxDaysToEnd",
   "--max-hours-to-end", "$GapMaxHoursToEnd",
   "--max-end-diff-hours", "$GapMaxHoursToEnd",
+  "--min-liquidity", "$GapMinLiquidity",
+  "--min-volume-24h", "$GapMinVolume24h",
   "--min-gross-edge-cents", "$GapMinGrossEdgeCents",
   "--min-net-edge-cents", "$GapMinNetEdgeCents",
   "--per-leg-cost", "$GapPerLegCost",
@@ -279,11 +416,13 @@ $gapRows = @()
 if (Test-Path $gapCsv) {
   $gapRows = Import-Csv -Path $gapCsv
 }
+$gapCounts = Read-GapCounts -SummaryPath $gapJson
+$gapScanDaysUsed = [double]$GapMaxDaysToEnd
 $gapScanHoursUsed = [double]$GapMaxHoursToEnd
 $gapFallbackUsed = $false
 $gapScanStage = "primary"
-if (($gapRows.Count -eq 0) -and (($GapFallbackMaxHoursToEnd -gt $GapMaxHoursToEnd) -or ($GapFallbackMaxPages -gt $GapMaxPages))) {
-  Log "scan logical gaps fallback max_h=$GapFallbackMaxHoursToEnd max_pages=$GapFallbackMaxPages"
+if (($gapRows.Count -eq 0) -and (($GapFallbackMaxDaysToEnd -gt $GapMaxDaysToEnd) -or ($GapFallbackMaxHoursToEnd -gt $GapMaxHoursToEnd) -or ($GapFallbackMaxPages -gt $GapMaxPages))) {
+  Log "scan logical gaps fallback max_d=$GapFallbackMaxDaysToEnd max_h=$GapFallbackMaxHoursToEnd max_pages=$GapFallbackMaxPages"
   Run-Python @(
     $tool, "gap",
     "--max-pages", "$GapFallbackMaxPages",
@@ -291,8 +430,11 @@ if (($gapRows.Count -eq 0) -and (($GapFallbackMaxHoursToEnd -gt $GapMaxHoursToEn
     "--yes-min", "$GapYesMin",
     "--yes-max", "$GapYesMax",
     "--min-days-to-end", "0",
+    "--max-days-to-end", "$GapFallbackMaxDaysToEnd",
     "--max-hours-to-end", "$GapFallbackMaxHoursToEnd",
     "--max-end-diff-hours", "$GapFallbackMaxHoursToEnd",
+    "--min-liquidity", "$GapMinLiquidity",
+    "--min-volume-24h", "$GapMinVolume24h",
     "--min-gross-edge-cents", "$GapMinGrossEdgeCents",
     "--min-net-edge-cents", "$GapMinNetEdgeCents",
     "--per-leg-cost", "$GapPerLegCost",
@@ -306,13 +448,22 @@ if (($gapRows.Count -eq 0) -and (($GapFallbackMaxHoursToEnd -gt $GapMaxHoursToEn
   if (Test-Path $gapCsv) {
     $gapRows = Import-Csv -Path $gapCsv
   }
+  $gapCounts = Read-GapCounts -SummaryPath $gapJson
+  $gapScanDaysUsed = [double]$GapFallbackMaxDaysToEnd
   $gapScanHoursUsed = [double]$GapFallbackMaxHoursToEnd
   $gapFallbackUsed = $true
   $gapScanStage = "fallback_window"
 }
 
-if (($gapRows.Count -eq 0) -and $GapFallbackNoHourCap.IsPresent) {
-  Log "scan logical gaps fallback no hour cap max_pages=$GapFallbackMaxPages"
+$shouldRunNoHourFallback = $GapFallbackNoHourCap.IsPresent -or ($gapCounts.interval_markets -eq 0)
+if (($gapRows.Count -eq 0) -and $shouldRunNoHourFallback) {
+  $fallbackReason = "manual_switch"
+  $gapScanStage = "fallback_no_hour_cap"
+  if (-not $GapFallbackNoHourCap.IsPresent) {
+    $fallbackReason = "auto_interval_markets_zero"
+    $gapScanStage = "fallback_no_hour_cap_auto"
+  }
+  Log "scan logical gaps fallback no hour cap max_pages=$GapFallbackMaxPages reason=$fallbackReason"
   Run-Python @(
     $tool, "gap",
     "--max-pages", "$GapFallbackMaxPages",
@@ -320,8 +471,11 @@ if (($gapRows.Count -eq 0) -and $GapFallbackNoHourCap.IsPresent) {
     "--yes-min", "$GapYesMin",
     "--yes-max", "$GapYesMax",
     "--min-days-to-end", "0",
+    "--max-days-to-end", "$GapFallbackMaxDaysToEnd",
     "--max-hours-to-end", "0",
     "--max-end-diff-hours", "0",
+    "--min-liquidity", "$GapMinLiquidity",
+    "--min-volume-24h", "$GapMinVolume24h",
     "--min-gross-edge-cents", "$GapMinGrossEdgeCents",
     "--min-net-edge-cents", "$GapMinNetEdgeCents",
     "--per-leg-cost", "$GapPerLegCost",
@@ -335,14 +489,189 @@ if (($gapRows.Count -eq 0) -and $GapFallbackNoHourCap.IsPresent) {
   if (Test-Path $gapCsv) {
     $gapRows = Import-Csv -Path $gapCsv
   }
+  $gapCounts = Read-GapCounts -SummaryPath $gapJson
+  $gapScanDaysUsed = [double]$GapFallbackMaxDaysToEnd
   $gapScanHoursUsed = 0.0
   $gapFallbackUsed = $true
-  $gapScanStage = "fallback_no_hour_cap"
+}
+$gapSummaryThresholds = Parse-FloatList -raw $GapSummaryThresholdGrid
+if ($gapSummaryThresholds.Count -eq 0) {
+  $gapSummaryThresholds = @(
+    [double]$GapSummaryMinNetEdgeCents
+    1.0
+    2.0
+  )
+}
+$gapSummaryThresholds = @(
+  $gapSummaryThresholds + [double]$GapSummaryMinNetEdgeCents
+) | Where-Object { [double]$_ -ge 0.0 } | Sort-Object -Unique
+
+$gapSummaryStats = @()
+foreach ($thr in $gapSummaryThresholds) {
+  $rowsAtThr = @(
+    $gapRows | Where-Object { [double]($_.net_edge_cents) -ge [double]$thr }
+  )
+  $uniqueAtThr = @(
+    $rowsAtThr | Group-Object event_key
+  )
+  $gapSummaryStats += [pscustomobject]@{
+    threshold = [double]$thr
+    rows = [int]$rowsAtThr.Count
+    unique_events = [int]$uniqueAtThr.Count
+  }
+}
+
+$gapSummarySelectedThreshold = [double]$GapSummaryMinNetEdgeCents
+if ($GapSummaryMode -eq "auto" -and $GapSummaryTargetUniqueEvents -gt 0 -and $gapSummaryStats.Count -gt 0) {
+  $eligible = @(
+    $gapSummaryStats |
+      Where-Object { [int]$_.unique_events -ge [int]$GapSummaryTargetUniqueEvents } |
+      Sort-Object threshold
+  )
+  if ($eligible.Count -gt 0) {
+    $gapSummarySelectedThreshold = [double]$eligible[-1].threshold
+  } else {
+    $nonZero = @(
+      $gapSummaryStats |
+        Where-Object { [int]$_.unique_events -gt 0 } |
+        Sort-Object threshold
+    )
+    if ($nonZero.Count -gt 0) {
+      $gapSummarySelectedThreshold = [double]$nonZero[0].threshold
+    } else {
+      $gapSummarySelectedThreshold = [double]($gapSummaryStats | Sort-Object threshold | Select-Object -First 1).threshold
+    }
+  }
+}
+
+$gapRowsSummaryFiltered = @(
+  $gapRows | Where-Object { [double]($_.net_edge_cents) -ge $gapSummarySelectedThreshold }
+)
+$gapRowsBestPerEvent = Select-BestGapRowsPerEvent -Rows $gapRowsSummaryFiltered
+$gapSummaryThresholdLines = @()
+foreach ($stat in $gapSummaryStats) {
+  $selectedTag = ""
+  if ([math]::Abs([double]$stat.threshold - [double]$gapSummarySelectedThreshold) -lt 1e-9) {
+    $selectedTag = " [selected]"
+  }
+  $gapSummaryThresholdLines += (
+    "- net>={0:0.00}c: rows={1} unique_events={2}{3}" -f `
+    [double]$stat.threshold, `
+    [int]$stat.rows, `
+    [int]$stat.unique_events, `
+    $selectedTag
+  )
+}
+
+$realizedMonthlyReturnText = "n/a"
+$realizedMonthlyReturnPct = $null
+$realizedObservedDays = 0
+$realizedOpenPositions = 0
+$realizedResolvedPositions = 0
+$realizedRollingTrades = 0
+$realizedScreenCsv = $screenCsv
+$realizedEntrySource = "primary_screen"
+$realizedEntryCandidates = 0
+if (Test-Path $screenCsv) {
+  try {
+    $baseRows = Import-Csv -Path $screenCsv
+    $realizedEntryCandidates = [int]$baseRows.Count
+  } catch {
+    $realizedEntryCandidates = 0
+  }
+}
+if (Test-Path $fastScreenCsv) {
+  try {
+    $fastRows = Import-Csv -Path $fastScreenCsv
+    if ($fastRows.Count -gt 0) {
+      $realizedScreenCsv = $fastScreenCsv
+      $realizedEntrySource = "fast_72h_lowyes"
+      $realizedEntryCandidates = [int]$fastRows.Count
+    }
+  } catch {
+  }
+}
+if (Test-Path $realizedTool) {
+  Log "update realized monthly tracker source=$realizedEntrySource candidates=$realizedEntryCandidates"
+  try {
+    Run-Python @(
+      $realizedTool,
+      "--screen-csv", $realizedScreenCsv,
+      "--positions-json", $realizedPositionsJson,
+      "--out-daily-jsonl", $realizedDailyJsonl,
+      "--out-latest-json", $realizedLatestJson,
+      "--out-monthly-txt", $realizedMonthlyTxt,
+      "--entry-top-n", "$realizedEntryTopN",
+      "--per-trade-cost", "$PerTradeCost"
+    )
+    if (Test-Path $realizedLatestJson) {
+      try {
+        $realizedObj = Get-Content -Path $realizedLatestJson -Raw | ConvertFrom-Json
+        $metricsProp = $realizedObj.PSObject.Properties["metrics"]
+        if ($metricsProp -and $null -ne $metricsProp.Value) {
+          $m = $metricsProp.Value
+          $obsProp = $m.PSObject.Properties["observed_days"]
+          if ($obsProp -and $null -ne $obsProp.Value) {
+            $realizedObservedDays = [int]$obsProp.Value
+          }
+          $openProp = $m.PSObject.Properties["open_positions"]
+          if ($openProp -and $null -ne $openProp.Value) {
+            $realizedOpenPositions = [int]$openProp.Value
+          }
+          $resolvedProp = $m.PSObject.Properties["resolved_positions"]
+          if ($resolvedProp -and $null -ne $resolvedProp.Value) {
+            $realizedResolvedPositions = [int]$resolvedProp.Value
+          }
+          $rollProp = $m.PSObject.Properties["rolling_30d"]
+          if ($rollProp -and $null -ne $rollProp.Value) {
+            $roll = $rollProp.Value
+            $rollTradesProp = $roll.PSObject.Properties["resolved_trades"]
+            if ($rollTradesProp -and $null -ne $rollTradesProp.Value) {
+              $realizedRollingTrades = [int]$rollTradesProp.Value
+            }
+            $retProp = $roll.PSObject.Properties["return_pct"]
+            if ($retProp -and $null -ne $retProp.Value) {
+              $realizedMonthlyReturnPct = [double]$retProp.Value
+              $realizedMonthlyReturnText = "{0:+0.00%;-0.00%;+0.00%}" -f $realizedMonthlyReturnPct
+            }
+          }
+        }
+      } catch {
+      }
+    }
+    Log "realized monthly tracker done monthly_30d=$realizedMonthlyReturnText observed_days=$realizedObservedDays open=$realizedOpenPositions resolved=$realizedResolvedPositions source=$realizedEntrySource"
+  } catch {
+    Log "realized monthly tracker failed (non-fatal): $($_.Exception.Message)"
+  }
+} else {
+  Log "realized monthly tracker skip: tool not found"
 }
 
 Log "compose summary"
 $oosAll = Get-Content -Path $oosAllJson -Raw | ConvertFrom-Json
 $oosGuard = Get-Content -Path $oosGuardJson -Raw | ConvertFrom-Json
+$monthlyNowText = $realizedMonthlyReturnText
+$monthlyNowSource = "realized_rolling_30d"
+if ($null -eq $realizedMonthlyReturnPct) {
+  $monthlyNowText = "n/a"
+  $monthlyNowSource = "n/a"
+  try {
+    $wProp = $oosGuard.PSObject.Properties["walkforward_oos_window"]
+    if ($wProp -and $null -ne $wProp.Value) {
+      $w = $wProp.Value
+      $annProp = $w.PSObject.Properties["annualized_return"]
+      if ($annProp -and $null -ne $annProp.Value) {
+        $ann = [double]$annProp.Value
+        if ($ann -gt -1.0) {
+          $monthlyNow = [math]::Pow(1.0 + $ann, 1.0 / 12.0) - 1.0
+          $monthlyNowText = "{0:+0.00%;-0.00%;+0.00%}" -f $monthlyNow
+          $monthlyNowSource = "backtest_oos_ann_to_monthly"
+        }
+      }
+    }
+  } catch {
+  }
+}
 $gapSummary = $null
 if (Test-Path $gapJson) {
   try {
@@ -424,12 +753,27 @@ $lines = @(
   ("- max_stale_hours: {0}" -f [double]$settings.max_stale_hours)
   ("- max_open_positions: {0}" -f [int]$settings.max_open_positions)
   ("- max_open_per_category: {0}" -f [int]$settings.max_open_per_category)
+  ("- guard_max_open_positions: {0}" -f [int]$GuardMaxOpenPositions)
+  ("- guard_max_open_per_category: {0}" -f [int]$GuardMaxOpenPerCategory)
   ("- allfold min_n (train/test): {0}/{1}" -f [int]$AllMinTrainN, [int]$AllMinTestN)
   ("- guarded min_n (train/test): {0}/{1}" -f [int]$GuardMinTrainN, [int]$GuardMinTestN)
   ("- screen max pages: {0}" -f [int]$ScreenMaxPages)
+  ("- fast screen max pages: {0}" -f [int]$realizedFastMaxPages)
+  ("- fast screen yes range: [{0},{1}]" -f [double]$realizedFastYesMin, [double]$realizedFastYesMax)
+  ("- fast screen max hours to end: {0}" -f [double]$realizedFastMaxHoursToEnd)
   ("- gap max pages: {0}" -f [int]$GapMaxPages)
   ("- gap fallback max pages: {0}" -f [int]$GapFallbackMaxPages)
+  ("- gap min liquidity: {0}" -f [double]$GapMinLiquidity)
+  ("- gap min volume24h: {0}" -f [double]$GapMinVolume24h)
+  ("- gap max days: {0}" -f [double]$GapMaxDaysToEnd)
+  ("- gap fallback max days: {0}" -f [double]$GapFallbackMaxDaysToEnd)
+  ("- gap summary base min net edge (cents): {0}" -f [double]$GapSummaryMinNetEdgeCents)
+  ("- gap summary mode: {0}" -f [string]$GapSummaryMode)
+  ("- gap summary target unique events: {0}" -f [int]$GapSummaryTargetUniqueEvents)
+  ("- gap summary threshold grid: {0}" -f [string]$GapSummaryThresholdGrid)
+  ("- gap summary selected net edge (cents): {0}" -f [double]$gapSummarySelectedThreshold)
   ("- gap scan stage: {0}" -f $gapScanStage)
+  ("- gap window days: {0}" -f $gapScanDaysUsed)
   ("- gap window hours: {0}" -f $gapScanHoursUsed)
   ("- gap fallback used: {0}" -f $gapFallbackUsed)
   ("- gap universe: markets={0} interval={1} events={2} pairs={3}" -f $gapMarketsTotal, $gapIntervalMarkets, $gapEvents, $gapPairs)
@@ -437,6 +781,18 @@ $lines = @(
   "Backtest:"
   ("- " + (Format-Metric "Allfolds" $oosAll))
   ("- " + (Format-Metric "Guarded" $oosGuard))
+  ""
+  "Forward measured (realized):"
+  ("- rolling_30d_monthly_return: {0}" -f $realizedMonthlyReturnText)
+  ("- monthly_return_now: {0}" -f $monthlyNowText)
+  ("- monthly_return_now_source: {0}" -f $monthlyNowSource)
+  ("- realized_entry_source: {0}" -f $realizedEntrySource)
+  ("- realized_entry_candidates: {0}" -f [int]$realizedEntryCandidates)
+  ("- realized_entry_top_n: {0}" -f [int]$realizedEntryTopN)
+  ("- rolling_30d_resolved_trades: {0}" -f [int]$realizedRollingTrades)
+  ("- observed_days: {0}" -f [int]$realizedObservedDays)
+  ("- open_positions: {0}" -f [int]$realizedOpenPositions)
+  ("- resolved_positions: {0}" -f [int]$realizedResolvedPositions)
   ""
   ("Screen candidates now: {0}" -f $screenRows.Count)
 )
@@ -455,8 +811,10 @@ foreach ($r in ($screenRows | Select-Object -First 10)) {
 }
 
 $lines += ""
-$lines += ("Logical gaps now: {0}" -f $gapRows.Count)
-foreach ($r in ($gapRows | Select-Object -First 10)) {
+$lines += ("Logical gaps now: raw={0} filtered={1} unique_events={2} (net>={3:0.00}c)" -f $gapRows.Count, $gapRowsSummaryFiltered.Count, $gapRowsBestPerEvent.Count, [double]$gapSummarySelectedThreshold)
+$lines += "Logical gaps threshold stats:"
+$lines += $gapSummaryThresholdLines
+foreach ($r in ($gapRowsBestPerEvent | Select-Object -First 10)) {
   $qa = [string]$r.market_a_question
   if ($qa.Length -gt 80) {
     $qa = $qa.Substring(0, 80)
@@ -480,3 +838,5 @@ Log "done summary=$summaryTxt"
 if ($discordRequested) {
   Send-DiscordSummary -summaryPath $summaryTxt
 }
+
+exit 0

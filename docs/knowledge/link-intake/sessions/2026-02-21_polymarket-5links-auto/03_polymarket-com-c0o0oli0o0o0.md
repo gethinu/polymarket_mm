@@ -4,28 +4,18 @@ Source URL:
 - `https://polymarket.com/@c0O0OLI0O0O0`
 
 Capture status:
-- `low` (fallback capture via wallet evidence)
+- `none`
 
 Automated capture facts:
 - source_type: `polymarket_profile`
-- fetched_via: `wallet_fallback` (direct profile fetch failed)
-- title: `Profile URL unstable; wallet fallback evidence captured`
+- fetched_via: `failed`
+- title: `(none)`
 - published_time: `(none)`
-- word_count: `0` (profile text not captured)
-- char_count: `0` (profile text not captured)
+- word_count: `0`
+- char_count: `0`
 
 Captured points:
-- Profile mapping observed in fallback artifacts:
-  - `proxyAddress/baseAddress/primaryAddress = 0xfedc381bf3fb5d20433bb4a0216b15dbbc5c6398`
-- Trade history can be fetched via Data API using the wallet above when profile URL is unstable.
-- Refreshed wallet fetch (2026-02-21) succeeded:
-  - `trade_count=479` (all markets, observe-only)
-- Autopsy summary indicates short-horizon, high-turnover behavior:
-  - `classification=SNIPER_TIMING`
-  - `time_profitable_pct=95.43`
-  - `buy_notional=58034.5911`
-  - `sell_notional=132814.0090`
-  - `yes_avg_entry=0.0025523` on `319620.67` shares
+- [ ] Fill manually from extracted content and references.
 
 Known gaps:
 - Direct profile page extraction unstable on capture date (`404/timeout`).
@@ -42,10 +32,8 @@ Evidence artifacts:
 - `logs\c0_wallet_trades_20260221_summary.json`
 
 Implementation notes (observe-only):
-- Prefer wallet-based trade evidence when profile URLs are unstable.
-- Treat this actor as a candidate benchmark for micro-move execution styles.
+- Fill after direct profile evidence is captured.
 - Keep all analysis observe-only (no execution assumptions from social/profile metadata).
 
 Open questions:
 - Can we robustly resolve profile handle -> wallet without relying on fragile page HTML?
-- Should intake pipeline auto-fallback to Data API wallet-centric capture for `polymarket_profile` failures?

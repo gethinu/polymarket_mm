@@ -191,6 +191,64 @@ def load_state(path: str) -> dict:
     return {}
 
 
+def _state_open_stats(state: dict) -> Dict[str, object]:
+    entries = int((state or {}).get("entries") or 0)
+    exits = int((state or {}).get("exits") or 0)
+    entry_exit_gap = entries - exits
+    out: Dict[str, object] = {
+        "available": False,
+        "open_total": 0,
+        "open_active": 0,
+        "open_inactive": 0,
+        "entry_exit_gap": entry_exit_gap,
+        "consistency_ok": True,
+        "warning": "",
+    }
+    if not isinstance(state, dict):
+        return out
+
+    token_states = state.get("token_states")
+    if not isinstance(token_states, dict):
+        return out
+
+    active_ids = {str(x) for x in (state.get("active_token_ids") or []) if str(x)}
+    open_total = 0
+    open_active = 0
+    for tid, raw in token_states.items():
+        if not isinstance(raw, dict):
+            continue
+        try:
+            side = int(raw.get("position_side") or 0)
+        except Exception:
+            side = 0
+        try:
+            size = float(raw.get("position_size") or 0.0)
+        except Exception:
+            size = 0.0
+        if side == 0 or size <= 0:
+            continue
+        open_total += 1
+        tok_id = str(raw.get("token_id") or tid)
+        if tok_id in active_ids:
+            open_active += 1
+
+    open_inactive = max(0, open_total - open_active)
+    consistency_ok = (entry_exit_gap == open_total)
+    warnings: List[str] = []
+    if open_inactive > 0:
+        warnings.append(f"inactive_open={open_inactive}")
+    if not consistency_ok:
+        warnings.append(f"entries_minus_exits={entry_exit_gap} open_total={open_total}")
+
+    out["available"] = True
+    out["open_total"] = open_total
+    out["open_active"] = open_active
+    out["open_inactive"] = open_inactive
+    out["consistency_ok"] = consistency_ok
+    out["warning"] = ", ".join(warnings)
+    return out
+
+
 def collect_log_stats(log_file: str, since: dt.datetime, until: dt.datetime, tail_lines: int) -> Dict[str, object]:
     out = {
         "entries": 0,
@@ -343,7 +401,20 @@ def _build_single_snapshot(
     latest_total = float(ts_total[-1]) if ts_total else 0.0
     latest_day = float(ts_day[-1]) if ts_day else 0.0
     halted = bool(state.get("halted") or False) or bool((selected[0].halted if selected else False))
-    open_positions = sum(1 for r in selected if int(r.position_side) != 0)
+    selected_open_positions = sum(1 for r in selected if int(r.position_side) != 0)
+    open_stats = _state_open_stats(state)
+    if bool(open_stats.get("available")):
+        open_positions = int(open_stats.get("open_total") or 0)
+        open_positions_active = int(open_stats.get("open_active") or 0)
+        open_positions_inactive = int(open_stats.get("open_inactive") or 0)
+        open_consistency_ok = bool(open_stats.get("consistency_ok"))
+    else:
+        open_positions = selected_open_positions
+        open_positions_active = selected_open_positions
+        open_positions_inactive = 0
+        open_consistency_ok = True
+    entry_exit_gap = int(open_stats.get("entry_exit_gap") or 0)
+    consistency_warning = str(open_stats.get("warning") or "")
     active_signals = sum(1 for r in selected if int(r.consensus_side) != 0)
 
     return {
@@ -353,6 +424,10 @@ def _build_single_snapshot(
             "total_pnl": latest_total,
             "day_pnl": latest_day,
             "open_positions": open_positions,
+            "open_positions_active": open_positions_active,
+            "open_positions_inactive": open_positions_inactive,
+            "open_consistency_ok": bool(open_consistency_ok),
+            "entry_exit_gap": int(entry_exit_gap),
             "active_signals": active_signals,
             "tracked_tokens": len(selected),
             "halted": halted,
@@ -372,6 +447,11 @@ def _build_single_snapshot(
             "universe_refresh_count": int(state.get("universe_refresh_count") or 0),
             "halted": bool(state.get("halted") or False),
             "halt_reason": str(state.get("halt_reason") or ""),
+            "open_positions_total": int(open_positions),
+            "open_positions_active": int(open_positions_active),
+            "open_positions_inactive": int(open_positions_inactive),
+            "entry_exit_gap": int(entry_exit_gap),
+            "consistency_warning": consistency_warning,
         },
         "tokens": tokens_payload,
     }
@@ -399,6 +479,10 @@ def _variant_summary(source: str, label: str, snap: dict) -> dict:
             "total_pnl": float(totals.get("total_pnl") or 0.0),
             "day_pnl": float(totals.get("day_pnl") or 0.0),
             "open_positions": int(totals.get("open_positions") or 0),
+            "open_positions_active": int(totals.get("open_positions_active") or 0),
+            "open_positions_inactive": int(totals.get("open_positions_inactive") or 0),
+            "open_consistency_ok": bool(totals.get("open_consistency_ok", True)),
+            "entry_exit_gap": int(totals.get("entry_exit_gap") or 0),
             "active_signals": int(totals.get("active_signals") or 0),
             "halted": bool(totals.get("halted") or False),
         },
@@ -406,6 +490,7 @@ def _variant_summary(source: str, label: str, snap: dict) -> dict:
         "exits": exits,
         "signals_seen": int(state.get("signals_seen") or 0),
         "halt_reason": str(state.get("halt_reason") or ""),
+        "consistency_warning": str(state.get("consistency_warning") or ""),
         "summaries": int(events.get("summaries") or 0),
     }
 
@@ -989,7 +1074,8 @@ HTML_TEMPLATE = r"""
 
     function variantCardHtml(v) {
       const t = v?.totals || {};
-      const guard = (t.halted || String(v?.halt_reason || '').length > 0) ? 'HALT' : 'OK';
+      const warnOpen = Number(t.open_positions_inactive || 0) > 0 || (t.open_consistency_ok === false);
+      const guard = (t.halted || String(v?.halt_reason || '').length > 0) ? 'HALT' : (warnOpen ? 'WARN' : 'OK');
       return `
         <article class="variant">
           <div class="head">
@@ -999,8 +1085,10 @@ HTML_TEMPLATE = r"""
           <div class="row"><span>day</span><b class="${clsSigned(t.day_pnl || 0)}">${fmtSigned(t.day_pnl || 0)}</b></div>
           <div class="row"><span>total</span><b class="${clsSigned(t.total_pnl || 0)}">${fmtSigned(t.total_pnl || 0)}</b></div>
           <div class="row"><span>entries / exits</span><b>${Number(v?.entries || 0)} / ${Number(v?.exits || 0)}</b></div>
+          <div class="row"><span>open(all/a/i)</span><b class="${warnOpen ? 'down' : 'neutral'}">${Number(t.open_positions || 0)} / ${Number(t.open_positions_active || 0)} / ${Number(t.open_positions_inactive || 0)}</b></div>
           <div class="row"><span>open / signals</span><b>${Number(t.open_positions || 0)} / ${Number(t.active_signals || 0)}</b></div>
-          <div class="row"><span>guard</span><b class="${guard === 'HALT' ? 'down' : 'up'}">${guard}</b></div>
+          <div class="row"><span>entry-exit gap</span><b class="${(t.open_consistency_ok === false) ? 'down' : 'neutral'}">${Number(t.entry_exit_gap || 0)}</b></div>
+          <div class="row"><span>guard</span><b class="${guard === 'OK' ? 'up' : 'down'}">${guard}</b></div>
         </article>
       `;
     }
@@ -1046,11 +1134,18 @@ HTML_TEMPLATE = r"""
       el('stTotal').className = `v ${clsSigned(total.total_pnl || 0)}`;
       el('stDay').textContent = fmtSigned(total.day_pnl || 0);
       el('stDay').className = `v ${clsSigned(total.day_pnl || 0)}`;
-      el('stOpen').textContent = String(total.open_positions || 0);
+      const openTotal = Number(total.open_positions || 0);
+      const openActive = Number(total.open_positions_active || 0);
+      const openInactive = Number(total.open_positions_inactive || 0);
+      const hasOpenWarn = (openInactive > 0) || (total.open_consistency_ok === false);
+      el('stOpen').textContent = `${openTotal} (${openActive}/${openInactive})`;
+      el('stOpen').className = `v ${hasOpenWarn ? 'down' : 'neutral'}`;
       el('stSignals').textContent = String(total.active_signals || 0);
       el('stEntries').textContent = `${state.entries || 0} / ${state.exits || 0}`;
-      el('stGuard').textContent = (total.halted || state.halted) ? 'HALT' : 'OK';
-      el('stGuard').className = `v ${(total.halted || state.halted) ? 'down' : 'up'}`;
+      const hasWarn = hasOpenWarn || String(state.consistency_warning || '').length > 0;
+      const guard = (total.halted || state.halted) ? 'HALT' : (hasWarn ? 'WARN' : 'OK');
+      el('stGuard').textContent = guard;
+      el('stGuard').className = `v ${guard === 'OK' ? 'up' : 'down'}`;
 
       drawLineChart(el('pnlCanvas'), series.ts || [], series.total_pnl || [], series.day_pnl || [], series.signal_count || []);
 
@@ -1071,8 +1166,9 @@ HTML_TEMPLATE = r"""
       });
 
       const guardTxt = (state.halted && state.halt_reason) ? `halt=${state.halt_reason}` : 'halt=none';
+      const warnTxt = String(state.consistency_warning || '').trim();
       el('metaA').textContent = `metrics: tokens=${total.tracked_tokens || 0} summaries=${events.summaries || 0} entries=${events.entries || 0} exits=${events.exits || 0} variants=${(snapshot?.variants || []).length || 1}`;
-      el('metaB').textContent = `state: signals_seen=${state.signals_seen || 0} universe_refresh=${state.universe_refresh_count || 0} ${guardTxt}`;
+      el('metaB').textContent = `state: signals_seen=${state.signals_seen || 0} universe_refresh=${state.universe_refresh_count || 0} ${guardTxt}${warnTxt ? ` warn=${warnTxt}` : ''}`;
       el('heartbeat').textContent = `updated ${snapshot.generated_at || '-'} | ${snapshot.detail_label || detailMode || '-'}`;
     }
 

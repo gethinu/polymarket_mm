@@ -11,7 +11,7 @@ Primary artifacts:
 Source list:
 - 1. `https://x.com/AleiahLock/status/2024049808055431356` (`medium`)
 - 2. `https://x.com/browomo/status/2024075205245534532` (`low`)
-- 3. `https://polymarket.com/@c0O0OLI0O0O0` (`low`, wallet-fallback evidence)
+- 3. `https://polymarket.com/@c0O0OLI0O0O0` (`none`)
 - 4. `https://x.com/velonxbt/status/2024075034185142683` (`medium`)
 - 5. `https://x.com/RohOnChain/status/2023781142663754049` (`medium`)
 
@@ -25,4 +25,4 @@ Per-link files:
 Notes:
 - Keep per-link notes isolated before cross-link synthesis.
 - Merge common strategy layers only after all per-link files are complete.
-- For Link 03, direct profile extraction was unstable on 2026-02-21; fallback wallet evidence was used.
+- For Link 03, direct profile extraction was unstable on 2026-02-21 (404/timeout).

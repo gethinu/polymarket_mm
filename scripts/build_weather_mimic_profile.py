@@ -16,7 +16,6 @@ import argparse
 import datetime as dt
 import json
 import math
-import re
 import subprocess
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
@@ -71,22 +70,10 @@ def to_cmdline(args: Iterable[str]) -> str:
 
 
 def parse_include_regex(filter_obj: dict) -> str:
-    include_regex = str(filter_obj.get("include_regex") or "").strip()
-    if include_regex:
-        return include_regex
-    keywords = filter_obj.get("focus_keywords")
-    if not isinstance(keywords, list):
-        return "weather|temperature"
-    cleaned: List[str] = []
-    for item in keywords:
-        s = str(item or "").strip().lower()
-        if not s:
-            continue
-        if re.fullmatch(r"[a-z0-9 _-]{2,32}", s):
-            cleaned.append(re.escape(s))
-    if not cleaned:
-        return "weather|temperature"
-    return "|".join(cleaned[:12])
+    # Use a stable weather-core regex to avoid accidental matches such as "rain" inside "train".
+    # Cohort city tokens are intentionally not injected here, because they can overfit/noise-match.
+    _ = filter_obj
+    return r"weather|temperature|precipitation|forecast|\brain\b|\bsnow\b|\bwind\b|humidity"
 
 
 def derive_thresholds(cohort: dict) -> dict:
@@ -113,11 +100,8 @@ def derive_thresholds(cohort: dict) -> dict:
     yes_high_min = clamp(max(finite_or(p50, 0.90), share_floor), 0.80, 0.98)
     yes_high_max = clamp(max(yes_high_min + 0.02, finite_or(p90, 0.99) + 0.002), yes_high_min + 0.01, 0.995)
 
+    # Keep lateprob horizon broad enough so active weather boards are discoverable without fallback logic.
     lateprob_max_hours = 24.0
-    if high_share >= 65.0:
-        lateprob_max_hours = 6.0
-    elif high_share >= 45.0:
-        lateprob_max_hours = 12.0
 
     no_longshot_max_hours = 24.0
     if low_share >= 35.0:
@@ -149,11 +133,28 @@ def build_commands(
     min_liquidity: float,
     min_volume_24h: float,
     top_n: int,
+    consensus_score_mode: str,
+    consensus_weight_overlap: Optional[float],
+    consensus_weight_net_yield: Optional[float],
+    consensus_weight_max_profit: Optional[float],
+    consensus_weight_liquidity: Optional[float],
+    consensus_weight_volume: Optional[float],
+    consensus_require_overlap: bool,
+    consensus_max_per_correlation_bucket: int,
+    consensus_min_turnover_ratio: float,
+    consensus_max_hours_to_end: float,
+    no_longshot_per_trade_cost: float,
+    no_longshot_min_net_yield_per_day: float,
+    lateprob_per_trade_cost: float,
+    lateprob_max_active_stale_hours: float,
+    lateprob_disable_weather_filter: bool,
 ) -> Dict[str, List[str]]:
     no_longshot_csv = f"logs/{profile_name}_no_longshot_latest.csv"
     no_longshot_json = f"logs/{profile_name}_no_longshot_latest.json"
     lateprob_csv = f"logs/{profile_name}_lateprob_latest.csv"
     lateprob_json = f"logs/{profile_name}_lateprob_latest.json"
+    consensus_csv = f"logs/{profile_name}_consensus_watchlist_latest.csv"
+    consensus_json = f"logs/{profile_name}_consensus_watchlist_latest.json"
 
     no_longshot_cmd = [
         "python",
@@ -186,6 +187,12 @@ def build_commands(
         "--out-json",
         no_longshot_json,
     ]
+    if float(no_longshot_per_trade_cost) > 0:
+        no_longshot_cmd.extend(["--per-trade-cost", fmt_float(float(no_longshot_per_trade_cost), digits=4)])
+    if float(no_longshot_min_net_yield_per_day) > 0:
+        no_longshot_cmd.extend(
+            ["--min-net-yield-per-day", fmt_float(float(no_longshot_min_net_yield_per_day), digits=6)]
+        )
 
     lateprob_cmd = [
         "python",
@@ -214,7 +221,7 @@ def build_commands(
         "--min-volume-24h",
         fmt_float(float(min_volume_24h)),
         "--include-regex",
-        include_regex,
+        ("" if bool(lateprob_disable_weather_filter) else include_regex),
         "--top-n",
         str(int(top_n)),
         "--out-csv",
@@ -222,9 +229,54 @@ def build_commands(
         "--out-json",
         lateprob_json,
     ]
+    if float(lateprob_per_trade_cost) > 0:
+        lateprob_cmd.extend(["--per-trade-cost", fmt_float(float(lateprob_per_trade_cost), digits=4)])
+    if float(lateprob_max_active_stale_hours) > 0:
+        lateprob_cmd.extend(["--max-active-stale-hours", fmt_float(float(lateprob_max_active_stale_hours), digits=4)])
+    consensus_cmd = [
+        "python",
+        "scripts/build_weather_consensus_watchlist.py",
+        "--no-longshot-csv",
+        no_longshot_csv,
+        "--lateprob-csv",
+        lateprob_csv,
+        "--profile-name",
+        profile_name,
+        "--top-n",
+        str(int(top_n)),
+        "--min-liquidity",
+        fmt_float(float(min_liquidity)),
+        "--min-volume-24h",
+        fmt_float(float(min_volume_24h)),
+        "--score-mode",
+        str(consensus_score_mode).strip().lower() or "balanced",
+        "--out-csv",
+        consensus_csv,
+        "--out-json",
+        consensus_json,
+    ]
+    if consensus_weight_overlap is not None:
+        consensus_cmd.extend(["--weight-overlap", fmt_float(float(consensus_weight_overlap))])
+    if consensus_weight_net_yield is not None:
+        consensus_cmd.extend(["--weight-net-yield", fmt_float(float(consensus_weight_net_yield))])
+    if consensus_weight_max_profit is not None:
+        consensus_cmd.extend(["--weight-max-profit", fmt_float(float(consensus_weight_max_profit))])
+    if consensus_weight_liquidity is not None:
+        consensus_cmd.extend(["--weight-liquidity", fmt_float(float(consensus_weight_liquidity))])
+    if consensus_weight_volume is not None:
+        consensus_cmd.extend(["--weight-volume", fmt_float(float(consensus_weight_volume))])
+    if consensus_require_overlap:
+        consensus_cmd.append("--require-overlap")
+    if int(consensus_max_per_correlation_bucket) > 0:
+        consensus_cmd.extend(["--max-per-correlation-bucket", str(int(consensus_max_per_correlation_bucket))])
+    if float(consensus_min_turnover_ratio) > 0:
+        consensus_cmd.extend(["--min-turnover-ratio", fmt_float(float(consensus_min_turnover_ratio), digits=4)])
+    if float(consensus_max_hours_to_end) > 0:
+        consensus_cmd.extend(["--max-hours-to-end", fmt_float(float(consensus_max_hours_to_end), digits=4)])
     return {
         "no_longshot_screen": no_longshot_cmd,
         "lateprob_screen": lateprob_cmd,
+        "consensus_watchlist": consensus_cmd,
     }
 
 
@@ -235,6 +287,7 @@ def build_supervisor_config(
 ) -> dict:
     delay = max(30.0, float(scan_interval_sec))
     restart_cap = max(6, int(math.ceil(3600.0 / max(delay, 1.0))) + 4)
+    consensus_delay = delay + 60.0
     return {
         "name": f"{profile_name}-observe-suite",
         "description": "Observe-only periodic scanners generated from cohort weather mimic profile.",
@@ -257,6 +310,14 @@ def build_supervisor_config(
                 "restart_delay_sec": delay,
                 "max_restarts_per_hour": restart_cap,
             },
+            {
+                "name": f"{profile_name}_consensus",
+                "enabled": True,
+                "command": commands["consensus_watchlist"],
+                "restart": "always",
+                "restart_delay_sec": consensus_delay,
+                "max_restarts_per_hour": restart_cap,
+            },
         ],
     }
 
@@ -265,12 +326,75 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Build weather mimic observe profile from cohort analysis JSON")
     p.add_argument("cohort_json", help="Input JSON produced by scripts/analyze_trader_cohort.py")
     p.add_argument("--profile-name", default="weather_mimic", help="Output prefix for logs/jobs")
-    p.add_argument("--scan-max-pages", type=int, default=8, help="Max Gamma pages per generated scan command")
+    p.add_argument("--scan-max-pages", type=int, default=80, help="Max Gamma pages per generated scan command")
     p.add_argument("--scan-page-size", type=int, default=500, help="Page size per generated scan command")
     p.add_argument("--scan-interval-sec", type=float, default=300.0, help="Cycle interval for generated supervisor jobs")
-    p.add_argument("--min-liquidity", type=float, default=0.0, help="Minimum liquidity filter for generated commands")
-    p.add_argument("--min-volume-24h", type=float, default=0.0, help="Minimum 24h volume filter for generated commands")
+    p.add_argument("--min-liquidity", type=float, default=500.0, help="Minimum liquidity filter for generated commands")
+    p.add_argument("--min-volume-24h", type=float, default=100.0, help="Minimum 24h volume filter for generated commands")
     p.add_argument("--top-n", type=int, default=30, help="Top-N rows for generated scanner commands")
+    p.add_argument(
+        "--consensus-score-mode",
+        choices=("balanced", "liquidity", "edge"),
+        default="balanced",
+        help="Scoring mode used for generated consensus watchlist command.",
+    )
+    p.add_argument("--consensus-weight-overlap", type=float, default=None, help="Optional consensus weight override")
+    p.add_argument("--consensus-weight-net-yield", type=float, default=None, help="Optional consensus weight override")
+    p.add_argument("--consensus-weight-max-profit", type=float, default=None, help="Optional consensus weight override")
+    p.add_argument("--consensus-weight-liquidity", type=float, default=None, help="Optional consensus weight override")
+    p.add_argument("--consensus-weight-volume", type=float, default=None, help="Optional consensus weight override")
+    p.add_argument(
+        "--consensus-require-overlap",
+        action="store_true",
+        help="Require consensus rows to exist in both no_longshot and lateprob scans",
+    )
+    p.add_argument(
+        "--consensus-max-per-correlation-bucket",
+        type=int,
+        default=0,
+        help="Optional cap for rows per inferred correlation bucket in consensus output",
+    )
+    p.add_argument(
+        "--consensus-min-turnover-ratio",
+        type=float,
+        default=0.0,
+        help="Minimum volume_24h/liquidity ratio passed to consensus watchlist command (0 disables)",
+    )
+    p.add_argument(
+        "--consensus-max-hours-to-end",
+        type=float,
+        default=0.0,
+        help="Maximum hours_to_end passed to consensus watchlist command (0 disables)",
+    )
+    p.add_argument(
+        "--no-longshot-per-trade-cost",
+        type=float,
+        default=0.0,
+        help="Per-trade cost passed to generated no_longshot command (0 keeps scanner default)",
+    )
+    p.add_argument(
+        "--no-longshot-min-net-yield-per-day",
+        type=float,
+        default=0.0,
+        help="Minimum net_yield_per_day passed to generated no_longshot command (0 disables)",
+    )
+    p.add_argument(
+        "--lateprob-per-trade-cost",
+        type=float,
+        default=0.0,
+        help="Per-trade cost passed to generated lateprob command (0 keeps scanner default)",
+    )
+    p.add_argument(
+        "--lateprob-max-active-stale-hours",
+        type=float,
+        default=0.0,
+        help="Maximum active stale hours passed to generated lateprob command (0 keeps scanner default)",
+    )
+    p.add_argument(
+        "--lateprob-disable-weather-filter",
+        action="store_true",
+        help="Set generated lateprob command include-regex to empty string (disable weather-only filter).",
+    )
     p.add_argument("--out-json", default="", help="Profile JSON output path (simple filename goes under logs/)")
     p.add_argument(
         "--out-supervisor-config",
@@ -307,6 +431,15 @@ def main() -> int:
     include_regex = parse_include_regex(market_filter)
 
     thresholds = derive_thresholds(cohort)
+    consensus_weights_override = {
+        "overlap": args.consensus_weight_overlap,
+        "net_yield": args.consensus_weight_net_yield,
+        "max_profit": args.consensus_weight_max_profit,
+        "liquidity": args.consensus_weight_liquidity,
+        "volume": args.consensus_weight_volume,
+    }
+    consensus_weights_override = {k: float(v) for k, v in consensus_weights_override.items() if v is not None}
+
     commands = build_commands(
         profile_name=str(args.profile_name).strip() or "weather_mimic",
         include_regex=include_regex,
@@ -316,6 +449,21 @@ def main() -> int:
         min_liquidity=float(args.min_liquidity),
         min_volume_24h=float(args.min_volume_24h),
         top_n=int(args.top_n),
+        consensus_score_mode=str(args.consensus_score_mode),
+        consensus_weight_overlap=args.consensus_weight_overlap,
+        consensus_weight_net_yield=args.consensus_weight_net_yield,
+        consensus_weight_max_profit=args.consensus_weight_max_profit,
+        consensus_weight_liquidity=args.consensus_weight_liquidity,
+        consensus_weight_volume=args.consensus_weight_volume,
+        consensus_require_overlap=bool(args.consensus_require_overlap),
+        consensus_max_per_correlation_bucket=int(args.consensus_max_per_correlation_bucket),
+        consensus_min_turnover_ratio=float(args.consensus_min_turnover_ratio),
+        consensus_max_hours_to_end=float(args.consensus_max_hours_to_end),
+        no_longshot_per_trade_cost=float(args.no_longshot_per_trade_cost),
+        no_longshot_min_net_yield_per_day=float(args.no_longshot_min_net_yield_per_day),
+        lateprob_per_trade_cost=float(args.lateprob_per_trade_cost),
+        lateprob_max_active_stale_hours=float(args.lateprob_max_active_stale_hours),
+        lateprob_disable_weather_filter=bool(args.lateprob_disable_weather_filter),
     )
 
     supervisor_cfg = build_supervisor_config(
@@ -356,12 +504,29 @@ def main() -> int:
             "scan_max_pages": int(args.scan_max_pages),
             "scan_page_size": int(args.scan_page_size),
             "scan_interval_sec": float(args.scan_interval_sec),
+            "consensus_score_mode": str(args.consensus_score_mode),
+            "consensus_require_overlap": bool(args.consensus_require_overlap),
+            "consensus_max_per_correlation_bucket": int(args.consensus_max_per_correlation_bucket),
+            "consensus_min_turnover_ratio": float(args.consensus_min_turnover_ratio),
+            "consensus_max_hours_to_end": float(args.consensus_max_hours_to_end),
+            "no_longshot_per_trade_cost": float(args.no_longshot_per_trade_cost),
+            "no_longshot_min_net_yield_per_day": float(args.no_longshot_min_net_yield_per_day),
+            "lateprob_per_trade_cost": float(args.lateprob_per_trade_cost),
+            "lateprob_max_active_stale_hours": float(args.lateprob_max_active_stale_hours),
+            "lateprob_disable_weather_filter": bool(args.lateprob_disable_weather_filter),
+            **(
+                {"consensus_weights_override": consensus_weights_override}
+                if consensus_weights_override
+                else {}
+            ),
         },
         "commands": {
             "no_longshot_screen_args": commands["no_longshot_screen"],
             "lateprob_screen_args": commands["lateprob_screen"],
+            "consensus_watchlist_args": commands["consensus_watchlist"],
             "no_longshot_screen_cmdline": to_cmdline(commands["no_longshot_screen"]),
             "lateprob_screen_cmdline": to_cmdline(commands["lateprob_screen"]),
+            "consensus_watchlist_cmdline": to_cmdline(commands["consensus_watchlist"]),
         },
         "supervisor": {
             "config_path": "" if supervisor_out_path is None else str(supervisor_out_path),
@@ -410,6 +575,8 @@ def main() -> int:
     print(to_cmdline(commands["no_longshot_screen"]))
     print("Lateprob scan:")
     print(to_cmdline(commands["lateprob_screen"]))
+    print("Consensus watchlist:")
+    print(to_cmdline(commands["consensus_watchlist"]))
     return 0
 
 

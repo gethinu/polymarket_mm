@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""
+Summarize entry timing patterns from an analyze_user.py autopsy JSON.
+
+Input file shape:
+  {
+    "meta": {"market": {"condition_id": "...", "market_slug": "...", ...}, ...},
+    "trades": [...],
+    "analysis": {...}
+  }
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import math
+import statistics
+import sys
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+
+GAMMA_API_BASE = "https://gamma-api.polymarket.com"
+USER_AGENT = "Mozilla/5.0 (compatible; wallet-entry-timing-report/1.0)"
+
+
+def safe_print(msg: str) -> None:
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        try:
+            enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+            print(msg.encode(enc, errors="replace").decode(enc, errors="replace"))
+        except Exception:
+            pass
+
+
+def as_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def parse_iso_to_ts(value: str) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(dt.datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp())
+    except Exception:
+        return None
+
+
+def fetch_json(url: str, timeout_sec: float = 25.0, retries: int = 4) -> Optional[object]:
+    req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+    for i in range(retries):
+        try:
+            with urlopen(req, timeout=timeout_sec) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (HTTPError, URLError, TimeoutError, ValueError):
+            if i >= retries - 1:
+                return None
+    return None
+
+
+def fetch_market_end_ts(condition_id: str = "", market_slug: str = "") -> Tuple[Optional[int], str]:
+    if condition_id:
+        q = urlencode({"condition_ids": condition_id})
+        url = f"{GAMMA_API_BASE}/markets?{q}"
+        data = fetch_json(url)
+        if isinstance(data, list) and data:
+            end_iso = str(data[0].get("endDate") or "")
+            ts = parse_iso_to_ts(end_iso)
+            if ts is not None:
+                return ts, end_iso
+
+    if market_slug:
+        q = urlencode({"slug": market_slug})
+        url = f"{GAMMA_API_BASE}/markets?{q}"
+        data = fetch_json(url)
+        if isinstance(data, list) and data:
+            end_iso = str(data[0].get("endDate") or "")
+            ts = parse_iso_to_ts(end_iso)
+            if ts is not None:
+                return ts, end_iso
+
+    return None, ""
+
+
+def fmt_ts(ts: Optional[int]) -> str:
+    if ts is None or ts <= 0:
+        return "-"
+    return dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def bucket_label(low: Optional[int], high: Optional[int]) -> str:
+    if low is None and high is None:
+        return "all"
+    if low is None:
+        return f"<{high}s"
+    if high is None:
+        return f">={low}s"
+    return f"{low}-{high}s"
+
+
+def histogram(values: List[float], edges: List[int]) -> List[dict]:
+    """
+    edges are ascending, in seconds.
+    bins:
+      (-inf, e0), [e0,e1), ..., [eN, +inf)
+    """
+    bins = []
+    bounds: List[Tuple[Optional[int], Optional[int]]] = []
+    if not edges:
+        return []
+    bounds.append((None, edges[0]))
+    for i in range(len(edges) - 1):
+        bounds.append((edges[i], edges[i + 1]))
+    bounds.append((edges[-1], None))
+
+    for low, high in bounds:
+        if low is None:
+            cnt = sum(1 for v in values if v < float(high))
+        elif high is None:
+            cnt = sum(1 for v in values if v >= float(low))
+        else:
+            cnt = sum(1 for v in values if float(low) <= v < float(high))
+        bins.append({"bucket": bucket_label(low, high), "count": int(cnt)})
+    return bins
+
+
+def load_autopsy(path: Path) -> Tuple[dict, List[dict]]:
+    with path.open("r", encoding="utf-8") as f:
+        obj = json.load(f)
+    if not isinstance(obj, dict):
+        raise ValueError("Input JSON must be an object")
+    trades = obj.get("trades")
+    if not isinstance(trades, list):
+        raise ValueError("Input JSON does not contain trades[]")
+    meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
+    return meta, trades
+
+
+def resolve_out_path(raw_out: str) -> Path:
+    root = Path(__file__).resolve().parents[1]
+    logs = root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    if not raw_out:
+        return logs / "wallet_entry_timing_report.json"
+    p = Path(raw_out)
+    if p.is_absolute():
+        return p
+    if len(p.parts) == 1:
+        return logs / p.name
+    return root / p
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Report wallet entry timing from autopsy JSON")
+    p.add_argument("input_json", help="autopsy JSON generated by analyze_user.py (single-wallet mode)")
+    p.add_argument(
+        "--sides",
+        default="BUY",
+        help="Comma-separated trade sides to include (e.g., BUY or BUY,SELL)",
+    )
+    p.add_argument(
+        "--sec-buckets",
+        default="30,60,120,300,600,1800,3600,10800",
+        help="Comma-separated seconds bucket edges for time-to-end histogram",
+    )
+    p.add_argument("--top-minutes", type=int, default=10, help="Top N minute-of-hour entries to print")
+    p.add_argument("--out", default="", help="Optional output JSON path (simple filename => logs/)")
+    args = p.parse_args()
+
+    input_path = Path(args.input_json)
+    if not input_path.exists():
+        safe_print(f"Input not found: {input_path}")
+        return 2
+
+    meta, trades = load_autopsy(input_path)
+    market = meta.get("market") if isinstance(meta.get("market"), dict) else {}
+    condition_id = str(market.get("condition_id") or "")
+    market_slug = str(market.get("market_slug") or "")
+    market_title = str(market.get("market_question") or market.get("event_title") or "")
+    wallet = str(meta.get("wallet") or "")
+
+    side_allow = {s.strip().upper() for s in str(args.sides).split(",") if s.strip()}
+    rows = []
+    for t in trades:
+        if not isinstance(t, dict):
+            continue
+        side = str(t.get("side") or "").upper()
+        if side_allow and side not in side_allow:
+            continue
+        ts = as_int(t.get("timestamp"), 0)
+        if ts <= 0:
+            continue
+        rows.append(
+            {
+                "timestamp": ts,
+                "side": side,
+                "outcome": str(t.get("outcome") or ""),
+                "price": t.get("price"),
+                "size": t.get("size"),
+            }
+        )
+    rows.sort(key=lambda x: x["timestamp"])
+    if not rows:
+        safe_print("No trades after side filter.")
+        return 1
+
+    end_ts, end_iso = fetch_market_end_ts(condition_id=condition_id, market_slug=market_slug)
+    sec_to_end: List[float] = []
+    if end_ts is not None:
+        for r in rows:
+            sec_to_end.append(float(end_ts - int(r["timestamp"])))
+
+    intervals = [
+        float(rows[i]["timestamp"] - rows[i - 1]["timestamp"])
+        for i in range(1, len(rows))
+        if rows[i]["timestamp"] >= rows[i - 1]["timestamp"]
+    ]
+
+    minute_counts: Dict[int, int] = {}
+    for r in rows:
+        m = dt.datetime.fromtimestamp(int(r["timestamp"]), tz=dt.timezone.utc).minute
+        minute_counts[m] = minute_counts.get(m, 0) + 1
+    minute_rank = sorted(minute_counts.items(), key=lambda kv: kv[1], reverse=True)[: max(1, int(args.top_minutes))]
+
+    edges = []
+    for tok in str(args.sec_buckets).split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            v = int(tok)
+            if v > 0:
+                edges.append(v)
+        except ValueError:
+            continue
+    edges = sorted(set(edges))
+
+    hist = histogram(sec_to_end, edges) if sec_to_end and edges else []
+
+    report = {
+        "meta": {
+            "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "input_json": str(input_path),
+            "wallet": wallet,
+            "market_title": market_title,
+            "condition_id": condition_id,
+            "market_slug": market_slug,
+            "end_date_iso": end_iso,
+            "included_sides": sorted(list(side_allow)),
+            "trade_count_included": len(rows),
+        },
+        "timing": {
+            "first_trade_ts": int(rows[0]["timestamp"]),
+            "last_trade_ts": int(rows[-1]["timestamp"]),
+            "avg_interval_sec": statistics.mean(intervals) if intervals else 0.0,
+            "median_interval_sec": statistics.median(intervals) if intervals else 0.0,
+            "time_to_end_sec_p10": (statistics.quantiles(sec_to_end, n=10)[0] if len(sec_to_end) >= 10 else min(sec_to_end)) if sec_to_end else None,
+            "time_to_end_sec_p50": statistics.median(sec_to_end) if sec_to_end else None,
+            "time_to_end_sec_p90": (statistics.quantiles(sec_to_end, n=10)[-1] if len(sec_to_end) >= 10 else max(sec_to_end)) if sec_to_end else None,
+            "time_to_end_histogram": hist,
+            "minute_of_hour_top": [{"minute_utc": int(m), "count": int(c)} for m, c in minute_rank],
+        },
+    }
+
+    safe_print("=" * 72)
+    safe_print("WALLET ENTRY TIMING REPORT")
+    safe_print("=" * 72)
+    safe_print(f"Wallet: {wallet or '-'}")
+    safe_print(f"Market: {market_title or '-'}")
+    safe_print(f"Condition: {condition_id or '-'}")
+    safe_print(f"Included sides: {', '.join(sorted(list(side_allow))) or '-'}")
+    safe_print(f"Trades included: {len(rows)}")
+    safe_print(f"First trade: {fmt_ts(report['timing']['first_trade_ts'])}")
+    safe_print(f"Last trade:  {fmt_ts(report['timing']['last_trade_ts'])}")
+    safe_print(f"Market end:  {end_iso or '-'}")
+    safe_print("")
+    safe_print(f"Avg interval:    {report['timing']['avg_interval_sec']:.2f}s")
+    safe_print(f"Median interval: {report['timing']['median_interval_sec']:.2f}s")
+    if sec_to_end:
+        safe_print(f"Time-to-end p10: {float(report['timing']['time_to_end_sec_p10']):.2f}s")
+        safe_print(f"Time-to-end p50: {float(report['timing']['time_to_end_sec_p50']):.2f}s")
+        safe_print(f"Time-to-end p90: {float(report['timing']['time_to_end_sec_p90']):.2f}s")
+        safe_print("")
+        safe_print("Time-to-end histogram:")
+        for b in report["timing"]["time_to_end_histogram"]:
+            safe_print(f"  {b['bucket']:>12}: {int(b['count'])}")
+    else:
+        safe_print("Time-to-end metrics unavailable (market end date not resolved).")
+
+    safe_print("")
+    safe_print("Top minute-of-hour (UTC):")
+    for r in report["timing"]["minute_of_hour_top"]:
+        safe_print(f"  :{int(r['minute_utc']):02d} -> {int(r['count'])}")
+
+    out_path = resolve_out_path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8") as f:
+        json.dump(report, f, ensure_ascii=False, indent=2)
+    safe_print("")
+    safe_print(f"Saved: {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+

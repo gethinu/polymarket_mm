@@ -20,15 +20,16 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import statistics
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from polymarket_clob_arb_scanner import as_float, extract_yes_token_id, fetch_active_markets, fetch_book
 
@@ -43,6 +44,21 @@ def iso_now() -> str:
 
 def local_day_key() -> str:
     return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+def parse_iso_datetime(value: object) -> Optional[datetime]:
+    s = str(value or "").strip()
+    if not s:
+        return None
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(s)
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def sign(x: float) -> int:
@@ -143,6 +159,7 @@ class TokenState:
     entry_cost_per_share: float = 0.0
     entry_expected_move_per_share: float = 0.0
     entry_ts: float = 0.0
+    entry_peak_per_share: float = 0.0
     cooldown_until_ts: float = 0.0
     disabled_until_ts: float = 0.0
     disable_reason: str = ""
@@ -158,6 +175,9 @@ class TokenState:
     sl_count: int = 0
     timeout_count: int = 0
     guard_exit_count: int = 0
+    consecutive_nonpositive_exits: int = 0
+    last_exit_reason: str = ""
+    last_exit_pnl: float = 0.0
 
 
 @dataclass
@@ -250,6 +270,29 @@ def load_state(path: Path) -> RuntimeState:
     return st
 
 
+def _is_windows_sharing_error(exc: BaseException) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        winerr = int(getattr(exc, "winerror", 0) or 0)
+        if winerr in (5, 32):
+            return True
+    return False
+
+
+def _replace_with_retry(tmp: Path, path: Path, retries: int = 10) -> None:
+    delay = 0.01
+    for i in range(max(1, int(retries))):
+        try:
+            tmp.replace(path)
+            return
+        except Exception as e:
+            if (not _is_windows_sharing_error(e)) or i >= int(retries) - 1:
+                raise
+            time.sleep(delay)
+            delay = min(0.2, delay * 2.0)
+
+
 def save_state(path: Path, st: RuntimeState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = {
@@ -274,7 +317,90 @@ def save_state(path: Path, st: RuntimeState) -> None:
         "disable_short_until_ts": st.disable_short_until_ts,
         "disable_side_reason": st.disable_side_reason,
     }
-    path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    # Atomic replace prevents readers (e.g., side router) from seeing partial JSON.
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(raw, indent=2), encoding="utf-8")
+    _replace_with_retry(tmp, path)
+
+
+def _pid_running(pid: int) -> bool:
+    if int(pid or 0) <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except PermissionError:
+        # Process exists but permissions may differ.
+        return True
+    except OSError:
+        return False
+    except Exception:
+        return False
+
+
+def _read_lock_pid(lock_path: Path) -> int:
+    try:
+        raw = lock_path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return 0
+    if not raw:
+        return 0
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            return int(obj.get("pid") or 0)
+    except Exception:
+        pass
+    try:
+        return int(raw)
+    except Exception:
+        return 0
+
+
+def acquire_state_lock(state_file: Path) -> Callable[[], None]:
+    lock_path = state_file.with_suffix(state_file.suffix + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    me = int(os.getpid())
+
+    for _ in range(2):
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+                f.write(
+                    json.dumps(
+                        {
+                            "pid": me,
+                            "state_file": str(state_file),
+                            "created_at": iso_now(),
+                        },
+                        ensure_ascii=True,
+                    )
+                )
+
+            def _release() -> None:
+                try:
+                    owner = _read_lock_pid(lock_path)
+                    if owner not in (0, me):
+                        return
+                    lock_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            return _release
+        except FileExistsError:
+            owner = _read_lock_pid(lock_path)
+            if owner <= 0:
+                # Another process may have just created the lock and not finished writing pid yet.
+                raise RuntimeError(f"state lock busy: {lock_path} pid=unknown")
+            if owner > 0 and _pid_running(owner):
+                raise RuntimeError(f"state lock busy: {lock_path} pid={owner}")
+            # Stale lock file from dead process; remove once and retry acquire.
+            try:
+                lock_path.unlink(missing_ok=True)
+            except Exception:
+                raise RuntimeError(f"state lock busy: {lock_path}")
+
+    raise RuntimeError(f"state lock busy: {lock_path}")
 
 
 def _best_price(levels: List[dict], choose_max: bool) -> Tuple[float, float]:
@@ -359,6 +485,9 @@ def _safe_compile_regex(pattern: str) -> Optional[re.Pattern]:
 def choose_universe(args) -> List[TokenState]:
     include_re = _safe_compile_regex(args.include_regex)
     exclude_re = _safe_compile_regex(args.exclude_regex)
+    now_utc = datetime.now(timezone.utc)
+    min_days_to_end = max(0.0, float(args.min_days_to_end))
+    max_days_to_end = max(0.0, float(args.max_days_to_end))
     max_load = max(int(args.gamma_limit), int(args.max_tokens) * 20)
     page_size = max(50, min(500, int(args.gamma_page_size)))
     max_pages = max(1, int(args.gamma_pages))
@@ -399,6 +528,15 @@ def choose_universe(args) -> List[TokenState]:
             continue
         if exclude_re and exclude_re.search(label):
             continue
+        if min_days_to_end > 0.0 or max_days_to_end > 0.0:
+            end_dt = parse_iso_datetime(m.get("endDate") or m.get("endDateIso"))
+            if not end_dt:
+                continue
+            days_to_end = (end_dt - now_utc).total_seconds() / 86400.0
+            if days_to_end < min_days_to_end:
+                continue
+            if max_days_to_end > 0.0 and days_to_end > max_days_to_end:
+                continue
 
         liq = as_float(m.get("liquidityNum", m.get("liquidity", 0.0)), 0.0)
         vol = as_float(m.get("volume24hr", 0.0), 0.0)
@@ -722,7 +860,7 @@ def _entry_plan(t: TokenState, score: float, args) -> Tuple[bool, dict]:
     sl_share = max(base_sl, rt_cost * max(0.1, float(args.sl_cost_mult)))
 
     min_edge = max(0.0, float(args.min_expected_edge_cents)) / 100.0
-    min_ratio = max(0.1, float(args.expected_move_cost_ratio))
+    min_ratio = max(0.0, float(args.expected_move_cost_ratio))
     if exp_move < (rt_cost * min_ratio):
         return False, {"reason": "expected_move_ratio", "rt_cost": rt_cost, "exp_move": exp_move, "exp_edge": exp_edge}
     if exp_edge < min_edge:
@@ -737,11 +875,33 @@ def _entry_plan(t: TokenState, score: float, args) -> Tuple[bool, dict]:
     }
 
 
-def maybe_disable_token_after_exit(t: TokenState, args, logger: Logger) -> None:
+def maybe_disable_token_after_exit(t: TokenState, args, logger: Logger, reason: str, pnl: float) -> None:
+    if now_ts() < float(t.disabled_until_ts or 0.0):
+        return
+
+    churn_streak = max(0, int(args.token_churn_streak))
+    churn_disable_sec = max(0.0, float(args.token_churn_disable_sec))
+    churn_max_pnl = max(0.0, float(args.token_churn_max_pnl_usd))
+    if (
+        churn_streak > 0
+        and churn_disable_sec > 0
+        and reason in {"timeout", "trail", "breakeven"}
+        and int(t.consecutive_nonpositive_exits or 0) >= churn_streak
+        and float(pnl) <= (churn_max_pnl + 1e-12)
+    ):
+        t.disabled_until_ts = now_ts() + churn_disable_sec
+        t.disable_reason = (
+            f"churn {int(t.consecutive_nonpositive_exits or 0)}x "
+            f"{reason} pnl<={churn_max_pnl:.4f}"
+        )
+        logger.info(
+            f"[{iso_now()}] token-disable {churn_disable_sec:.0f}s "
+            f"| {t.disable_reason} | trades={t.trade_count} | {t.label[:120]}"
+        )
+        return
+
     min_trades = max(1, int(args.token_loss_min_trades))
     if int(t.trade_count or 0) < min_trades:
-        return
-    if now_ts() < float(t.disabled_until_ts or 0.0):
         return
 
     realized_cut = max(0.0, float(args.token_loss_cut_usd))
@@ -836,6 +996,7 @@ def open_position(
     t.entry_cost_per_share = rt_cost
     t.entry_expected_move_per_share = exp_move
     t.entry_ts = now_ts()
+    t.entry_peak_per_share = 0.0
     t.unrealized_pnl = 0.0
     t.last_signal_ts = t.entry_ts
     t.last_round_trip_cost_per_share = rt_cost
@@ -878,8 +1039,12 @@ def close_position(
     t.trade_count += 1
     if pnl > 1e-12:
         t.win_count += 1
+        t.consecutive_nonpositive_exits = 0
     else:
         t.loss_count += 1
+        t.consecutive_nonpositive_exits = int(t.consecutive_nonpositive_exits or 0) + 1
+    t.last_exit_reason = str(reason or "")
+    t.last_exit_pnl = float(pnl)
     if reason == "tp":
         t.tp_count += 1
     elif reason == "sl":
@@ -909,6 +1074,7 @@ def close_position(
     t.entry_cost_per_share = 0.0
     t.entry_expected_move_per_share = 0.0
     t.entry_ts = 0.0
+    t.entry_peak_per_share = 0.0
     cooldown = max(0.0, float(args.cooldown_sec))
     if pnl <= 1e-12:
         cooldown *= max(1.0, float(args.loss_cooldown_mult))
@@ -918,8 +1084,8 @@ def close_position(
         f"[{iso_now()}] exit {reason} pnl={pnl:+.4f} "
         f"realized={t.realized_pnl:+.4f} trades={t.trade_count} | {t.label[:120]}"
     )
-    if reason in {"tp", "sl", "timeout"}:
-        maybe_disable_token_after_exit(t, args, logger)
+    if reason in {"tp", "sl", "timeout", "trail", "breakeven"}:
+        maybe_disable_token_after_exit(t, args, logger, reason=reason, pnl=pnl)
         _maybe_disable_side_after_exit(side=side, args=args, st=st, logger=logger)
     return True
 
@@ -927,22 +1093,35 @@ def close_position(
 def maybe_close_by_rules(t: TokenState, args, st: RuntimeState, logger: Logger) -> bool:
     if t.position_side == 0:
         return False
+    hold = now_ts() - float(t.entry_ts or 0.0)
+    max_hold = float(args.max_hold_sec)
+    # Inactive tokens can stop receiving book updates; still enforce max-hold timeout.
+    if max_hold > 0 and hold >= max_hold and float(t.last_mid or 0.0) <= 0:
+        return close_position(t, args, st, logger, reason="timeout", force_now=True)
     if t.last_mid <= 0:
         return False
     side = int(t.position_side)
     per_share = side * (float(t.last_mid) - float(t.entry_price))
     t.unrealized_pnl = per_share * float(t.position_size or 0.0)
+    t.entry_peak_per_share = max(float(t.entry_peak_per_share or 0.0), float(per_share))
 
     base_tp = max(0.0, float(args.take_profit_cents)) / 100.0
     base_sl = max(0.0, float(args.stop_loss_cents)) / 100.0
     tp = max(base_tp, float(t.entry_tp_per_share or 0.0))
     sl = max(base_sl, float(t.entry_sl_per_share or 0.0))
-    hold = now_ts() - float(t.entry_ts or 0.0)
+    peak = float(t.entry_peak_per_share or 0.0)
+    trail_arm = max(0.0, float(args.trail_arm_cents)) / 100.0
+    trail_drop = max(0.0, float(args.trail_drop_cents)) / 100.0
+    be_arm = max(0.0, float(args.breakeven_arm_cents)) / 100.0
     if tp > 0 and per_share >= tp:
         return close_position(t, args, st, logger, reason="tp")
     if sl > 0 and per_share <= -sl:
         return close_position(t, args, st, logger, reason="sl")
-    if float(args.max_hold_sec) > 0 and hold >= float(args.max_hold_sec):
+    if trail_arm > 0 and trail_drop > 0 and peak >= trail_arm and per_share <= (peak - trail_drop):
+        return close_position(t, args, st, logger, reason="trail")
+    if be_arm > 0 and peak >= be_arm and per_share <= 0.0:
+        return close_position(t, args, st, logger, reason="breakeven")
+    if max_hold > 0 and hold >= max_hold:
         return close_position(t, args, st, logger, reason="timeout")
     return False
 
@@ -957,6 +1136,20 @@ def total_pnl(st: RuntimeState) -> Tuple[float, float, float]:
         else:
             unreal += float(t.unrealized_pnl or 0.0)
     return realized + unreal, realized, unreal
+
+
+def open_position_counts(st: RuntimeState, active_ids: List[str]) -> Tuple[int, int, int]:
+    active = {str(tid) for tid in (active_ids or []) if str(tid)}
+    open_all = 0
+    open_active = 0
+    for tid, t in st.token_states.items():
+        if int(t.position_side or 0) == 0 or float(t.position_size or 0.0) <= 0:
+            continue
+        open_all += 1
+        tok_id = str(t.token_id or tid)
+        if tok_id in active:
+            open_active += 1
+    return open_all, open_active, max(0, open_all - open_active)
 
 
 def maybe_append_metric(metrics_file: str, payload: dict) -> None:
@@ -1037,6 +1230,12 @@ def _apply_runtime_control(args, logger: Logger, payload: dict, source: str) -> 
     apply_float("min_expected_edge_cents", lo=0.0)
     apply_float("expected_move_cost_ratio", lo=0.0)
     apply_float("max_hold_sec", lo=0.0)
+    apply_float("trail_arm_cents", lo=0.0)
+    apply_float("trail_drop_cents", lo=0.0)
+    apply_float("breakeven_arm_cents", lo=0.0)
+    apply_int("token_churn_streak", lo=0)
+    apply_float("token_churn_disable_sec", lo=0.0)
+    apply_float("token_churn_max_pnl_usd", lo=0.0)
 
     note = str(payload.get("reason") or payload.get("note") or "").strip()
     if changes:
@@ -1079,6 +1278,18 @@ def parse_args():
     p.add_argument("--min-spread-cents", type=float, default=0.20, help="Universe filter: minimum spread in cents")
     p.add_argument("--include-regex", default="", help="Only include markets where question matches regex")
     p.add_argument("--exclude-regex", default="", help="Exclude markets where question matches regex")
+    p.add_argument(
+        "--min-days-to-end",
+        type=float,
+        default=0.0,
+        help="Universe filter: minimum days until market endDate (0=disabled)",
+    )
+    p.add_argument(
+        "--max-days-to-end",
+        type=float,
+        default=0.0,
+        help="Universe filter: maximum days until market endDate (0=disabled)",
+    )
     p.add_argument("--universe-refresh-sec", type=float, default=600.0, help="Universe refresh cadence")
 
     p.add_argument("--poll-sec", type=float, default=2.0, help="Order book polling interval")
@@ -1146,6 +1357,24 @@ def parse_args():
     p.add_argument("--stop-loss-cents", type=float, default=1.2, help="Per-share SL in cents")
     p.add_argument("--max-hold-sec", type=float, default=240.0, help="Time stop per position")
     p.add_argument(
+        "--trail-arm-cents",
+        type=float,
+        default=0.0,
+        help="Activate trailing exit after this per-share gain in cents (0=disabled)",
+    )
+    p.add_argument(
+        "--trail-drop-cents",
+        type=float,
+        default=0.0,
+        help="Trailing exit distance from peak gain in cents (0=disabled)",
+    )
+    p.add_argument(
+        "--breakeven-arm-cents",
+        type=float,
+        default=0.0,
+        help="After this gain in cents, exit if gain falls back to <= 0 (0=disabled)",
+    )
+    p.add_argument(
         "--execution-mode",
         choices=("taker", "mid"),
         default="taker",
@@ -1203,6 +1432,24 @@ def parse_args():
         type=float,
         default=1800.0,
         help="How long to disable a losing token before re-enabling",
+    )
+    p.add_argument(
+        "--token-churn-streak",
+        type=int,
+        default=0,
+        help="Disable token when non-positive timeout/trail/breakeven exits reach this streak (0=disabled)",
+    )
+    p.add_argument(
+        "--token-churn-disable-sec",
+        type=float,
+        default=0.0,
+        help="How long to disable a token when churn streak guard triggers",
+    )
+    p.add_argument(
+        "--token-churn-max-pnl-usd",
+        type=float,
+        default=0.0,
+        help="Count timeout/trail/breakeven exits as churn only when pnl <= this USD",
     )
     p.add_argument(
         "--side-loss-cut-usd",
@@ -1266,6 +1513,13 @@ def parse_args():
 def run(args) -> int:
     logger = Logger(args.log_file)
     state_file = Path(args.state_file)
+    try:
+        release_lock = acquire_state_lock(state_file)
+    except Exception as e:
+        logger.info(f"[{iso_now()}] startup aborted: {type(e).__name__}: {e}")
+        return 2
+
+    logger.info(f"[{iso_now()}] instance-lock acquired: {state_file}.lock")
     state = load_state(state_file)
     if not state.day_key:
         state.day_key = local_day_key()
@@ -1348,9 +1602,11 @@ def run(args) -> int:
                 continue
             update_token_from_book(t, feat, history_size=int(args.history_size))
 
-        # Exit checks first to keep risk bounded.
-        for tid in active_ids:
-            maybe_close_by_rules(state.token_states[tid], args, state, logger)
+        # Exit checks first to keep risk bounded, including inactive open positions.
+        for t in state.token_states.values():
+            if int(t.position_side or 0) == 0:
+                continue
+            maybe_close_by_rules(t, args, state, logger)
 
         # Daily loss guard based on mark-to-mid total PnL.
         total, realized, unreal = total_pnl(state)
@@ -1362,13 +1618,12 @@ def run(args) -> int:
                     f"daily loss guard hit: day_pnl {day:+.4f} <= -{float(args.daily_loss_limit_usd):.4f}"
                 )
                 logger.info(f"[{iso_now()}] HALT: {state.halt_reason}")
-            for tid in active_ids:
-                t = state.token_states[tid]
+            for t in state.token_states.values():
                 if t.position_side != 0:
                     close_position(t, args, state, logger, reason="daily_loss_guard", force_now=True)
 
-        open_positions = sum(1 for tid in active_ids if state.token_states[tid].position_side != 0)
-        slots = max(0, int(args.max_open_positions) - open_positions)
+        open_all_positions, open_active_positions, open_inactive_positions = open_position_counts(state, active_ids)
+        slots = max(0, int(args.max_open_positions) - open_active_positions)
         candidates: List[Tuple[float, str, int, dict]] = []
         now_entry = now_ts()
         if state.disable_long_until_ts > 0 and now_entry >= float(state.disable_long_until_ts):
@@ -1445,6 +1700,7 @@ def run(args) -> int:
             last_metrics = now_ts()
             total, realized, unreal = total_pnl(state)
             day = total - float(state.day_anchor_total_pnl or 0.0)
+            open_all_positions, open_active_positions, open_inactive_positions = open_position_counts(state, active_ids)
             for tid in active_ids:
                 t = state.token_states[tid]
                 maybe_append_metric(
@@ -1479,6 +1735,7 @@ def run(args) -> int:
                         "entry_sl_per_share": float(t.entry_sl_per_share or 0.0),
                         "entry_cost_per_share": float(t.entry_cost_per_share or 0.0),
                         "entry_expected_move_per_share": float(t.entry_expected_move_per_share or 0.0),
+                        "entry_peak_per_share": float(t.entry_peak_per_share or 0.0),
                         "last_round_trip_cost_per_share": float(t.last_round_trip_cost_per_share or 0.0),
                         "last_expected_move_per_share": float(t.last_expected_move_per_share or 0.0),
                         "last_expected_edge_per_share": float(t.last_expected_edge_per_share or 0.0),
@@ -1487,7 +1744,13 @@ def run(args) -> int:
                         "trade_count": int(t.trade_count or 0),
                         "win_count": int(t.win_count or 0),
                         "loss_count": int(t.loss_count or 0),
+                        "consecutive_nonpositive_exits": int(t.consecutive_nonpositive_exits or 0),
+                        "last_exit_reason": str(t.last_exit_reason or "")[:32],
+                        "last_exit_pnl": float(t.last_exit_pnl or 0.0),
                         "halted": bool(state.halted),
+                        "open_positions_total": int(open_all_positions),
+                        "open_positions_active": int(open_active_positions),
+                        "open_positions_inactive": int(open_inactive_positions),
                         "total_pnl": float(total),
                         "day_pnl": float(day),
                         "realized_total": float(realized),
@@ -1499,7 +1762,9 @@ def run(args) -> int:
             last_summary = now_ts()
             total, _, _ = total_pnl(state)
             day = total - float(state.day_anchor_total_pnl or 0.0)
-            open_positions = sum(1 for tid in active_ids if state.token_states[tid].position_side != 0)
+            open_all_positions, open_active_positions, open_inactive_positions = open_position_counts(state, active_ids)
+            entry_exit_gap = int(state.entries or 0) - int(state.exits or 0)
+            consistency_ok = (entry_exit_gap == open_all_positions)
             disabled_tokens = sum(1 for tid in active_ids if state.token_states[tid].disabled_until_ts > now_ts())
             long_losses = max(0, int(state.long_trades or 0) - int(state.long_wins or 0))
             short_losses = max(0, int(state.short_trades or 0) - int(state.short_wins or 0))
@@ -1511,6 +1776,12 @@ def run(args) -> int:
                 f"L={float(state.long_realized or 0.0):+.4f}({int(state.long_wins or 0)}/{long_losses}) "
                 f"S={float(state.short_realized or 0.0):+.4f}({int(state.short_wins or 0)}/{short_losses})"
             )
+            warnings: List[str] = []
+            if open_inactive_positions > 0:
+                warnings.append(f"inactive_open={open_inactive_positions}")
+            if not consistency_ok:
+                warnings.append(f"entries_minus_exits={entry_exit_gap} open_total={open_all_positions}")
+            warn_txt = f" warn={','.join(warnings)}" if warnings else ""
             best_sig = None
             for tid in active_ids:
                 t = state.token_states[tid]
@@ -1519,22 +1790,31 @@ def run(args) -> int:
             if best_sig:
                 logger.info(
                     f"[{iso_now()}] summary({int(args.summary_every_sec)}s): "
-                    f"active={len(active_ids)} open={open_positions} signals={state.signals_seen} "
+                    f"active={len(active_ids)} open={open_all_positions} "
+                    f"open_active={open_active_positions} open_inactive={open_inactive_positions} "
+                    f"signals={state.signals_seen} "
                     f"entries={state.entries} exits={state.exits} disabled={disabled_tokens} "
                     f"mode={args.allowed_sides} side_dis={side_disabled} side={side_stats} "
                     f"day_pnl={day:+.4f} total={total:+.4f} "
                     f"best={best_sig.consensus_score:+.2f} {best_sig.label[:52]}"
+                    f"{warn_txt}"
                 )
             else:
                 logger.info(
                     f"[{iso_now()}] summary({int(args.summary_every_sec)}s): "
-                    f"active={len(active_ids)} open={open_positions} signals={state.signals_seen} "
+                    f"active={len(active_ids)} open={open_all_positions} "
+                    f"open_active={open_active_positions} open_inactive={open_inactive_positions} "
+                    f"signals={state.signals_seen} "
                     f"entries={state.entries} exits={state.exits} disabled={disabled_tokens} "
                     f"mode={args.allowed_sides} side_dis={side_disabled} side={side_stats} "
                     f"day_pnl={day:+.4f} total={total:+.4f}"
+                    f"{warn_txt}"
                 )
 
-        save_state(state_file, state)
+        try:
+            save_state(state_file, state)
+        except Exception as e:
+            logger.info(f"[{iso_now()}] state-save error: {type(e).__name__}: {e}")
         time.sleep(max(0.2, float(args.poll_sec)))
 
     total, realized, unreal = total_pnl(state)
@@ -1543,7 +1823,14 @@ def run(args) -> int:
         f"[{iso_now()}] stopped | total={total:+.4f} day={day:+.4f} "
         f"realized={realized:+.4f} unrealized={unreal:+.4f} entries={state.entries} exits={state.exits}"
     )
-    save_state(state_file, state)
+    try:
+        save_state(state_file, state)
+    except Exception as e:
+        logger.info(f"[{iso_now()}] state-save error: {type(e).__name__}: {e}")
+    try:
+        release_lock()
+    except Exception:
+        pass
     return 0
 
 

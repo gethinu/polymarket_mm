@@ -46,15 +46,20 @@ if (-not $Background -and -not $NoBackground) {
 
 $baseDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $scriptPath = Join-Path $baseDir "scripts\\run_clob_arb_monitor.ps1"
-$hiddenLauncherPath = Join-Path $baseDir "scripts\\run_clob_arb_monitor_hidden.vbs"
 if (-not (Test-Path $scriptPath)) {
   throw "Script not found: $scriptPath"
 }
-if (-not (Test-Path $hiddenLauncherPath)) {
-  throw "Hidden launcher not found: $hiddenLauncherPath"
-}
-
-$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument ('"{0}"' -f $hiddenLauncherPath)
+$powerShellExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$actionArgs = @(
+  "-NoLogo",
+  "-NoProfile",
+  "-NonInteractive",
+  "-ExecutionPolicy", "Bypass",
+  "-WindowStyle", "Hidden",
+  "-File", ('"{0}"' -f $scriptPath),
+  "-NoBackground"
+) -join " "
+$action = New-ScheduledTaskAction -Execute $powerShellExe -Argument $actionArgs -WorkingDirectory $baseDir
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes $IntervalMinutes) -RepetitionDuration (New-TimeSpan -Days $DurationDays)
 $settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited

@@ -27,6 +27,7 @@ import string
 import sys
 import threading
 import time
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from datetime import datetime, timezone
@@ -57,6 +58,21 @@ from polymarket_clob_arb_scanner import (
 
 WS_MARKET_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 SIMMER_API_BASE = "https://api.simmer.markets"
+ESPN_SCOREBOARD_BASE = "https://site.api.espn.com/apis/site/v2/sports"
+DEFAULT_ESPN_SCOREBOARD_PATHS = (
+    "basketball/nba",
+    "basketball/mens-college-basketball",
+    "football/nfl",
+    "baseball/mlb",
+    "hockey/nhl",
+    "soccer/eng.1",
+    "soccer/esp.1",
+    "soccer/ita.1",
+    "soccer/ger.1",
+    "soccer/fra.1",
+    "soccer/usa.1",
+    "soccer/uefa.champions",
+)
 
 
 def _env_str(name: str) -> str:
@@ -311,9 +327,16 @@ def _apply_env_overrides(args):
     maybe("gamma_exclude_regex", "CLOBBOT_GAMMA_EXCLUDE_REGEX", "", str)
     maybe("sports_live_prestart_min", "CLOBBOT_SPORTS_LIVE_PRESTART_MIN", 10.0, float)
     maybe("sports_live_postend_min", "CLOBBOT_SPORTS_LIVE_POSTEND_MIN", 30.0, float)
+    maybe("sports_market_types", "CLOBBOT_SPORTS_MARKET_TYPES", "", str)
+    maybe("sports_market_types_exclude", "CLOBBOT_SPORTS_MARKET_TYPES_EXCLUDE", "", str)
+    maybe("sports_feed_provider", "CLOBBOT_SPORTS_FEED_PROVIDER", "none", str)
+    maybe("sports_feed_timeout_sec", "CLOBBOT_SPORTS_FEED_TIMEOUT_SEC", 5.0, float)
+    maybe("sports_feed_live_buffer_sec", "CLOBBOT_SPORTS_FEED_LIVE_BUFFER_SEC", 90.0, float)
+    maybe("sports_feed_espn_paths", "CLOBBOT_SPORTS_FEED_ESPN_PATHS", ",".join(DEFAULT_ESPN_SCOREBOARD_PATHS), str)
 
     maybe("btc_5m_windows_back", "CLOBBOT_BTC_5M_WINDOWS_BACK", 1, lambda s: int(float(s)))
     maybe("btc_5m_windows_forward", "CLOBBOT_BTC_5M_WINDOWS_FORWARD", 1, lambda s: int(float(s)))
+    maybe("btc_updown_window_minutes", "CLOBBOT_BTC_UPDOWN_WINDOW_MINUTES", "5", str)
 
     maybe("max_exec_per_day", "CLOBBOT_MAX_EXEC_PER_DAY", 20, lambda s: int(float(s)))
     maybe("max_notional_per_day", "CLOBBOT_MAX_NOTIONAL_PER_DAY", 200.0, float)
@@ -339,6 +362,23 @@ def _apply_env_overrides(args):
     maybe("min_eval_interval_ms", "CLOBBOT_MIN_EVAL_INTERVAL_MS", 0, lambda s: int(float(s)))
     maybe("max_markets_per_event", "CLOBBOT_MAX_MARKETS_PER_EVENT", 0, lambda s: int(float(s)))
     maybe("observe_notify_min_interval_sec", "CLOBBOT_OBSERVE_NOTIFY_MIN_INTERVAL_SEC", 30.0, float)
+    maybe("observe_exec_edge_min_usd", "CLOBBOT_OBSERVE_EXEC_EDGE_MIN_USD", 0.0, float)
+    maybe("observe_exec_edge_strike_limit", "CLOBBOT_OBSERVE_EXEC_EDGE_STRIKE_LIMIT", 3, lambda s: int(float(s)))
+    maybe("observe_exec_edge_cooldown_sec", "CLOBBOT_OBSERVE_EXEC_EDGE_COOLDOWN_SEC", 300.0, float)
+    maybe(
+        "observe_exec_edge_filter_strategies",
+        "CLOBBOT_OBSERVE_EXEC_EDGE_FILTER_STRATEGIES",
+        "event-yes,event-no,event-pair",
+        str,
+    )
+    maybe("metrics_file", "CLOBBOT_METRICS_FILE", "", str)
+    maybe("wallet_signal_weight", "CLOBBOT_WALLET_SIGNAL_WEIGHT", 0.25, float)
+    maybe("wallet_signal_max_baskets", "CLOBBOT_WALLET_SIGNAL_MAX_BASKETS", 80, lambda s: int(float(s)))
+    maybe("wallet_signal_holders_limit", "CLOBBOT_WALLET_SIGNAL_HOLDERS_LIMIT", 16, lambda s: int(float(s)))
+    maybe("wallet_signal_top_wallets", "CLOBBOT_WALLET_SIGNAL_TOP_WALLETS", 8, lambda s: int(float(s)))
+    maybe("wallet_signal_min_trades", "CLOBBOT_WALLET_SIGNAL_MIN_TRADES", 8, lambda s: int(float(s)))
+    maybe("wallet_signal_max_trades", "CLOBBOT_WALLET_SIGNAL_MAX_TRADES", 600, lambda s: int(float(s)))
+    maybe("wallet_signal_page_size", "CLOBBOT_WALLET_SIGNAL_PAGE_SIZE", 200, lambda s: int(float(s)))
 
     maybe("log_file", "CLOBBOT_LOG_FILE", "", str)
     maybe("state_file", "CLOBBOT_STATE_FILE", "", str)
@@ -358,17 +398,40 @@ def _apply_env_overrides(args):
     if sports_live_only is True and not getattr(args, "sports_live_only", False):
         args.sports_live_only = True
 
+    sports_require_matchup = _env_bool("CLOBBOT_SPORTS_REQUIRE_MATCHUP")
+    if sports_require_matchup is True and not getattr(args, "sports_require_matchup", False):
+        args.sports_require_matchup = True
+
+    sports_feed_strict = _env_bool("CLOBBOT_SPORTS_FEED_STRICT")
+    if sports_feed_strict is True and not getattr(args, "sports_feed_strict", False):
+        args.sports_feed_strict = True
+
     notify_observe_signals = _env_bool("CLOBBOT_NOTIFY_OBSERVE_SIGNALS")
     if notify_observe_signals is True and not getattr(args, "notify_observe_signals", False):
         args.notify_observe_signals = True
 
+    observe_exec_edge_filter = _env_bool("CLOBBOT_OBSERVE_EXEC_EDGE_FILTER")
+    if observe_exec_edge_filter is True and not getattr(args, "observe_exec_edge_filter", False):
+        args.observe_exec_edge_filter = True
+
+    metrics_log_all_candidates = _env_bool("CLOBBOT_METRICS_LOG_ALL_CANDIDATES")
+    if metrics_log_all_candidates is True and not getattr(args, "metrics_log_all_candidates", False):
+        args.metrics_log_all_candidates = True
+
+    wallet_signal_enable = _env_bool("CLOBBOT_WALLET_SIGNAL_ENABLE")
+    if wallet_signal_enable is True and not getattr(args, "wallet_signal_enable", False):
+        args.wallet_signal_enable = True
+
     # Normalize a few option-like env vars (avoid crashing on bad values).
     if args.exec_backend not in {"auto", "clob", "simmer"}:
         args.exec_backend = "auto"
-    if getattr(args, "universe", "weather") not in {"weather", "gamma-active", "btc-5m"}:
+    if getattr(args, "universe", "weather") not in {"weather", "gamma-active", "btc-5m", "btc-updown"}:
         args.universe = "weather"
     if args.strategy not in {"buckets", "yes-no", "event-pair", "both", "all"}:
         args.strategy = "both"
+    args.sports_feed_provider = str(getattr(args, "sports_feed_provider", "none") or "none").strip().lower()
+    if args.sports_feed_provider not in {"none", "espn"}:
+        args.sports_feed_provider = "none"
 
     return args
 
@@ -381,6 +444,7 @@ class Leg:
     token_id: str
     simmer_market_id: str = ""
     side: str = "yes"
+    condition_id: str = ""
 
 
 @dataclass
@@ -402,10 +466,16 @@ class EventBasket:
     min_order_size: float = 0.0
     price_tick_size: float = 0.0
     score: float = 0.0
+    wallet_signal_score: float = 0.0
+    wallet_signal_confidence: float = 0.0
+    combined_score: float = 0.0
+    sports_market_type: str = ""
     last_alert_ts: float = 0.0
     last_exec_ts: float = 0.0
     last_eval_ts: float = 0.0
     last_signature: str = ""
+    exec_edge_neg_streak: int = 0
+    exec_edge_filter_until_ts: float = 0.0
 
 
 @dataclass
@@ -499,6 +569,356 @@ def parse_iso_or_epoch_to_ms(value) -> Optional[int]:
     return None
 
 
+@dataclass(frozen=True)
+class SportsFeedEvent:
+    provider: str
+    source_path: str
+    event_id: str
+    state: str
+    start_ms: Optional[int]
+    expected_duration_ms: int
+    home_team: str
+    away_team: str
+    home_aliases: Tuple[str, ...]
+    away_aliases: Tuple[str, ...]
+    short_name: str
+
+
+def _normalize_text_key(value: str) -> str:
+    s = unicodedata.normalize("NFKD", str(value or ""))
+    s = s.encode("ascii", errors="ignore").decode("ascii", errors="ignore").lower()
+    s = re.sub(r"[^a-z0-9]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _normalize_sports_market_type(value: str) -> str:
+    raw = _normalize_text_key(value).replace(" ", "")
+    aliases = {
+        "moneyline": "moneyline",
+        "winner": "moneyline",
+        "win": "moneyline",
+        "spread": "spread",
+        "handicap": "spread",
+        "total": "total",
+        "totals": "total",
+        "ou": "total",
+        "overunder": "total",
+        "draw": "draw",
+        "btts": "btts",
+        "bothteamstoscore": "btts",
+    }
+    return aliases.get(raw, "other")
+
+
+def parse_sports_market_type_filter(value: str) -> Set[str]:
+    out: Set[str] = set()
+    for part in str(value or "").split(","):
+        raw = _normalize_text_key(part)
+        if not raw:
+            continue
+        t = _normalize_sports_market_type(raw)
+        if t == "other" and raw not in {"other"}:
+            continue
+        out.add(t)
+    return out
+
+
+def infer_sports_market_type(m: dict) -> str:
+    t = _normalize_sports_market_type(str(m.get("sportsMarketType") or ""))
+    if t != "other":
+        return t
+
+    e0 = gamma_first_event(m)
+    q = str(m.get("question") or e0.get("title") or "").lower()
+    if not q:
+        return "other"
+
+    if "both teams to score" in q or "btts" in q:
+        return "btts"
+    if "draw" in q or "end in a draw" in q:
+        return "draw"
+    if "o/u" in q or "over/under" in q:
+        return "total"
+    if "spread:" in q or "handicap" in q:
+        return "spread"
+    if "moneyline" in q or re.search(r"\bto win\b", q) or re.search(r"\bwin on\b", q):
+        return "moneyline"
+    if " vs. " in q or " vs " in q or " @ " in q:
+        return "moneyline"
+    return "other"
+
+
+def _cleanup_team_fragment(value: str) -> str:
+    s = _normalize_text_key(value)
+    if s.startswith("will "):
+        s = s[5:].strip()
+    return s
+
+
+def extract_matchup_teams_from_text(value: str) -> Optional[Tuple[str, str]]:
+    if not value:
+        return None
+
+    s = unicodedata.normalize("NFKD", str(value or ""))
+    s = s.encode("ascii", errors="ignore").decode("ascii", errors="ignore")
+    s = re.sub(r"\s+", " ", s).strip()
+    if not s:
+        return None
+
+    m = re.search(r"(.+?)\s+(?:vs\.?|v\.?|@)\s+(.+?)(?:\s*[:|\-]|$)", s, flags=re.IGNORECASE)
+    if not m:
+        return None
+
+    a = _cleanup_team_fragment(m.group(1))
+    b = _cleanup_team_fragment(m.group(2))
+    if not a or not b or a == b:
+        return None
+
+    return (a, b) if a < b else (b, a)
+
+
+def market_matchup_pair(m: dict) -> Optional[Tuple[str, str]]:
+    e0 = gamma_first_event(m)
+    candidates = [
+        str(m.get("question") or ""),
+        str(e0.get("title") or ""),
+        str(e0.get("name") or ""),
+        str(e0.get("slug") or ""),
+        str(m.get("slug") or ""),
+    ]
+    for text in candidates:
+        pair = extract_matchup_teams_from_text(text)
+        if pair is not None:
+            return pair
+    return None
+
+
+def _expected_duration_ms_from_path(path: str) -> int:
+    sport = str(path or "").split("/", 1)[0].strip().lower()
+    if sport == "soccer":
+        return int(150 * 60_000)
+    if sport == "football":
+        return int(240 * 60_000)
+    if sport == "baseball":
+        return int(210 * 60_000)
+    if sport == "hockey":
+        return int(180 * 60_000)
+    if sport == "basketball":
+        return int(180 * 60_000)
+    return int(180 * 60_000)
+
+
+def _unique_aliases(values: List[str]) -> Tuple[str, ...]:
+    out: List[str] = []
+    seen: Set[str] = set()
+    for v in values:
+        n = _cleanup_team_fragment(v)
+        if not n or n in seen:
+            continue
+        seen.add(n)
+        out.append(n)
+    return tuple(out)
+
+
+def _iter_espn_feed_events(paths: List[str], timeout_sec: float = 5.0) -> Tuple[List[SportsFeedEvent], List[str]]:
+    events: List[SportsFeedEvent] = []
+    warnings: List[str] = []
+
+    for path in paths:
+        p = str(path or "").strip().strip("/")
+        if not p:
+            continue
+        url = f"{ESPN_SCOREBOARD_BASE}/{p}/scoreboard"
+        try:
+            req = Request(url, headers={"User-Agent": "clob-arb-monitor/1.0"})
+            with urlopen(req, timeout=max(1.0, float(timeout_sec or 5.0))) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except HTTPError as e:
+            warnings.append(f"espn:{p} HTTP {int(getattr(e, 'code', 0) or 0)}")
+            continue
+        except URLError:
+            warnings.append(f"espn:{p} URLError")
+            continue
+        except Exception as e:
+            warnings.append(f"espn:{p} {type(e).__name__}")
+            continue
+
+        for item in payload.get("events") or []:
+            if not isinstance(item, dict):
+                continue
+            status_t = ((item.get("status") or {}).get("type") or {}) if isinstance(item.get("status"), dict) else {}
+            state_raw = str(status_t.get("state") or "").strip().lower()
+            if state_raw in {"in", "live"}:
+                state = "live"
+            elif state_raw in {"pre"}:
+                state = "pre"
+            elif state_raw in {"post"}:
+                state = "post"
+            else:
+                state = "unknown"
+
+            start_ms = parse_iso_or_epoch_to_ms(item.get("date"))
+
+            home = ""
+            away = ""
+            home_alias_raw: List[str] = []
+            away_alias_raw: List[str] = []
+            comps = item.get("competitions")
+            if isinstance(comps, list) and comps:
+                comp0 = comps[0] if isinstance(comps[0], dict) else {}
+                competitors = comp0.get("competitors")
+                if isinstance(competitors, list):
+                    for c in competitors:
+                        if not isinstance(c, dict):
+                            continue
+                        t = c.get("team") if isinstance(c.get("team"), dict) else {}
+                        if not isinstance(t, dict):
+                            t = {}
+                        alias_values = [
+                            str(t.get("displayName") or ""),
+                            str(t.get("shortDisplayName") or ""),
+                            str(t.get("name") or ""),
+                            str(t.get("abbreviation") or ""),
+                            f"{str(t.get('location') or '').strip()} {str(t.get('name') or '').strip()}".strip(),
+                        ]
+                        home_away = str(c.get("homeAway") or "").strip().lower()
+                        if home_away == "home":
+                            if not home:
+                                home = str(t.get("displayName") or t.get("shortDisplayName") or "").strip()
+                            home_alias_raw.extend(alias_values)
+                        elif home_away == "away":
+                            if not away:
+                                away = str(t.get("displayName") or t.get("shortDisplayName") or "").strip()
+                            away_alias_raw.extend(alias_values)
+
+            if not home or not away:
+                n = str(item.get("name") or "")
+                m = re.search(r"(.+?)\s+at\s+(.+)", n, flags=re.IGNORECASE)
+                if m:
+                    away = away or m.group(1).strip()
+                    home = home or m.group(2).strip()
+                    away_alias_raw.append(away)
+                    home_alias_raw.append(home)
+
+            home_aliases = _unique_aliases(home_alias_raw)
+            away_aliases = _unique_aliases(away_alias_raw)
+            if not home_aliases or not away_aliases:
+                continue
+
+            events.append(
+                SportsFeedEvent(
+                    provider="espn",
+                    source_path=p,
+                    event_id=str(item.get("id") or "").strip(),
+                    state=state,
+                    start_ms=start_ms,
+                    expected_duration_ms=_expected_duration_ms_from_path(p),
+                    home_team=home,
+                    away_team=away,
+                    home_aliases=home_aliases,
+                    away_aliases=away_aliases,
+                    short_name=str(item.get("shortName") or item.get("name") or "").strip(),
+                )
+            )
+
+    return events, warnings
+
+
+def _sports_feed_event_rank(e: SportsFeedEvent) -> int:
+    if e.state == "live":
+        return 30
+    if e.state == "pre":
+        return 20
+    if e.state == "post":
+        return 10
+    return 0
+
+
+def build_sports_feed_snapshot(provider: str, espn_paths: List[str], timeout_sec: float, logger: "Logger") -> dict:
+    p = str(provider or "none").strip().lower()
+    if p != "espn":
+        return {"provider": "none", "fetched_ms": int(time.time() * 1000), "events": [], "pair_index": {}}
+
+    events, warnings = _iter_espn_feed_events(paths=espn_paths, timeout_sec=timeout_sec)
+    pair_index: Dict[Tuple[str, str], SportsFeedEvent] = {}
+    for e in events:
+        for a in e.home_aliases:
+            for b in e.away_aliases:
+                if not a or not b or a == b:
+                    continue
+                key = (a, b) if a < b else (b, a)
+                prev = pair_index.get(key)
+                if prev is None:
+                    pair_index[key] = e
+                    continue
+                if _sports_feed_event_rank(e) > _sports_feed_event_rank(prev):
+                    pair_index[key] = e
+                    continue
+                if _sports_feed_event_rank(e) == _sports_feed_event_rank(prev):
+                    now_ms = int(time.time() * 1000)
+                    prev_dist = abs((prev.start_ms or now_ms) - now_ms)
+                    new_dist = abs((e.start_ms or now_ms) - now_ms)
+                    if new_dist < prev_dist:
+                        pair_index[key] = e
+
+    if warnings:
+        logger.info(f"[{iso_now()}] sports-feed warnings: {', '.join(warnings[:5])}")
+    logger.info(
+        f"[{iso_now()}] sports-feed provider=espn paths={len(espn_paths)} "
+        f"events={len(events)} pair_keys={len(pair_index)}"
+    )
+    return {
+        "provider": "espn",
+        "fetched_ms": int(time.time() * 1000),
+        "events": events,
+        "pair_index": pair_index,
+    }
+
+
+def _sports_feed_window_match(
+    m: dict,
+    now_ms: int,
+    prestart_min: float,
+    postend_min: float,
+    sports_feed_snapshot: Optional[dict],
+    sports_feed_live_buffer_sec: float,
+) -> Optional[bool]:
+    if not isinstance(sports_feed_snapshot, dict):
+        return None
+
+    pair_index = sports_feed_snapshot.get("pair_index")
+    if not isinstance(pair_index, dict) or not pair_index:
+        return None
+
+    key = market_matchup_pair(m)
+    if key is None:
+        return None
+
+    event = pair_index.get(key)
+    if not isinstance(event, SportsFeedEvent):
+        return None
+
+    pre_ms = int(max(0.0, float(prestart_min or 0.0)) * 60_000)
+    post_ms = int(max(0.0, float(postend_min or 0.0)) * 60_000)
+    buffer_ms = int(max(0.0, float(sports_feed_live_buffer_sec or 0.0)) * 1000)
+    start_ms = event.start_ms
+
+    if event.state == "live":
+        return True
+
+    if start_ms is None:
+        return False
+
+    if event.state == "pre":
+        return (start_ms - pre_ms) <= now_ms <= (start_ms + buffer_ms)
+
+    if event.state == "post":
+        end_est_ms = int(start_ms + int(event.expected_duration_ms or 0))
+        return (start_ms - pre_ms) <= now_ms <= (end_est_ms + post_ms + buffer_ms)
+
+    return (start_ms - pre_ms) <= now_ms <= (start_ms + post_ms + buffer_ms)
+
+
 def gamma_first_event(m: dict) -> dict:
     events = m.get("events")
     if isinstance(events, list):
@@ -523,11 +943,41 @@ def is_likely_sports_market(m: dict) -> bool:
         return True
 
     q = str(m.get("question") or e0.get("title") or "").lower()
-    return (" vs. " in q) or (" vs " in q)
+    return (" vs. " in q) or (" vs " in q) or (" @ " in q)
 
 
-def is_in_sports_live_window(m: dict, now_ms: int, prestart_min: float, postend_min: float) -> bool:
+def is_in_sports_live_window(
+    m: dict,
+    now_ms: int,
+    prestart_min: float,
+    postend_min: float,
+    sports_feed_snapshot: Optional[dict] = None,
+    sports_feed_live_buffer_sec: float = 90.0,
+    sports_feed_strict: bool = False,
+) -> bool:
     if not is_likely_sports_market(m):
+        # Allow external feed to identify sports markets when Gamma metadata is incomplete.
+        hit = _sports_feed_window_match(
+            m=m,
+            now_ms=now_ms,
+            prestart_min=prestart_min,
+            postend_min=postend_min,
+            sports_feed_snapshot=sports_feed_snapshot,
+            sports_feed_live_buffer_sec=sports_feed_live_buffer_sec,
+        )
+        return bool(hit)
+
+    hit = _sports_feed_window_match(
+        m=m,
+        now_ms=now_ms,
+        prestart_min=prestart_min,
+        postend_min=postend_min,
+        sports_feed_snapshot=sports_feed_snapshot,
+        sports_feed_live_buffer_sec=sports_feed_live_buffer_sec,
+    )
+    if hit is not None:
+        return bool(hit)
+    if sports_feed_strict and isinstance(sports_feed_snapshot, dict) and sports_feed_snapshot.get("provider") != "none":
         return False
 
     e0 = gamma_first_event(m)
@@ -596,6 +1046,12 @@ def load_state(state_file: Path) -> RuntimeState:
 def save_state(state_file: Path, state: RuntimeState):
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(asdict(state), indent=2), encoding="utf-8")
+
+
+def append_jsonl(path: Path, row: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(row, ensure_ascii=True) + "\n")
 
 
 def sdk_request(api_key: str, method: str, endpoint: str, data: Optional[dict] = None) -> dict:
@@ -754,6 +1210,7 @@ def build_event_baskets(limit: int, min_outcomes: int, workers: int, strategy: s
                     token_id=str(token_id),
                     simmer_market_id=condition_to_simmer_id.get(condition_id, ""),
                     side="yes",
+                    condition_id=condition_id,
                 )
                 legs.append(leg)
                 shape_check_legs.append(
@@ -802,6 +1259,7 @@ def build_event_baskets(limit: int, min_outcomes: int, workers: int, strategy: s
                     token_id=str(yes_tid),
                     simmer_market_id=simmer_market_id,
                     side="yes",
+                    condition_id=condition_id,
                 ),
                 Leg(
                     market_id=market_id,
@@ -810,6 +1268,7 @@ def build_event_baskets(limit: int, min_outcomes: int, workers: int, strategy: s
                     token_id=str(no_tid),
                     simmer_market_id=simmer_market_id,
                     side="no",
+                    condition_id=condition_id,
                 ),
             ]
             baskets.append(
@@ -836,6 +1295,12 @@ def build_gamma_yes_no_baskets(
     sports_live_only: bool = False,
     sports_live_prestart_min: float = 10.0,
     sports_live_postend_min: float = 30.0,
+    sports_market_types_allow: Optional[Set[str]] = None,
+    sports_market_types_exclude: Optional[Set[str]] = None,
+    sports_require_matchup: bool = False,
+    sports_feed_snapshot: Optional[dict] = None,
+    sports_feed_live_buffer_sec: float = 90.0,
+    sports_feed_strict: bool = False,
 ) -> List[EventBasket]:
     """
     Build a universe of generic YES+NO baskets from Polymarket Gamma active markets.
@@ -846,6 +1311,8 @@ def build_gamma_yes_no_baskets(
     baskets: List[EventBasket] = []
     seen: Set[str] = set()
     now_ms = int(time.time() * 1000)
+    allow_types: Set[str] = set(sports_market_types_allow or set())
+    exclude_types: Set[str] = set(sports_market_types_exclude or set())
     max_end_ms: Optional[int] = None
     if float(max_days_to_end or 0.0) > 0:
         max_end_ms = now_ms + int(float(max_days_to_end) * 86400000.0)
@@ -884,11 +1351,27 @@ def build_gamma_yes_no_baskets(
             # For pure sum-to-one arbitrage we skip them by default.
             if m.get("feesEnabled") is True:
                 continue
+            market_type = infer_sports_market_type(m)
+            if sports_live_only:
+                if sports_require_matchup and market_matchup_pair(m) is None:
+                    continue
+                if allow_types and market_type not in allow_types:
+                    continue
+                if exclude_types and market_type in exclude_types:
+                    continue
+            elif allow_types or exclude_types:
+                if allow_types and market_type not in allow_types:
+                    continue
+                if exclude_types and market_type in exclude_types:
+                    continue
             if sports_live_only and not is_in_sports_live_window(
                 m,
                 now_ms=now_ms,
                 prestart_min=sports_live_prestart_min,
                 postend_min=sports_live_postend_min,
+                sports_feed_snapshot=sports_feed_snapshot,
+                sports_feed_live_buffer_sec=sports_feed_live_buffer_sec,
+                sports_feed_strict=sports_feed_strict,
             ):
                 continue
 
@@ -923,6 +1406,7 @@ def build_gamma_yes_no_baskets(
             if not market_id or market_id in seen:
                 continue
             seen.add(market_id)
+            condition_id = str(m.get("conditionId") or "").strip().lower()
 
             question = str(m.get("question") or f"market {market_id}").strip()
             event_slug = str(gamma_first_event(m).get("slug") or "").strip()
@@ -943,6 +1427,7 @@ def build_gamma_yes_no_baskets(
                     label=label_a,
                     token_id=str(yes_tid),
                     side="yes",
+                    condition_id=condition_id,
                 ),
                 Leg(
                     market_id=market_id,
@@ -950,6 +1435,7 @@ def build_gamma_yes_no_baskets(
                     label=label_b,
                     token_id=str(no_tid),
                     side="no",
+                    condition_id=condition_id,
                 ),
             ]
             baskets.append(
@@ -966,6 +1452,7 @@ def build_gamma_yes_no_baskets(
                     spread=float(spread),
                     one_day_price_change=float(one_day_change),
                     end_ms=end_ms,
+                    sports_market_type=market_type,
                     min_order_size=as_float(m.get("orderMinSize"), 0.0),
                     price_tick_size=as_float(m.get("orderPriceMinTickSize"), 0.0),
                 )
@@ -1144,6 +1631,7 @@ def build_gamma_event_pair_baskets(
         for row in clean_rows:
             m = row.get("market") or {}
             market_id = str(m.get("id") or "").strip()
+            condition_id = str(m.get("conditionId") or "").strip().lower()
             question = str(m.get("question") or "").strip()
             label = str(row.get("label") or "").strip()
             if not market_id or not label:
@@ -1156,6 +1644,7 @@ def build_gamma_event_pair_baskets(
                     label=label,
                     token_id=str(row.get("yes_tid") or ""),
                     side="yes",
+                    condition_id=condition_id,
                 )
             )
             no_legs.append(
@@ -1165,6 +1654,7 @@ def build_gamma_event_pair_baskets(
                     label=label,
                     token_id=str(row.get("no_tid") or ""),
                     side="no",
+                    condition_id=condition_id,
                 )
             )
 
@@ -1343,12 +1833,14 @@ def build_gamma_bucket_baskets(
 
             market_id = str(m.get("id") or "").strip()
             question = str(m.get("question") or "").strip()
+            condition_id = str(m.get("conditionId") or "").strip().lower()
             leg = Leg(
                 market_id=market_id,
                 question=question,
                 label=label,
                 token_id=str(token_id),
                 side="yes",
+                condition_id=condition_id,
             )
             legs.append(leg)
             shape_check_legs.append(
@@ -1406,93 +1898,133 @@ def build_gamma_bucket_baskets(
     return baskets
 
 
-def build_btc_updown_5m_baskets(windows_back: int = 1, windows_forward: int = 1) -> List[EventBasket]:
+def parse_btc_updown_window_minutes(raw: str) -> List[int]:
     """
-    Build a tiny rolling universe for Polymarket's BTC "Up or Down - 5 min" markets.
+    Parse comma/space-separated updown window sizes in minutes.
+
+    Supported values are intentionally conservative to match known Polymarket
+    short-window crypto event families.
+    """
+    s = str(raw or "").strip()
+    if not s:
+        return [5]
+    out: List[int] = []
+    for tok in re.split(r"[\s,]+", s):
+        if not tok:
+            continue
+        try:
+            v = int(float(tok))
+        except Exception:
+            continue
+        if v in {5, 15} and v not in out:
+            out.append(v)
+    return out or [5]
+
+
+def build_btc_updown_baskets(
+    window_minutes_list: List[int],
+    windows_back: int = 1,
+    windows_forward: int = 1,
+) -> List[EventBasket]:
+    """
+    Build a tiny rolling universe for Polymarket BTC short-window up/down markets.
 
     This avoids scanning the entire Gamma /markets list (which may be large / reordered)
-    by deterministically computing the event slugs (epoch start timestamps).
+    by deterministically computing event slugs from epoch start timestamps.
 
-    Note: this is still *sum-to-one basket* logic. It will only trade if buying BOTH outcomes
-    is cheaper than the fee-adjusted payout. It is not a momentum/scalping strategy.
+    Note: this remains *sum-to-one basket* logic. It only signals when buying BOTH
+    outcomes is cheaper than payout after costs.
     """
     back = max(0, int(windows_back or 0))
     fwd = max(0, int(windows_forward or 0))
     now_s = int(time.time())
-    start_s = (now_s // 300) * 300
 
     baskets: List[EventBasket] = []
     seen: Set[str] = set()
+    minutes_list = [int(m) for m in (window_minutes_list or []) if int(m) > 0]
+    if not minutes_list:
+        minutes_list = [5]
 
-    for i in range(-back, fwd + 1):
-        slug = f"btc-updown-5m-{start_s + (i * 300)}"
-        ev = fetch_gamma_event_by_slug(slug)
-        if not isinstance(ev, dict):
-            continue
-        markets = ev.get("markets") or []
-        if not isinstance(markets, list):
-            continue
+    for window_min in minutes_list:
+        window_sec = int(window_min) * 60
+        start_s = (now_s // window_sec) * window_sec
 
-        for m in markets:
-            if not isinstance(m, dict):
+        for i in range(-back, fwd + 1):
+            slug = f"btc-updown-{int(window_min)}m-{start_s + (i * window_sec)}"
+            ev = fetch_gamma_event_by_slug(slug)
+            if not isinstance(ev, dict):
                 continue
-            if m.get("enableOrderBook") is False:
-                continue
-
-            token_list = parse_json_string_field(m.get("clobTokenIds"))
-            outcomes_list = parse_json_string_field(m.get("outcomes"))
-            if len(token_list) < 2:
+            markets = ev.get("markets") or []
+            if not isinstance(markets, list):
                 continue
 
-            market_id = str(m.get("id") or "").strip()
-            question = str(m.get("question") or ev.get("title") or slug).strip()
-            title = str(ev.get("title") or question or slug).strip()
-            end_ms = parse_iso_or_epoch_to_ms(m.get("endDate") or m.get("endDateIso") or ev.get("endDate"))
-
-            legs: List[Leg] = []
-            for idx, tid in enumerate(token_list):
-                if not tid:
+            for m in markets:
+                if not isinstance(m, dict):
                     continue
-                label = f"OUT{idx + 1}"
-                if outcomes_list and idx < len(outcomes_list):
-                    label = str(outcomes_list[idx]).strip() or label
-                legs.append(
-                    Leg(
+                if m.get("enableOrderBook") is False:
+                    continue
+
+                token_list = parse_json_string_field(m.get("clobTokenIds"))
+                outcomes_list = parse_json_string_field(m.get("outcomes"))
+                if len(token_list) < 2:
+                    continue
+
+                market_id = str(m.get("id") or "").strip()
+                condition_id = str(m.get("conditionId") or "").strip().lower()
+                question = str(m.get("question") or ev.get("title") or slug).strip()
+                title = str(ev.get("title") or question or slug).strip()
+                end_ms = parse_iso_or_epoch_to_ms(m.get("endDate") or m.get("endDateIso") or ev.get("endDate"))
+
+                legs: List[Leg] = []
+                for idx, tid in enumerate(token_list):
+                    if not tid:
+                        continue
+                    label = f"OUT{idx + 1}"
+                    if outcomes_list and idx < len(outcomes_list):
+                        label = str(outcomes_list[idx]).strip() or label
+                    legs.append(
+                        Leg(
+                            market_id=market_id,
+                            question=question,
+                            label=label,
+                            token_id=str(tid),
+                            side=("yes" if idx == 0 else "no"),
+                            condition_id=condition_id,
+                        )
+                    )
+
+                if len(legs) < 2:
+                    continue
+
+                key = f"slug:{slug}:{market_id}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                baskets.append(
+                    EventBasket(
+                        key=key,
+                        title=title,
+                        legs=legs,
+                        strategy="yes-no",
                         market_id=market_id,
-                        question=question,
-                        label=label,
-                        token_id=str(tid),
-                        side=("yes" if idx == 0 else "no"),
+                        event_id=str(ev.get("id") or "").strip(),
+                        event_slug=str(ev.get("slug") or slug).strip(),
+                        liquidity_num=as_float(m.get("liquidityNum", m.get("liquidity", 0.0)), 0.0),
+                        volume24hr=as_float(m.get("volume24hr", 0.0), 0.0),
+                        spread=as_float(m.get("spread", 0.0), 0.0),
+                        one_day_price_change=abs(as_float(m.get("oneDayPriceChange", 0.0), 0.0)),
+                        end_ms=end_ms,
+                        min_order_size=as_float(m.get("orderMinSize"), 0.0),
+                        price_tick_size=as_float(m.get("orderPriceMinTickSize"), 0.0),
                     )
                 )
 
-            if len(legs) < 2:
-                continue
-
-            key = f"slug:{slug}:{market_id}"
-            if key in seen:
-                continue
-            seen.add(key)
-            baskets.append(
-                EventBasket(
-                    key=key,
-                    title=title,
-                    legs=legs,
-                    strategy="yes-no",
-                    market_id=market_id,
-                    event_id=str(ev.get("id") or "").strip(),
-                    event_slug=str(ev.get("slug") or slug).strip(),
-                    liquidity_num=as_float(m.get("liquidityNum", m.get("liquidity", 0.0)), 0.0),
-                    volume24hr=as_float(m.get("volume24hr", 0.0), 0.0),
-                    spread=as_float(m.get("spread", 0.0), 0.0),
-                    one_day_price_change=abs(as_float(m.get("oneDayPriceChange", 0.0), 0.0)),
-                    end_ms=end_ms,
-                    min_order_size=as_float(m.get("orderMinSize"), 0.0),
-                    price_tick_size=as_float(m.get("orderPriceMinTickSize"), 0.0),
-                )
-            )
-
     return baskets
+
+
+def build_btc_updown_5m_baskets(windows_back: int = 1, windows_forward: int = 1) -> List[EventBasket]:
+    # Backward-compat wrapper for older callers/configs.
+    return build_btc_updown_baskets([5], windows_back=windows_back, windows_forward=windows_forward)
 
 
 def _q_cents_up(x: float) -> float:
@@ -1533,6 +2065,16 @@ def _clamp01(x: float) -> float:
         return 0.0
     if x >= 1:
         return 1.0
+    return float(x)
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    if not math.isfinite(x):
+        return lo
+    if x <= lo:
+        return lo
+    if x >= hi:
+        return hi
     return float(x)
 
 
@@ -1578,6 +2120,275 @@ def score_gamma_basket(basket: EventBasket, now_ms: int, args) -> float:
 
     base = 0.40 * liq_score + 0.35 * vol_score + 0.15 * spread_score + 0.10 * volat_score
     return float(base * time_score)
+
+
+def _leg_condition_id(leg: Leg) -> str:
+    return str(getattr(leg, "condition_id", "") or "").strip().lower()
+
+
+def _wallet_quality_score(summary: dict) -> float:
+    if not isinstance(summary, dict) or not summary.get("ok"):
+        return 0.0
+
+    timeline = summary.get("timeline") if isinstance(summary.get("timeline"), dict) else {}
+    trading = summary.get("trading_behavior") if isinstance(summary.get("trading_behavior"), dict) else {}
+    inventory = summary.get("inventory") if isinstance(summary.get("inventory"), dict) else {}
+
+    prof_pct = as_float(timeline.get("time_profitable_pct"), 50.0)
+    score = (prof_pct - 50.0) / 50.0  # -1..+1 around 50%
+
+    classification = str(summary.get("classification") or "").strip().upper()
+    if classification == "SNIPER_ARBITRAGE":
+        score += 0.30
+    elif classification == "SNIPER_TIMING":
+        score += 0.20
+    elif classification == "HIGH_DRAWDOWN_STYLE":
+        score -= 0.30
+
+    hedge_status = str(inventory.get("hedge_status") or "").strip().upper()
+    if hedge_status == "ARBITRAGE_CANDIDATE":
+        score += 0.20
+    elif hedge_status == "NEGATIVE_EDGE":
+        score -= 0.20
+
+    hedge_edge_pct = as_float(inventory.get("hedge_edge_pct"), 0.0)
+    score += _clamp(hedge_edge_pct / 20.0, -0.20, 0.20)
+
+    intensity = str(trading.get("intensity") or "").strip().upper()
+    if intensity == "BOT_LIKE":
+        score += 0.05
+    elif intensity == "HIGH":
+        score += 0.03
+    elif intensity == "LOW":
+        score -= 0.02
+
+    trade_count = max(0, int(summary.get("trade_count") or 0))
+    confidence = _clamp(math.log1p(trade_count) / math.log1p(50.0), 0.0, 1.0)
+    return _clamp(score * confidence, -1.0, 1.0)
+
+
+def apply_gamma_wallet_signals(baskets: List[EventBasket], args, logger: Logger) -> dict:
+    """
+    Enrich gamma baskets with holder-wallet quality signals (observe-only Data API).
+    """
+    out = {
+        "conditions_total": 0,
+        "conditions_scored": 0,
+        "wallets_attempted": 0,
+        "wallets_scored": 0,
+        "baskets_scored": 0,
+    }
+    if not baskets:
+        return out
+
+    try:
+        from analyze_trades import analyze_trades  # type: ignore
+        from analyze_user import fetch_market_holders  # type: ignore
+        from fetch_trades import fetch_user_trades  # type: ignore
+    except Exception as e:
+        logger.info(f"[{iso_now()}] wallet-signal unavailable: import failed ({type(e).__name__}: {e})")
+        return out
+
+    holders_limit = max(1, int(getattr(args, "wallet_signal_holders_limit", 16) or 16))
+    top_wallets = max(1, int(getattr(args, "wallet_signal_top_wallets", 8) or 8))
+    min_trades = max(1, int(getattr(args, "wallet_signal_min_trades", 8) or 8))
+    max_trades = max(10, int(getattr(args, "wallet_signal_max_trades", 600) or 600))
+    page_size = max(1, min(500, int(getattr(args, "wallet_signal_page_size", 200) or 200)))
+    max_baskets = max(1, int(getattr(args, "wallet_signal_max_baskets", 80) or 80))
+
+    ranked = sorted((b for b in baskets if b.score >= 0), key=lambda x: (x.score, x.volume24hr), reverse=True)
+    target_baskets = ranked[:max_baskets]
+    if not target_baskets:
+        return out
+
+    condition_ids: List[str] = []
+    seen_conditions: Set[str] = set()
+    for b in target_baskets:
+        for leg in b.legs:
+            cid = _leg_condition_id(leg)
+            if not cid or cid in seen_conditions:
+                continue
+            seen_conditions.add(cid)
+            condition_ids.append(cid)
+
+    out["conditions_total"] = len(condition_ids)
+    if not condition_ids:
+        logger.info("[wallet-signal] no condition_id metadata on selected baskets; skipping.")
+        return out
+
+    cond_scores: Dict[str, Tuple[float, float]] = {}
+    holders_per_cond = max(holders_limit, top_wallets)
+    for idx, condition_id in enumerate(condition_ids, start=1):
+        try:
+            holders = fetch_market_holders(condition_id, limit=holders_per_cond)
+        except Exception:
+            holders = []
+        if not holders:
+            continue
+
+        holder_rows = holders[:top_wallets]
+        weighted_sum = 0.0
+        weight_total = 0.0
+        scored_wallets = 0
+
+        for h in holder_rows:
+            wallet = str(h.get("wallet") or "").strip().lower()
+            if not wallet:
+                continue
+            out["wallets_attempted"] += 1
+            try:
+                rows = fetch_user_trades(
+                    user=wallet,
+                    market=condition_id,
+                    limit=page_size,
+                    max_trades=max_trades,
+                    sleep_sec=0.0,
+                )
+            except Exception:
+                rows = []
+            if len(rows) < min_trades:
+                continue
+
+            try:
+                summary = analyze_trades(rows, market_title="", wallet=wallet)
+            except Exception:
+                summary = {}
+            if not isinstance(summary, dict) or not summary.get("ok"):
+                continue
+            if int(summary.get("trade_count") or 0) < min_trades:
+                continue
+
+            wscore = _wallet_quality_score(summary)
+            amount = as_float(h.get("amount_total"), 0.0)
+            weight = amount if amount > 0 else 1.0
+            weighted_sum += weight * wscore
+            weight_total += weight
+            scored_wallets += 1
+            out["wallets_scored"] += 1
+
+        if weight_total <= 0 or scored_wallets <= 0:
+            continue
+
+        cond_score = weighted_sum / weight_total
+        cond_conf = _clamp(float(scored_wallets) / float(max(1, len(holder_rows))), 0.0, 1.0)
+        cond_scores[condition_id] = (float(cond_score), float(cond_conf))
+        out["conditions_scored"] += 1
+
+        if idx % 10 == 0:
+            logger.info(
+                f"[wallet-signal] progress {idx}/{len(condition_ids)} conditions | "
+                f"scored={out['conditions_scored']} wallets={out['wallets_scored']}"
+            )
+
+    for b in target_baskets:
+        per_cond: List[Tuple[float, float]] = []
+        used: Set[str] = set()
+        for leg in b.legs:
+            cid = _leg_condition_id(leg)
+            if not cid or cid in used:
+                continue
+            used.add(cid)
+            v = cond_scores.get(cid)
+            if v is not None:
+                per_cond.append(v)
+        if not per_cond:
+            continue
+        b.wallet_signal_score = float(sum(x[0] for x in per_cond) / len(per_cond))
+        b.wallet_signal_confidence = float(sum(x[1] for x in per_cond) / len(per_cond))
+        out["baskets_scored"] += 1
+
+    return out
+
+
+def compute_candidate_metrics_row(
+    candidate: Candidate,
+    basket: EventBasket,
+    books: Dict[str, LocalBook],
+    args,
+) -> dict:
+    ts_now = now_ts()
+    threshold = float(getattr(args, "min_edge_cents", 0.0) or 0.0) / 100.0
+    exec_cost = _estimate_exec_cost_clob(candidate, float(getattr(args, "exec_slippage_bps", 0.0) or 0.0))
+    exec_edge = candidate.payout_after_fee - float(exec_cost) - candidate.fixed_cost
+    exec_edge_pct = (float(exec_edge) / candidate.payout_after_fee) if candidate.payout_after_fee > 0 else 0.0
+
+    fill_ratios: List[float] = []
+    stale_secs: List[float] = []
+    synthetic_ask_legs = 0
+    missing_book_legs = 0
+    shares = max(float(candidate.shares_per_leg), 1e-9)
+    slip = max(0.0, float(getattr(args, "exec_slippage_bps", 0.0) or 0.0)) / 10000.0
+
+    for leg, observed_cost in candidate.leg_costs:
+        book = books.get(leg.token_id)
+        if not book:
+            missing_book_legs += 1
+            fill_ratios.append(0.0)
+            continue
+
+        if float(book.updated_at or 0.0) > 0:
+            stale_secs.append(max(0.0, ts_now - float(book.updated_at)))
+        if getattr(book, "asks_synthetic", False):
+            synthetic_ask_legs += 1
+
+        asks = book.asks
+        if (not asks) and book.best_ask:
+            asks = [{"price": book.best_ask, "size": 1e9}]
+
+        est_price = float(observed_cost) / shares
+        limit_price = min(0.999, est_price * (1.0 + slip))
+        limit_price = max(0.001, _q_cents_up(limit_price))
+
+        available = 0.0
+        for lvl in asks or []:
+            p = as_float(lvl.get("price"), math.inf)
+            sz = as_float(lvl.get("size"), 0.0)
+            if not math.isfinite(p) or p <= 0 or sz <= 0:
+                continue
+            if p <= (limit_price + 1e-12):
+                available += sz
+
+        fill_ratio = _clamp(available / shares, 0.0, 1.0)
+        fill_ratios.append(fill_ratio)
+
+    fill_ratio_min = min(fill_ratios) if fill_ratios else 0.0
+    fill_ratio_avg = (sum(fill_ratios) / len(fill_ratios)) if fill_ratios else 0.0
+    worst_stale_sec = max(stale_secs) if stale_secs else -1.0
+
+    return {
+        "ts": iso_now(),
+        "ts_ms": int(ts_now * 1000.0),
+        "universe": str(getattr(args, "universe", "") or ""),
+        "strategy": candidate.strategy,
+        "event_key": candidate.event_key,
+        "title": candidate.title,
+        "market_id": basket.market_id,
+        "event_id": basket.event_id,
+        "event_slug": basket.event_slug,
+        "sports_market_type": str(getattr(basket, "sports_market_type", "") or ""),
+        "leg_count": len(candidate.leg_costs),
+        "shares_per_leg": float(candidate.shares_per_leg),
+        "payout_after_fee": float(candidate.payout_after_fee),
+        "fixed_cost": float(candidate.fixed_cost),
+        "basket_cost_observed": float(candidate.basket_cost),
+        "basket_cost_exec_est": float(exec_cost),
+        "net_edge_raw": float(candidate.net_edge),
+        "edge_pct_raw": float(candidate.edge_pct),
+        "net_edge_exec_est": float(exec_edge),
+        "edge_pct_exec_est": float(exec_edge_pct),
+        "edge_threshold_usd": float(threshold),
+        "passes_raw_threshold": bool(candidate.net_edge >= threshold),
+        "passes_exec_threshold": bool(exec_edge >= threshold),
+        "fill_ratio_min": float(fill_ratio_min),
+        "fill_ratio_avg": float(fill_ratio_avg),
+        "worst_book_stale_sec": float(worst_stale_sec),
+        "synthetic_ask_legs": int(synthetic_ask_legs),
+        "missing_book_legs": int(missing_book_legs),
+        "gamma_base_score": float(getattr(basket, "score", 0.0) or 0.0),
+        "wallet_signal_score": float(getattr(basket, "wallet_signal_score", 0.0) or 0.0),
+        "wallet_signal_confidence": float(getattr(basket, "wallet_signal_confidence", 0.0) or 0.0),
+        "gamma_combined_score": float(getattr(basket, "combined_score", 0.0) or 0.0),
+    }
 
 
 
@@ -2434,6 +3245,17 @@ async def run(args) -> int:
     state = load_state(state_file)
     save_state(state_file, state)
 
+    metrics_file_raw = str(getattr(args, "metrics_file", "") or "").strip()
+    if not metrics_file_raw:
+        metrics_file_raw = str(script_dir.parent / "logs" / "clob-arb-monitor-metrics.jsonl")
+    if metrics_file_raw.lower() in {"off", "none", "null", "disable", "disabled", "0"}:
+        metrics_file: Optional[Path] = None
+        args.metrics_file = ""
+    else:
+        metrics_file = Path(metrics_file_raw)
+        metrics_file.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics_file = str(metrics_file)
+
     gamma_include_re: Optional[re.Pattern] = None
     gamma_exclude_re: Optional[re.Pattern] = None
     if getattr(args, "gamma_include_regex", ""):
@@ -2457,7 +3279,7 @@ async def run(args) -> int:
         return 0
 
     universe = str(getattr(args, "universe", "weather") or "weather").strip().lower()
-    if universe not in {"weather", "gamma-active", "btc-5m"}:
+    if universe not in {"weather", "gamma-active", "btc-5m", "btc-updown"}:
         universe = "weather"
 
     if universe == "gamma-active":
@@ -2470,6 +3292,28 @@ async def run(args) -> int:
         sports_live_only = bool(getattr(args, "sports_live_only", False))
         sports_live_prestart_min = float(getattr(args, "sports_live_prestart_min", 10.0) or 10.0)
         sports_live_postend_min = float(getattr(args, "sports_live_postend_min", 30.0) or 30.0)
+        sports_market_types_allow = parse_sports_market_type_filter(str(getattr(args, "sports_market_types", "") or ""))
+        sports_market_types_exclude = parse_sports_market_type_filter(
+            str(getattr(args, "sports_market_types_exclude", "") or "")
+        )
+        sports_require_matchup = bool(getattr(args, "sports_require_matchup", False))
+        sports_feed_provider = str(getattr(args, "sports_feed_provider", "none") or "none").strip().lower()
+        sports_feed_strict = bool(getattr(args, "sports_feed_strict", False))
+        sports_feed_timeout_sec = float(getattr(args, "sports_feed_timeout_sec", 5.0) or 5.0)
+        sports_feed_live_buffer_sec = float(getattr(args, "sports_feed_live_buffer_sec", 90.0) or 90.0)
+        sports_feed_espn_paths = [
+            x.strip()
+            for x in str(getattr(args, "sports_feed_espn_paths", ",".join(DEFAULT_ESPN_SCOREBOARD_PATHS)) or "").split(",")
+            if x.strip()
+        ]
+        sports_feed_snapshot: dict = {"provider": "none", "fetched_ms": int(time.time() * 1000), "events": [], "pair_index": {}}
+        if args.strategy in {"yes-no", "both", "all"} and sports_feed_provider != "none":
+            sports_feed_snapshot = build_sports_feed_snapshot(
+                provider=sports_feed_provider,
+                espn_paths=sports_feed_espn_paths,
+                timeout_sec=sports_feed_timeout_sec,
+                logger=logger,
+            )
         build_max_legs = int(args.max_legs) if int(args.max_legs or 0) > 0 else 12
 
         if args.strategy == "yes-no":
@@ -2485,6 +3329,12 @@ async def run(args) -> int:
                 sports_live_only=sports_live_only,
                 sports_live_prestart_min=sports_live_prestart_min,
                 sports_live_postend_min=sports_live_postend_min,
+                sports_market_types_allow=sports_market_types_allow,
+                sports_market_types_exclude=sports_market_types_exclude,
+                sports_require_matchup=sports_require_matchup,
+                sports_feed_snapshot=sports_feed_snapshot,
+                sports_feed_live_buffer_sec=sports_feed_live_buffer_sec,
+                sports_feed_strict=sports_feed_strict,
             )
         elif args.strategy == "buckets":
             baskets = build_gamma_bucket_baskets(
@@ -2541,6 +3391,12 @@ async def run(args) -> int:
                     sports_live_only=sports_live_only,
                     sports_live_prestart_min=sports_live_prestart_min,
                     sports_live_postend_min=sports_live_postend_min,
+                    sports_market_types_allow=sports_market_types_allow,
+                    sports_market_types_exclude=sports_market_types_exclude,
+                    sports_require_matchup=sports_require_matchup,
+                    sports_feed_snapshot=sports_feed_snapshot,
+                    sports_feed_live_buffer_sec=sports_feed_live_buffer_sec,
+                    sports_feed_strict=sports_feed_strict,
                 )
             )
             if args.strategy == "all":
@@ -2561,16 +3417,21 @@ async def run(args) -> int:
             logger.info("No valid Gamma baskets found.")
             maybe_notify_discord(logger, "CLOBBOT: gamma-active universe empty (no baskets). Check filters / Gamma API.")
             return 1
-    elif universe == "btc-5m":
-        baskets = build_btc_updown_5m_baskets(
-            windows_back=int(getattr(args, "btc_5m_windows_back", 1) or 1),
-            windows_forward=int(getattr(args, "btc_5m_windows_forward", 1) or 1),
+    elif universe in {"btc-5m", "btc-updown"}:
+        window_minutes = parse_btc_updown_window_minutes(str(getattr(args, "btc_updown_window_minutes", "5") or "5"))
+        btc_windows_back = max(0, int(getattr(args, "btc_5m_windows_back", 1)))
+        btc_windows_forward = max(0, int(getattr(args, "btc_5m_windows_forward", 1)))
+        baskets = build_btc_updown_baskets(
+            window_minutes_list=window_minutes,
+            windows_back=btc_windows_back,
+            windows_forward=btc_windows_forward,
         )
         if not baskets:
-            logger.info("No valid BTC 5m baskets found (event slug fetch).")
+            mins_txt = ",".join(str(x) for x in window_minutes)
+            logger.info(f"No valid BTC up/down baskets found (event slug fetch, minutes={mins_txt}).")
             maybe_notify_discord(
                 logger,
-                "CLOBBOT: btc-5m universe empty (could not fetch current BTC 5m events).",
+                f"CLOBBOT: btc-updown universe empty (minutes={mins_txt}; could not fetch current events).",
             )
             return 1
     else:
@@ -2597,9 +3458,28 @@ async def run(args) -> int:
             now_ms = int(time.time() * 1000)
             for b in baskets:
                 b.score = score_gamma_basket(b, now_ms, args)
+                b.wallet_signal_score = 0.0
+                b.wallet_signal_confidence = 0.0
+                b.combined_score = b.score
+
+            if bool(getattr(args, "wallet_signal_enable", False)):
+                wallet_summary = apply_gamma_wallet_signals(baskets, args, logger)
+                wallet_weight = float(getattr(args, "wallet_signal_weight", 0.25) or 0.0)
+                for b in baskets:
+                    if b.score < 0:
+                        b.combined_score = b.score
+                    else:
+                        b.combined_score = b.score + (wallet_weight * b.wallet_signal_score * b.wallet_signal_confidence)
+                logger.info(
+                    "[wallet-signal] "
+                    f"conditions={wallet_summary.get('conditions_scored', 0)}/{wallet_summary.get('conditions_total', 0)} "
+                    f"wallets={wallet_summary.get('wallets_scored', 0)}/{wallet_summary.get('wallets_attempted', 0)} "
+                    f"baskets={wallet_summary.get('baskets_scored', 0)} "
+                    f"weight={wallet_weight:.3f}"
+                )
 
             ranked = [b for b in baskets if b.score >= 0]
-            ranked.sort(key=lambda x: (x.score, x.volume24hr), reverse=True)
+            ranked.sort(key=lambda x: (x.combined_score, x.score, x.volume24hr), reverse=True)
 
             max_per_event = int(getattr(args, "max_markets_per_event", 0) or 0)
             per_event: Dict[str, int] = {}
@@ -2629,14 +3509,15 @@ async def run(args) -> int:
                     "Note: no baskets passed scoring filters (likely stale endDate values, or gamma_max_days_to_end too strict)."
                 )
             if selected:
-                top = sorted(selected, key=lambda x: x.score, reverse=True)[:8]
+                top = sorted(selected, key=lambda x: (x.combined_score, x.score), reverse=True)[:8]
                 for t in top:
                     end_days = None
                     if t.end_ms:
                         end_days = max(0.0, float(t.end_ms - now_ms) / 86400000.0)
                     end_s = f"{end_days:.0f}d" if end_days is not None else "?d"
                     logger.info(
-                        f"  picked score={t.score:.3f} end={end_s} vol24={t.volume24hr:.0f} liq={t.liquidity_num:.0f} "
+                        f"  picked score={t.score:.3f} combo={t.combined_score:.3f} ws={t.wallet_signal_score:+.3f} "
+                        f"conf={t.wallet_signal_confidence:.2f} end={end_s} vol24={t.volume24hr:.0f} liq={t.liquidity_num:.0f} "
                         f"spr={t.spread:.3f} id={t.market_id} q={t.title[:80]}"
                     )
 
@@ -2687,6 +3568,14 @@ async def run(args) -> int:
         f"winner_fee={args.winner_fee_rate:.2%} | fixed_cost=${args.fixed_cost:.4f}"
     )
     logger.info(f"Strategy: {args.strategy}")
+    if universe in {"btc-5m", "btc-updown"}:
+        mins = parse_btc_updown_window_minutes(str(getattr(args, "btc_updown_window_minutes", "5") or "5"))
+        mins_txt = ",".join(str(x) for x in mins)
+        logger.info(
+            f"BTC up/down windows: minutes={mins_txt} "
+            f"back={max(0, int(getattr(args, 'btc_5m_windows_back', 1)))} "
+            f"forward={max(0, int(getattr(args, 'btc_5m_windows_forward', 1)))}"
+        )
     if universe == "gamma-active":
         logger.info(
             "Gamma filters: "
@@ -2699,15 +3588,58 @@ async def run(args) -> int:
             f"max_markets_per_event={getattr(args, 'max_markets_per_event', 0)}"
         )
         if bool(getattr(args, "sports_live_only", False)):
+            allow_types = parse_sports_market_type_filter(str(getattr(args, "sports_market_types", "") or ""))
+            deny_types = parse_sports_market_type_filter(str(getattr(args, "sports_market_types_exclude", "") or ""))
+            allow_s = ",".join(sorted(allow_types)) if allow_types else "all"
+            deny_s = ",".join(sorted(deny_types)) if deny_types else "none"
             logger.info(
                 "Sports live filter (gamma yes-no): "
                 f"enabled prestart={float(getattr(args, 'sports_live_prestart_min', 10.0)):.1f}m "
-                f"postend={float(getattr(args, 'sports_live_postend_min', 30.0)):.1f}m"
+                f"postend={float(getattr(args, 'sports_live_postend_min', 30.0)):.1f}m "
+                f"types={allow_s} exclude={deny_s} require_matchup={bool(getattr(args, 'sports_require_matchup', False))}"
             )
+            sf_provider = str(getattr(args, "sports_feed_provider", "none") or "none").strip().lower()
+            if sf_provider != "none":
+                path_count = len(
+                    [x.strip() for x in str(getattr(args, "sports_feed_espn_paths", "") or "").split(",") if x.strip()]
+                )
+                logger.info(
+                    "Sports feed: "
+                    f"provider={sf_provider} strict={bool(getattr(args, 'sports_feed_strict', False))} "
+                    f"paths={path_count} timeout={float(getattr(args, 'sports_feed_timeout_sec', 5.0) or 5.0):.1f}s "
+                    f"buffer={float(getattr(args, 'sports_feed_live_buffer_sec', 90.0) or 90.0):.0f}s"
+                )
+        if bool(getattr(args, "wallet_signal_enable", False)):
+            logger.info(
+                "Wallet signal ranking: "
+                f"enabled weight={float(getattr(args, 'wallet_signal_weight', 0.25) or 0.0):.3f} "
+                f"max_baskets={int(getattr(args, 'wallet_signal_max_baskets', 80) or 80)} "
+                f"holders_limit={int(getattr(args, 'wallet_signal_holders_limit', 16) or 16)} "
+                f"top_wallets={int(getattr(args, 'wallet_signal_top_wallets', 8) or 8)}"
+            )
+            if max_tokens <= 0:
+                logger.info("Wallet signal note: ranking impact requires --max-subscribe-tokens > 0.")
     if max_tokens > 0:
         logger.info(f"Max subscribe tokens: {max_tokens}")
     if args.summary_every_sec:
         logger.info(f"Summary: every {float(args.summary_every_sec):.0f}s")
+    if metrics_file:
+        logger.info(
+            f"Metrics: {args.metrics_file} | log_all_candidates={bool(getattr(args, 'metrics_log_all_candidates', False))}"
+        )
+    else:
+        logger.info("Metrics: disabled")
+    if (not args.execute) and bool(getattr(args, "observe_exec_edge_filter", False)):
+        _s = str(getattr(args, "observe_exec_edge_filter_strategies", "") or "")
+        _set = {x.strip().lower() for x in _s.split(",") if x.strip()}
+        sfx = ",".join(sorted(_set)) if _set else "all"
+        logger.info(
+            "Observe exec-edge filter: "
+            f"enabled min_usd={float(getattr(args, 'observe_exec_edge_min_usd', 0.0) or 0.0):.4f} "
+            f"strikes={int(getattr(args, 'observe_exec_edge_strike_limit', 3) or 3)} "
+            f"cooldown={float(getattr(args, 'observe_exec_edge_cooldown_sec', 300.0) or 300.0):.0f}s "
+            f"strategies={sfx}"
+        )
     if (not args.execute) and bool(getattr(args, "notify_observe_signals", False)):
         logger.info("Observe signal Discord notify: enabled")
     maybe_notify_discord(
@@ -2808,6 +3740,18 @@ async def run(args) -> int:
         0.0, float(getattr(args, "observe_notify_min_interval_sec", 30.0) or 0.0)
     )
     last_observe_notify_ts = 0.0
+    observe_exec_edge_filter = (not args.execute) and bool(getattr(args, "observe_exec_edge_filter", False))
+    observe_exec_edge_min_usd = float(getattr(args, "observe_exec_edge_min_usd", 0.0) or 0.0)
+    observe_exec_edge_strike_limit = max(1, int(getattr(args, "observe_exec_edge_strike_limit", 3) or 1))
+    observe_exec_edge_cooldown_sec = max(
+        1.0, float(getattr(args, "observe_exec_edge_cooldown_sec", 300.0) or 300.0)
+    )
+    observe_exec_edge_filter_strategies_raw = str(
+        getattr(args, "observe_exec_edge_filter_strategies", "") or ""
+    )
+    observe_exec_edge_filter_strategies: Set[str] = {
+        x.strip().lower() for x in observe_exec_edge_filter_strategies_raw.split(",") if x.strip()
+    }
 
     async with websockets.connect(args.ws_url, ping_interval=20, ping_timeout=20, max_size=2**24) as ws:
         await ws.send(json.dumps({"type": "market", "assets_ids": token_ids}))
@@ -2905,7 +3849,67 @@ async def run(args) -> int:
                 if (stats.best_window is None) or (c.net_edge > stats.best_window.net_edge):
                     stats.best_window = c
 
+                metrics_row: Optional[dict] = None
+                if metrics_file or observe_exec_edge_filter:
+                    metrics_row = compute_candidate_metrics_row(
+                        candidate=c,
+                        basket=basket,
+                        books=books,
+                        args=args,
+                    )
+
+                observe_exec_filtered = False
+                if observe_exec_edge_filter and (
+                    not observe_exec_edge_filter_strategies
+                    or str(getattr(basket, "strategy", "") or "").strip().lower() in observe_exec_edge_filter_strategies
+                ):
+                    now_eval = now_ts()
+                    if float(getattr(basket, "exec_edge_filter_until_ts", 0.0) or 0.0) > now_eval:
+                        observe_exec_filtered = True
+                    else:
+                        exec_edge_est = math.nan
+                        if isinstance(metrics_row, dict):
+                            exec_edge_est = as_float(metrics_row.get("net_edge_exec_est"), math.nan)
+
+                        if math.isfinite(exec_edge_est):
+                            if exec_edge_est <= observe_exec_edge_min_usd:
+                                basket.exec_edge_neg_streak = int(getattr(basket, "exec_edge_neg_streak", 0) or 0) + 1
+                            else:
+                                basket.exec_edge_neg_streak = 0
+
+                            if basket.exec_edge_neg_streak >= observe_exec_edge_strike_limit:
+                                basket.exec_edge_filter_until_ts = now_eval + observe_exec_edge_cooldown_sec
+                                basket.exec_edge_neg_streak = 0
+                                observe_exec_filtered = True
+                                logger.info(
+                                    f"[{iso_now()}] observe exec-edge filter: muted event={basket.key} "
+                                    f"strategy={basket.strategy} exec_edge={exec_edge_est:.4f} <= "
+                                    f"{observe_exec_edge_min_usd:.4f} cooldown={observe_exec_edge_cooldown_sec:.0f}s"
+                                )
+                        else:
+                            basket.exec_edge_neg_streak = 0
+
+                if isinstance(metrics_row, dict):
+                    if observe_exec_filtered:
+                        metrics_row["observe_exec_filter_blocked"] = True
+                        metrics_row["observe_exec_filter_until_ms"] = int(
+                            float(getattr(basket, "exec_edge_filter_until_ts", 0.0) or 0.0) * 1000.0
+                        )
+                        metrics_row["observe_exec_filter_min_usd"] = float(observe_exec_edge_min_usd)
+                    if metrics_file and (
+                        bool(getattr(args, "metrics_log_all_candidates", False))
+                        or metrics_row.get("passes_raw_threshold", False)
+                    ):
+                        reason = "threshold" if metrics_row.get("passes_raw_threshold", False) else "candidate"
+                        if observe_exec_filtered:
+                            reason = "observe_exec_filter_blocked"
+                        metrics_row["reason"] = reason
+                        append_jsonl(metrics_file, metrics_row)
+
                 if c.net_edge < (args.min_edge_cents / 100.0):
+                    continue
+
+                if observe_exec_filtered:
                     continue
 
                 sig = make_signature(c)
@@ -3078,9 +4082,13 @@ def parse_args():
     p.add_argument("--ws-url", default=WS_MARKET_URL, help="Market channel websocket URL")
     p.add_argument(
         "--universe",
-        choices=("weather", "gamma-active", "btc-5m"),
+        choices=("weather", "gamma-active", "btc-5m", "btc-updown"),
         default="weather",
-        help="Universe to monitor (weather uses Simmer weather index; gamma-active uses Gamma active markets; btc-5m fetches rolling BTC 5-min events by slug)",
+        help=(
+            "Universe to monitor "
+            "(weather uses Simmer weather index; gamma-active uses Gamma active markets; "
+            "btc-5m/btc-updown fetch rolling BTC up/down events by slug)"
+        ),
     )
     p.add_argument("--limit", type=int, default=250, help="Max weather markets to build universe from")
     p.add_argument("--workers", type=int, default=24, help="Parallel workers for universe discovery")
@@ -3137,16 +4145,120 @@ def parse_args():
         help="With --sports-live-only: keep markets this many minutes after finish/end timestamp.",
     )
     p.add_argument(
+        "--sports-market-types",
+        default="",
+        help=(
+            "Comma-separated sports market type allowlist for gamma yes-no "
+            "(moneyline,spread,total,draw,btts,other). Empty=all."
+        ),
+    )
+    p.add_argument(
+        "--sports-market-types-exclude",
+        default="",
+        help=(
+            "Comma-separated sports market type denylist for gamma yes-no "
+            "(moneyline,spread,total,draw,btts,other)."
+        ),
+    )
+    p.add_argument(
+        "--sports-require-matchup",
+        action="store_true",
+        help="With --sports-live-only: require matchup text like 'A vs B' or 'A @ B' in question/event.",
+    )
+    p.add_argument(
+        "--sports-feed-provider",
+        choices=("none", "espn"),
+        default="none",
+        help="Optional external sports feed used to refine live-window detection (default none).",
+    )
+    p.add_argument(
+        "--sports-feed-strict",
+        action="store_true",
+        help="With --sports-feed-provider: require a feed matchup hit for sports-live inclusion.",
+    )
+    p.add_argument(
+        "--sports-feed-timeout-sec",
+        type=float,
+        default=5.0,
+        help="HTTP timeout seconds for external sports feed fetch.",
+    )
+    p.add_argument(
+        "--sports-feed-live-buffer-sec",
+        type=float,
+        default=90.0,
+        help="Extra seconds around feed state transitions (pre/live/post) for window matching.",
+    )
+    p.add_argument(
+        "--sports-feed-espn-paths",
+        default=",".join(DEFAULT_ESPN_SCOREBOARD_PATHS),
+        help=(
+            "Comma-separated ESPN sport/league paths (without trailing /scoreboard), "
+            "e.g. basketball/nba,soccer/eng.1"
+        ),
+    )
+    p.add_argument(
+        "--wallet-signal-enable",
+        action="store_true",
+        help="For gamma-active scored selection, blend holder-wallet quality into ranking (observe-only Data API).",
+    )
+    p.add_argument(
+        "--wallet-signal-weight",
+        type=float,
+        default=0.25,
+        help="Score blend weight for wallet signal in gamma-active ranking.",
+    )
+    p.add_argument(
+        "--wallet-signal-max-baskets",
+        type=int,
+        default=80,
+        help="Max top-ranked gamma baskets to enrich with wallet signal.",
+    )
+    p.add_argument(
+        "--wallet-signal-holders-limit",
+        type=int,
+        default=16,
+        help="Data API holder fetch limit per condition for wallet signal scoring.",
+    )
+    p.add_argument(
+        "--wallet-signal-top-wallets",
+        type=int,
+        default=8,
+        help="Top holders per condition used for wallet signal scoring.",
+    )
+    p.add_argument(
+        "--wallet-signal-min-trades",
+        type=int,
+        default=8,
+        help="Min market-specific trades required to score one holder wallet.",
+    )
+    p.add_argument(
+        "--wallet-signal-max-trades",
+        type=int,
+        default=600,
+        help="Max market-specific trades fetched per holder wallet.",
+    )
+    p.add_argument(
+        "--wallet-signal-page-size",
+        type=int,
+        default=200,
+        help="Page size for Data API trade fetch in wallet signal scoring.",
+    )
+    p.add_argument(
         "--btc-5m-windows-back",
         type=int,
         default=1,
-        help="For universe=btc-5m: how many prior 5-min windows to include",
+        help="For universe=btc-5m/btc-updown: how many prior windows to include",
     )
     p.add_argument(
         "--btc-5m-windows-forward",
         type=int,
         default=1,
-        help="For universe=btc-5m: how many future 5-min windows to include",
+        help="For universe=btc-5m/btc-updown: how many future windows to include",
+    )
+    p.add_argument(
+        "--btc-updown-window-minutes",
+        default="5",
+        help="For universe=btc-5m/btc-updown: comma-separated window sizes (supported: 5,15). Example: 5,15",
     )
     p.add_argument(
         "--strategy",
@@ -3173,6 +4285,44 @@ def parse_args():
         type=float,
         default=30.0,
         help="With --notify-observe-signals: minimum seconds between observe signal notifications (global).",
+    )
+    p.add_argument(
+        "--observe-exec-edge-filter",
+        action="store_true",
+        help="Observe-only: temporarily mute events whose exec-est edge stays below threshold for consecutive evaluations.",
+    )
+    p.add_argument(
+        "--observe-exec-edge-min-usd",
+        type=float,
+        default=0.0,
+        help="With --observe-exec-edge-filter: treat exec-est edge <= this USD value as a strike.",
+    )
+    p.add_argument(
+        "--observe-exec-edge-strike-limit",
+        type=int,
+        default=3,
+        help="With --observe-exec-edge-filter: strikes needed before muting an event.",
+    )
+    p.add_argument(
+        "--observe-exec-edge-cooldown-sec",
+        type=float,
+        default=300.0,
+        help="With --observe-exec-edge-filter: mute duration per event after strike limit is hit.",
+    )
+    p.add_argument(
+        "--observe-exec-edge-filter-strategies",
+        default="event-yes,event-no,event-pair",
+        help="With --observe-exec-edge-filter: comma-separated strategy names to apply filter to (empty=all).",
+    )
+    p.add_argument(
+        "--metrics-file",
+        default="",
+        help="Path to candidate metrics JSONL (default logs/clob-arb-monitor-metrics.jsonl, use 'off' to disable).",
+    )
+    p.add_argument(
+        "--metrics-log-all-candidates",
+        action="store_true",
+        help="Write metrics for every evaluated candidate (default writes threshold-pass candidates only).",
     )
     p.add_argument(
         "--max-subscribe-tokens",

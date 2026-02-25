@@ -212,7 +212,30 @@ def _write_state_atomic(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    _replace_with_retry(tmp, path)
+
+
+def _is_windows_sharing_error(exc: BaseException) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        winerr = int(getattr(exc, "winerror", 0) or 0)
+        if winerr in (5, 32):
+            return True
+    return False
+
+
+def _replace_with_retry(tmp: Path, path: Path, retries: int = 10) -> None:
+    delay = 0.01
+    for i in range(max(1, int(retries))):
+        try:
+            tmp.replace(path)
+            return
+        except Exception as e:
+            if (not _is_windows_sharing_error(e)) or i >= int(retries) - 1:
+                raise
+            time.sleep(delay)
+            delay = min(0.2, delay * 2.0)
 
 
 def _runtime_to_state(
@@ -448,7 +471,10 @@ def run_supervisor(args) -> int:
                         stop_reason = "all jobs stopped"
 
             if (now - last_state_write_ts) >= float(args.write_state_sec):
-                write_state()
+                try:
+                    write_state()
+                except Exception as e:
+                    logger.info(f"[{iso_now()}] state-write error: {type(e).__name__}: {e}")
                 last_state_write_ts = now
 
             if stopping:
@@ -477,7 +503,10 @@ def run_supervisor(args) -> int:
         payload["supervisor_running"] = False
         payload["stop_reason"] = stop_reason or "normal"
         payload["stopped_at"] = iso_now()
-        _write_state_atomic(state_path, payload)
+        try:
+            _write_state_atomic(state_path, payload)
+        except Exception as e:
+            logger.info(f"[{iso_now()}] state-write error: {type(e).__name__}: {e}")
 
     logger.info(f"[{iso_now()}] supervisor stopped reason={stop_reason or 'normal'}")
     return 0
