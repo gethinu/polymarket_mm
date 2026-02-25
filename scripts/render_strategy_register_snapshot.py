@@ -529,7 +529,46 @@ def _iter_jsonl(path: Path) -> Iterable[dict]:
                 yield obj
 
 
-def evaluate_realized_30d_gate(min_days: int) -> dict:
+def _extract_day_key(row: dict) -> str:
+    day = str(row.get("day") or row.get("date") or "").strip()
+    if len(day) >= 10 and day[4:5] == "-" and day[7:8] == "-":
+        return day[:10]
+    ts = str(row.get("ts") or row.get("generated_utc") or row.get("captured_utc") or "").strip()
+    if len(ts) >= 10 and ts[4:5] == "-" and ts[7:8] == "-":
+        return ts[:10]
+    return ""
+
+
+def _extract_realized_value(row: dict) -> Optional[float]:
+    for key in ("realized_pnl_usd", "pnl_realized_usd", "realized_pnl", "pnl_realized", "realized"):
+        if key in row:
+            n = _as_float(row.get(key))
+            if n is not None:
+                return n
+    return None
+
+
+def _extract_balance_value(row: dict) -> Optional[float]:
+    for key in ("balance_usdc", "balance_usd", "bankroll_usd"):
+        if key in row:
+            n = _as_float(row.get(key))
+            if n is not None and n > 0:
+                return n
+    return None
+
+
+def _looks_like_cumulative_snapshot(path: Path, rows_sorted: List[dict]) -> bool:
+    name = path.name.lower()
+    if "clob_arb_realized_daily" in name:
+        return True
+    for r in rows_sorted:
+        src = str(r.get("source") or "").strip().lower()
+        if src.endswith("record_simmer_realized_daily.py"):
+            return True
+    return False
+
+
+def load_realized_daily_series() -> dict:
     candidates = [
         logs_dir() / "clob_arb_realized_daily.jsonl",
         logs_dir() / "strategy_realized_pnl_daily.jsonl",
@@ -537,28 +576,93 @@ def evaluate_realized_30d_gate(min_days: int) -> dict:
 
     per_day: Dict[str, float] = {}
     used_files: List[str] = []
+    source_modes: Dict[str, str] = {}
+    balance_rows: List[dict] = []
+
     for path in candidates:
         if not path.exists():
             continue
-        used_files.append(str(path))
+
+        day_rows: Dict[str, dict] = {}
         for row in _iter_jsonl(path):
-            day = str(row.get("day") or row.get("date") or "").strip()
-            if not day:
-                ts = str(row.get("ts") or row.get("generated_utc") or "").strip()
-                if len(ts) >= 10 and ts[4] == "-" and ts[7] == "-":
-                    day = ts[:10]
+            day = _extract_day_key(row)
             if not day:
                 continue
-
-            pnl = None
-            for key in ("realized_pnl_usd", "pnl_realized_usd", "realized_pnl", "pnl_realized", "realized"):
-                if key in row:
-                    pnl = _as_float(row.get(key))
-                    if pnl is not None:
-                        break
+            pnl = _extract_realized_value(row)
             if pnl is None:
                 continue
-            per_day[day] = per_day.get(day, 0.0) + float(pnl)
+
+            day_rows[day] = {
+                "day": day,
+                "realized_value": float(pnl),
+                "source": str(row.get("source") or "").strip(),
+                "balance_usd": _extract_balance_value(row),
+            }
+
+        if not day_rows:
+            continue
+
+        used_files.append(str(path))
+        rows_sorted = [day_rows[d] for d in sorted(day_rows.keys())]
+        is_cumulative = _looks_like_cumulative_snapshot(path, rows_sorted)
+        source_modes[str(path)] = "cumulative_snapshot" if is_cumulative else "daily_realized"
+
+        prev_val: Optional[float] = None
+        for rec in rows_sorted:
+            bal = _as_float(rec.get("balance_usd"))
+            if bal is not None and bal > 0:
+                balance_rows.append(
+                    {
+                        "day": str(rec.get("day") or ""),
+                        "balance_usd": float(bal),
+                        "path": str(path),
+                    }
+                )
+
+            cur = _as_float(rec.get("realized_value"))
+            if cur is None:
+                continue
+
+            if is_cumulative:
+                if prev_val is None:
+                    prev_val = cur
+                    continue
+                delta = cur - prev_val
+                prev_val = cur
+                per_day[str(rec.get("day"))] = per_day.get(str(rec.get("day")), 0.0) + float(delta)
+            else:
+                per_day[str(rec.get("day"))] = per_day.get(str(rec.get("day")), 0.0) + float(cur)
+
+    bankroll = None
+    bankroll_source = ""
+    if balance_rows:
+        balance_rows.sort(key=lambda x: str(x.get("day") or ""))
+        last = balance_rows[-1]
+        bankroll = _as_float(last.get("balance_usd"))
+        if bankroll is not None:
+            bankroll_source = f"{Path(str(last.get('path') or '')).name}:{str(last.get('day') or '')}"
+
+    mode_set = {str(v) for v in source_modes.values() if str(v)}
+    series_mode = "+".join(sorted(mode_set)) if mode_set else "none"
+
+    return {
+        "per_day": per_day,
+        "source_files": used_files,
+        "source_modes": source_modes,
+        "series_mode": series_mode,
+        "bankroll_usd": bankroll,
+        "bankroll_source": bankroll_source,
+    }
+
+
+def evaluate_realized_30d_gate(min_days: int, series: Optional[dict] = None) -> dict:
+    s = series if isinstance(series, dict) else load_realized_daily_series()
+    per_day_raw = s.get("per_day") if isinstance(s.get("per_day"), dict) else {}
+    per_day: Dict[str, float] = {}
+    for k, v in per_day_raw.items():
+        n = _as_float(v)
+        if n is not None:
+            per_day[str(k)] = float(n)
 
     observed_days = len(per_day)
     decision = "READY_FOR_JUDGMENT" if observed_days >= int(min_days) else "PENDING_30D"
@@ -567,7 +671,8 @@ def evaluate_realized_30d_gate(min_days: int) -> dict:
         if decision == "READY_FOR_JUDGMENT"
         else f"observed_realized_days={observed_days} < min_days={int(min_days)}"
     )
-    if not used_files:
+    source_files = s.get("source_files") if isinstance(s.get("source_files"), list) else []
+    if not source_files:
         reason += "; realized daily artifact not found"
 
     total_realized = sum(per_day.values()) if per_day else 0.0
@@ -576,8 +681,67 @@ def evaluate_realized_30d_gate(min_days: int) -> dict:
         "reason": reason,
         "min_realized_days": int(min_days),
         "observed_realized_days": observed_days,
-        "observed_total_realized_pnl_usd": total_realized,
-        "source_files": used_files,
+        "observed_total_realized_pnl_usd": float(total_realized),
+        "series_mode": str(s.get("series_mode") or "none"),
+        "source_files": source_files,
+        "source_modes": (s.get("source_modes") if isinstance(s.get("source_modes"), dict) else {}),
+    }
+
+
+def summarize_realized_monthly_return(min_days: int, series: Optional[dict] = None) -> dict:
+    s = series if isinstance(series, dict) else load_realized_daily_series()
+    per_day_raw = s.get("per_day") if isinstance(s.get("per_day"), dict) else {}
+    per_day: Dict[str, float] = {}
+    for k, v in per_day_raw.items():
+        n = _as_float(v)
+        if n is not None:
+            per_day[str(k)] = float(n)
+
+    day_keys = sorted(per_day.keys())
+    observed_days = len(day_keys)
+    total_realized = float(sum(per_day.values())) if per_day else 0.0
+    mean_daily = (total_realized / observed_days) if observed_days > 0 else None
+    trailing_days = min(30, observed_days)
+    trailing_sum = float(sum(per_day[d] for d in day_keys[-trailing_days:])) if trailing_days > 0 else 0.0
+
+    bankroll = _as_float(s.get("bankroll_usd"))
+    trailing_window_return = (trailing_sum / bankroll) if (bankroll is not None and bankroll > 0 and trailing_days > 0) else None
+    rolling_30d_return = (trailing_sum / bankroll) if (bankroll is not None and bankroll > 0 and observed_days >= 30) else None
+
+    projected_monthly = None
+    if bankroll is not None and bankroll > 0 and mean_daily is not None:
+        daily_ret = mean_daily / bankroll
+        if daily_ret > -1.0:
+            projected_monthly = (1.0 + daily_ret) ** 30.0 - 1.0
+
+    decision = "READY_FOR_JUDGMENT" if observed_days >= int(min_days) else "INSUFFICIENT_DATA"
+    if observed_days < int(min_days):
+        reason = f"observed_realized_days={observed_days} < min_days={int(min_days)}"
+    elif bankroll is None or bankroll <= 0:
+        reason = "bankroll is unavailable; return ratio cannot be computed"
+    else:
+        reason = f"observed_realized_days={observed_days} >= min_days={int(min_days)}"
+
+    return {
+        "decision": decision,
+        "reason": reason,
+        "min_realized_days": int(min_days),
+        "observed_realized_days": observed_days,
+        "series_mode": str(s.get("series_mode") or "none"),
+        "source_files": (s.get("source_files") if isinstance(s.get("source_files"), list) else []),
+        "source_modes": (s.get("source_modes") if isinstance(s.get("source_modes"), dict) else {}),
+        "bankroll_usd": bankroll,
+        "bankroll_source": str(s.get("bankroll_source") or ""),
+        "total_realized_pnl_usd": float(total_realized),
+        "mean_daily_realized_pnl_usd": float(mean_daily) if mean_daily is not None else None,
+        "trailing_window_days": int(trailing_days),
+        "trailing_window_realized_pnl_usd": float(trailing_sum),
+        "projected_monthly_return_ratio": float(projected_monthly) if projected_monthly is not None else None,
+        "projected_monthly_return_text": _fmt_ratio_pct(projected_monthly, digits=2),
+        "trailing_window_return_ratio": float(trailing_window_return) if trailing_window_return is not None else None,
+        "trailing_window_return_text": _fmt_ratio_pct(trailing_window_return, digits=2),
+        "rolling_30d_return_ratio": float(rolling_30d_return) if rolling_30d_return is not None else None,
+        "rolling_30d_return_text": _fmt_ratio_pct(rolling_30d_return, digits=2),
     }
 
 
@@ -594,6 +758,9 @@ def render_html_snapshot(payload: dict) -> str:
     clob = runtime.get("clob_state") if isinstance(runtime.get("clob_state"), dict) else {}
     gate = payload.get("realized_30d_gate") if isinstance(payload.get("realized_30d_gate"), dict) else {}
     no_longshot = payload.get("no_longshot_status") if isinstance(payload.get("no_longshot_status"), dict) else {}
+    realized_monthly = (
+        payload.get("realized_monthly_return") if isinstance(payload.get("realized_monthly_return"), dict) else {}
+    )
 
     def chip(status: str) -> str:
         s = (status or "").upper()
@@ -619,6 +786,11 @@ def render_html_snapshot(payload: dict) -> str:
         runtime_cmds = r.get("runtime_commands") if isinstance(r.get("runtime_commands"), list) else []
         cmd = html.escape(str(runtime_cmds[0])) if runtime_cmds else "-"
         strategy_metric = "-"
+        if sid_raw == "weather_clob_arb_buckets_observe":
+            m_now = str(realized_monthly.get("projected_monthly_return_text") or "n/a")
+            m_roll = str(realized_monthly.get("rolling_30d_return_text") or "n/a")
+            m_days = str(realized_monthly.get("observed_realized_days") if realized_monthly.get("observed_realized_days") is not None else "-")
+            strategy_metric = f"realized_monthly_now={m_now}; roll30={m_roll}; observed_days={m_days}"
         if sid_raw == "no_longshot_daily_observe":
             m_now = str(no_longshot.get("monthly_return_now_text") or "n/a")
             m_roll = str(no_longshot.get("rolling_30d_monthly_return_text") or "n/a")
@@ -680,6 +852,30 @@ def render_html_snapshot(payload: dict) -> str:
         str(no_longshot.get("resolved_positions") if no_longshot.get("resolved_positions") is not None else "-")
     )
     no_source = html.escape(str(no_longshot.get("monthly_return_now_source") or "-"))
+    clob_monthly_now = html.escape(str(realized_monthly.get("projected_monthly_return_text") or "n/a"))
+    clob_roll30 = html.escape(str(realized_monthly.get("rolling_30d_return_text") or "n/a"))
+    clob_obs_days = html.escape(
+        str(realized_monthly.get("observed_realized_days") if realized_monthly.get("observed_realized_days") is not None else "-")
+    )
+    clob_bankroll = html.escape(
+        str(realized_monthly.get("bankroll_usd") if realized_monthly.get("bankroll_usd") is not None else "-")
+    )
+    clob_series_mode = html.escape(str(realized_monthly.get("series_mode") or "none"))
+    clob_reason = html.escape(str(realized_monthly.get("reason") or ""))
+    clob_mean_daily = html.escape(
+        str(realized_monthly.get("mean_daily_realized_pnl_usd") if realized_monthly.get("mean_daily_realized_pnl_usd") is not None else "-")
+    )
+    clob_trailing_days = html.escape(
+        str(realized_monthly.get("trailing_window_days") if realized_monthly.get("trailing_window_days") is not None else "-")
+    )
+    clob_trailing_pnl = html.escape(
+        str(realized_monthly.get("trailing_window_realized_pnl_usd") if realized_monthly.get("trailing_window_realized_pnl_usd") is not None else "-")
+    )
+    clob_bankroll_source = html.escape(str(realized_monthly.get("bankroll_source") or "-"))
+    clob_src_files = (
+        realized_monthly.get("source_files") if isinstance(realized_monthly.get("source_files"), list) else []
+    )
+    clob_src_html = "".join(f"<li><code>{html.escape(str(x))}</code></li>" for x in clob_src_files) or "<li>-</li>"
 
     return f"""<!doctype html>
 <html lang="ja">
@@ -763,6 +959,8 @@ def render_html_snapshot(payload: dict) -> str:
       <div class="card"><div class="k">readiness strict go/total</div><div class="v">{int(strict.get("go_count") or 0)} / {int(strict.get("count") or 0)}</div></div>
       <div class="card"><div class="k">readiness quality go/total</div><div class="v">{int(quality.get("go_count") or 0)} / {int(quality.get("count") or 0)}</div></div>
       <div class="card"><div class="k">live clob processes</div><div class="v">{live_count}</div></div>
+      <div class="card"><div class="k">clob realized monthly(now)</div><div class="v">{clob_monthly_now}</div></div>
+      <div class="card"><div class="k">clob realized rolling_30d</div><div class="v">{clob_roll30}</div></div>
       <div class="card"><div class="k">no-longshot monthly_now</div><div class="v">{no_monthly_now}</div></div>
       <div class="card"><div class="k">no-longshot rolling_30d</div><div class="v">{no_roll30}</div></div>
       <div class="card"><div class="k">30d gate</div><div class="v">{chip(gate_dec)}</div></div>
@@ -794,6 +992,10 @@ def render_html_snapshot(payload: dict) -> str:
             <tr><td>clob_state.notional_today</td><td>{clob_notional}</td></tr>
             <tr><td>clob_state.halted</td><td>{clob_halt}</td></tr>
             <tr><td>live_processes.count</td><td>{live_count}</td></tr>
+            <tr><td>clob_realized.projected_monthly_now</td><td>{clob_monthly_now}</td></tr>
+            <tr><td>clob_realized.rolling_30d</td><td>{clob_roll30}</td></tr>
+            <tr><td>clob_realized.observed_days</td><td>{clob_obs_days}</td></tr>
+            <tr><td>clob_realized.bankroll_usd</td><td>{clob_bankroll}</td></tr>
             <tr><td>no_longshot.monthly_return_now</td><td>{no_monthly_now}</td></tr>
             <tr><td>no_longshot.monthly_return_source</td><td>{no_source}</td></tr>
             <tr><td>no_longshot.rolling_30d</td><td>{no_roll30}</td></tr>
@@ -815,6 +1017,26 @@ def render_html_snapshot(payload: dict) -> str:
         <tbody><tr><td>{chip(gate_dec)}</td><td>{gate_days}</td><td>{gate_min}</td><td>{gate_realized}</td><td>{gate_reason}</td></tr></tbody>
       </table>
       <ul>{gate_src_html}</ul>
+    </div>
+
+    <div class="section">
+      <h2>CLOB Realized Monthly Return</h2>
+      <table>
+        <thead><tr><th>metric</th><th>value</th></tr></thead>
+        <tbody>
+          <tr><td>projected_monthly_return_pct_now</td><td>{clob_monthly_now}</td></tr>
+          <tr><td>rolling_30d_return_pct</td><td>{clob_roll30}</td></tr>
+          <tr><td>observed_realized_days</td><td>{clob_obs_days}</td></tr>
+          <tr><td>mean_daily_realized_pnl_usd</td><td>{clob_mean_daily}</td></tr>
+          <tr><td>trailing_window_days</td><td>{clob_trailing_days}</td></tr>
+          <tr><td>trailing_window_realized_pnl_usd</td><td>{clob_trailing_pnl}</td></tr>
+          <tr><td>bankroll_usd</td><td>{clob_bankroll}</td></tr>
+          <tr><td>bankroll_source</td><td>{clob_bankroll_source}</td></tr>
+          <tr><td>series_mode</td><td>{clob_series_mode}</td></tr>
+          <tr><td>reason</td><td>{clob_reason}</td></tr>
+        </tbody>
+      </table>
+      <ul>{clob_src_html}</ul>
     </div>
   </div>
 </body>
@@ -842,6 +1064,8 @@ def main() -> int:
         if rec is not None:
             readiness_loaded.append(rec)
     readiness_latest_rows = latest_readiness(readiness_loaded)
+    min_realized_days = max(1, int(args.min_realized_days))
+    realized_series = load_realized_daily_series()
 
     payload = {
         "generated_utc": now_utc().isoformat(),
@@ -868,7 +1092,8 @@ def main() -> int:
             logs_dir() / "no_longshot_realized_latest.json",
             logs_dir() / "no_longshot_monthly_return_latest.txt",
         ),
-        "realized_30d_gate": evaluate_realized_30d_gate(max(1, int(args.min_realized_days))),
+        "realized_30d_gate": evaluate_realized_30d_gate(min_realized_days, series=realized_series),
+        "realized_monthly_return": summarize_realized_monthly_return(min_realized_days, series=realized_series),
     }
 
     out_json = resolve_path(str(args.out_json), "strategy_register_latest.json")

@@ -195,10 +195,13 @@ Polymarket weather mimic pipeline daily runner (observe-only):
 Polymarket CLOB realized PnL daily capture (observe-only):
 - Daily series JSONL: `logs/clob_arb_realized_daily.jsonl`
 - Latest snapshot JSON: `logs/clob_arb_realized_latest.json`
+- `clob_arb_realized_daily.jsonl` は累積 realized snapshot 系列（Simmer SDK由来）。日次損益評価では day-over-day 差分を使う。
 
 Polymarket strategy register snapshot (observe-only):
 - Snapshot JSON: `logs/strategy_register_latest.json`
 - Snapshot HTML: `logs/strategy_register_latest.html`
+- Snapshot JSON には `realized_30d_gate` と `realized_monthly_return` を含む。
+- `realized_monthly_return` は累積 snapshot の差分系列から計算される。
 
 ## Secrets
 

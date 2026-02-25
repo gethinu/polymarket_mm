@@ -430,6 +430,8 @@ Polymarket CLOB realized PnL daily capture (observe-only):
 - Capture/update one daily realized-PnL row from Simmer SDK:
   - `python scripts/record_simmer_realized_daily.py`
   - `python scripts/record_simmer_realized_daily.py --day 2026-02-24 --out-jsonl logs/clob_arb_realized_daily.jsonl --out-latest-json logs/clob_arb_realized_latest.json --pretty`
+- Note:
+  - `logs/clob_arb_realized_daily.jsonl` は Simmer SDK の累積 realized スナップショット系列。日次損益として使う際は day-over-day 差分に変換する。
 - Key flags:
   - `--day`（`YYYY-MM-DD`。既定は当日UTC）
   - `--out-jsonl`（日次系列JSONL。既定は `logs/clob_arb_realized_daily.jsonl`）
@@ -440,6 +442,10 @@ Polymarket strategy register snapshot (observe-only):
 - Aggregate strategy canon + readiness + runtime hints into one JSON/HTML snapshot:
   - `python scripts/render_strategy_register_snapshot.py`
   - `python scripts/render_strategy_register_snapshot.py --strategy-md docs/llm/STRATEGY.md --readiness-glob "logs/*_top30_readiness_*latest.json" --out-json logs/strategy_register_latest.json --out-html logs/strategy_register_latest.html --pretty`
+- Snapshot payload includes:
+  - `realized_30d_gate`（realized 判定ゲート）
+  - `realized_monthly_return`（projected monthly return / rolling_30d return / bankroll source）
+  - 上記は `clob_arb_realized_daily.jsonl` の累積 snapshot を差分化して計算される。
 - Key flags:
   - `--strategy-md`（戦略レジストリの入力Markdown。既定は `docs/llm/STRATEGY.md`）
   - `--readiness-glob`（readiness 判定JSONのglob。既定は `logs/*_top30_readiness_*latest.json`）
