@@ -69,7 +69,11 @@
         "900",
         "--max-run-seconds",
         "1800",
-        "--skip-refresh"
+        "--skip-refresh",
+        "--realized-refresh-sec",
+        "900",
+        "--realized-entry-top-n",
+        "0"
       ],
       "restart": "on-failure",
       "restart_delay_sec": 15,

@@ -1,11 +1,25 @@
 [CmdletBinding()]
 param(
-  [string]$TaskName = "NoLongshotDailyReport",
+  [string]$TaskName = "MorningStrategyStatusDaily",
   [string]$RepoRoot = "C:\Repos\polymarket_mm",
-  [string]$StartTime = "00:05",
+  [string]$StartTime = "08:05",
   [string]$PowerShellExe = "powershell.exe",
-  [switch]$SkipRefresh,
-  [switch]$Discord,
+  [string]$StrategyId = "weather_clob_arb_buckets_observe",
+  [int]$MinRealizedDays = 30,
+  [string]$SnapshotJson = "logs/strategy_register_latest.json",
+  [string]$HealthJson = "logs/automation_health_latest.json",
+  [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
+  [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
+  [Alias("h")]
+  [switch]$Help,
+  [switch]$NoRefresh,
+  [switch]$SkipHealth,
+  [switch]$SkipGateAlarm,
+  [switch]$SkipProcessScan,
+  [switch]$DiscordGateAlarm,
+  [switch]$FailOnGateNotReady,
+  [switch]$FailOnStageNotFinal,
+  [switch]$FailOnHealthNoGo,
   [switch]$RunNow,
   [switch]$Background,
   [switch]$NoBackground
@@ -15,12 +29,12 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-SkipRefresh] [-Discord] [-RunNow]"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground [-TaskName MorningStrategyStatusDaily] [-StartTime 08:05] [-StrategyId weather_clob_arb_buckets_observe] [-FailOnStageNotFinal] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -?"
 }
 
 $invLine = [string]$MyInvocation.Line
-if ($invLine -match '(^|\s)(-\?|/\?|--help|-h)(\s|$)') {
+if ($Help.IsPresent -or ($invLine -match '(^|\s)(-\?|/\?|--help|-h)(\s|$)')) {
   Show-Usage
   exit 0
 }
@@ -62,7 +76,6 @@ if (-not $Background -and -not $NoBackground) {
 }
 
 if (-not (Test-Path $PowerShellExe)) {
-  # Allow PATH-resolved names like "powershell.exe".
   if ($PowerShellExe -notmatch "^[A-Za-z]:\\") {
     $resolved = Get-Command $PowerShellExe -ErrorAction SilentlyContinue
     if ($null -eq $resolved) {
@@ -72,7 +85,7 @@ if (-not (Test-Path $PowerShellExe)) {
   }
 }
 
-$runnerPath = Join-Path $RepoRoot "scripts\run_no_longshot_daily_report.ps1"
+$runnerPath = Join-Path $RepoRoot "scripts\run_morning_status_daily.ps1"
 if (-not (Test-Path $runnerPath)) {
   throw "Runner not found: $runnerPath"
 }
@@ -100,20 +113,33 @@ $argList = @(
   "-NonInteractive",
   "-ExecutionPolicy", "Bypass",
   "-File", ('"{0}"' -f $runnerPath),
-  "-NoBackground"
+  "-NoBackground",
+  "-StrategyId", $StrategyId,
+  "-MinRealizedDays", "$MinRealizedDays",
+  "-SnapshotJson", $SnapshotJson,
+  "-HealthJson", $HealthJson,
+  "-GateAlarmStateJson", $GateAlarmStateJson,
+  "-GateAlarmLogFile", $GateAlarmLogFile
 )
-if ($SkipRefresh.IsPresent) {
-  $argList += "-SkipRefresh"
-}
-if ($Discord.IsPresent) {
-  $argList += "-Discord"
-}
+if ($NoRefresh.IsPresent) { $argList += "-NoRefresh" }
+if ($SkipHealth.IsPresent) { $argList += "-SkipHealth" }
+if ($SkipGateAlarm.IsPresent) { $argList += "-SkipGateAlarm" }
+if ($SkipProcessScan.IsPresent) { $argList += "-SkipProcessScan" }
+if ($DiscordGateAlarm.IsPresent) { $argList += "-DiscordGateAlarm" }
+if ($FailOnGateNotReady.IsPresent) { $argList += "-FailOnGateNotReady" }
+if ($FailOnStageNotFinal.IsPresent) { $argList += "-FailOnStageNotFinal" }
+if ($FailOnHealthNoGo.IsPresent) { $argList += "-FailOnHealthNoGo" }
 $actionArgs = ($argList -join " ")
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
 $trigger = New-ScheduledTaskTrigger -Daily -At $at
-$settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable
-$desc = "Run No-Longshot daily report (screen + gap + walkforward)"
+$settings = New-ScheduledTaskSettingsSet `
+  -Hidden `
+  -MultipleInstances IgnoreNew `
+  -StartWhenAvailable `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries
+$desc = "Run morning strategy status check (observe-only)"
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 if ([string]::IsNullOrWhiteSpace($currentUser)) {
@@ -154,14 +180,23 @@ if ($RunNow.IsPresent) {
     "-NonInteractive",
     "-ExecutionPolicy", "Bypass",
     "-File", $runnerPath,
-    "-NoBackground"
+    "-NoBackground",
+    "-StrategyId", $StrategyId,
+    "-MinRealizedDays", "$MinRealizedDays",
+    "-SnapshotJson", $SnapshotJson,
+    "-HealthJson", $HealthJson,
+    "-GateAlarmStateJson", $GateAlarmStateJson,
+    "-GateAlarmLogFile", $GateAlarmLogFile
   )
-  if ($SkipRefresh.IsPresent) {
-    $runArgs += "-SkipRefresh"
-  }
-  if ($Discord.IsPresent) {
-    $runArgs += "-Discord"
-  }
+  if ($NoRefresh.IsPresent) { $runArgs += "-NoRefresh" }
+  if ($SkipHealth.IsPresent) { $runArgs += "-SkipHealth" }
+  if ($SkipGateAlarm.IsPresent) { $runArgs += "-SkipGateAlarm" }
+  if ($SkipProcessScan.IsPresent) { $runArgs += "-SkipProcessScan" }
+  if ($DiscordGateAlarm.IsPresent) { $runArgs += "-DiscordGateAlarm" }
+  if ($FailOnGateNotReady.IsPresent) { $runArgs += "-FailOnGateNotReady" }
+  if ($FailOnStageNotFinal.IsPresent) { $runArgs += "-FailOnStageNotFinal" }
+  if ($FailOnHealthNoGo.IsPresent) { $runArgs += "-FailOnHealthNoGo" }
+
   Write-Host "RunNow: executing runner directly (observe-only) ..."
   & $PowerShellExe @runArgs
   if ($LASTEXITCODE -ne 0) {
@@ -171,3 +206,4 @@ if ($RunNow.IsPresent) {
 
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName,State
 Get-ScheduledTask -TaskName $TaskName | Get-ScheduledTaskInfo | Select-Object TaskName,LastRunTime,LastTaskResult,NextRunTime
+

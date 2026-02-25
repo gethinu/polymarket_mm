@@ -145,14 +145,40 @@ def load_json(path: Path, default_obj):
     return obj if isinstance(obj, type(default_obj)) else default_obj
 
 
+def load_positions_ledger(path: Path) -> Tuple[List[dict], Optional[str]]:
+    if not path.exists():
+        return [], None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return [], f"positions ledger parse failed: {type(e).__name__}: {e}"
+    if isinstance(raw, list):
+        xs = raw
+    elif isinstance(raw, dict):
+        xs = raw.get("positions")
+    else:
+        return [], "positions ledger type invalid (expected object or list)"
+    if not isinstance(xs, list):
+        return [], "positions ledger missing list field: positions"
+    out: List[dict] = []
+    for i, row in enumerate(xs):
+        if isinstance(row, dict):
+            out.append(row)
+        else:
+            return [], f"positions ledger row[{i}] is not object"
+    return out, None
+
+
 def write_json(path: Path, obj, pretty: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as f:
         if pretty:
             json.dump(obj, f, ensure_ascii=False, indent=2)
         else:
             json.dump(obj, f, ensure_ascii=False, separators=(",", ":"))
         f.write("\n")
+    tmp.replace(path)
 
 
 def load_screen_rows(path: Path) -> List[dict]:
@@ -413,10 +439,18 @@ def main() -> int:
     out_latest_json = resolve_path(str(args.out_latest_json), "no_longshot_realized_latest.json")
     out_monthly_txt = resolve_path(str(args.out_monthly_txt), "no_longshot_monthly_return_latest.txt")
 
-    raw_ledger = load_json(positions_json, {"positions": []})
-    positions = raw_ledger.get("positions") if isinstance(raw_ledger, dict) else []
-    if not isinstance(positions, list):
-        positions = []
+    positions_exists = positions_json.exists()
+    if (not positions_exists) and int(args.entry_top_n) <= 0:
+        print(
+            "[no-longshot-realized] error: positions ledger is missing while "
+            "entry-top-n=0 (resolve-only)."
+        )
+        return 2
+
+    positions, ledger_err = load_positions_ledger(positions_json)
+    if ledger_err:
+        print(f"[no-longshot-realized] error: {ledger_err}")
+        return 2
 
     screen_rows = load_screen_rows(screen_csv)
     added = ingest_entries(
@@ -485,4 +519,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

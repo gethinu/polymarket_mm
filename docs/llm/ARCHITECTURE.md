@@ -69,6 +69,16 @@ Polymarket CLOB:
 - `scripts/render_strategy_register_snapshot.py`
   - Observe-only registry aggregator for `docs/llm/STRATEGY.md` + readiness/runtime hints
   - Produces one JSON/HTML snapshot for strategy list and decision status under `logs/`
+- `scripts/check_strategy_gate_alarm.py`
+  - Observe-only gate transition checker for strategy register 3-stage decision
+  - Emits one-shot transition alarms and persists last-seen stage under `logs/`
+- `scripts/check_morning_status.py` (+ `scripts/check_morning_status.ps1`)
+  - Observe-only one-command morning check for realized refresh + gate/readiness/health summary
+  - Supports fail-fast guards for gate finalization and automation health decisions
+- `scripts/run_morning_status_daily.ps1`
+  - Background-by-default daily runner wrapper for morning status checks
+- `scripts/install_morning_status_daily_task.ps1`
+  - Scheduled-task installer for recurring morning status checks
 - `scripts/run_weather_top30_readiness_daily.ps1`
   - Background-by-default daily runner for strict/quality readiness refresh and aggregation
 - `scripts/install_weather_top30_readiness_daily_task.ps1`

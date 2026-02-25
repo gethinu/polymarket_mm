@@ -8,10 +8,12 @@ Intended to be supervised by `scripts/bot_supervisor.py`.
 
 from __future__ import annotations
 
+import atexit
 import argparse
 import json
 import os
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -23,6 +25,7 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCRIPT_PATH = str(Path("scripts") / "run_no_longshot_daily_report.ps1")
 DEFAULT_LOG_FILE = str(DEFAULT_REPO_ROOT / "logs" / "no_longshot_daily_daemon.log")
 DEFAULT_STATE_FILE = str(DEFAULT_REPO_ROOT / "logs" / "no_longshot_daily_daemon_state.json")
+DEFAULT_LOCK_FILE = str(DEFAULT_REPO_ROOT / "logs" / "no_longshot_daily_daemon.lock")
 DEFAULT_REALIZED_TOOL_PATH = str(Path("scripts") / "record_no_longshot_realized_daily.py")
 DEFAULT_REALIZED_SCREEN_CSV = str(Path("logs") / "no_longshot_fast_screen_lowyes_latest.csv")
 DEFAULT_REALIZED_POSITIONS_JSON = str(Path("logs") / "no_longshot_forward_positions.json")
@@ -67,6 +70,91 @@ def resolve_repo_path(repo_root: Path, value: str) -> Path:
     if p.is_absolute():
         return p.resolve()
     return (repo_root / p).resolve()
+
+
+def _parse_lock_pid(path: Path) -> Optional[int]:
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+        if isinstance(obj, dict):
+            pid = obj.get("pid")
+            if isinstance(pid, int) and pid > 0:
+                return pid
+    except Exception:
+        pass
+    try:
+        pid = int(raw)
+        if pid > 0:
+            return pid
+    except Exception:
+        return None
+    return None
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+    except Exception:
+        return False
+
+
+def _release_lock(path: Path) -> None:
+    try:
+        owner_pid = _parse_lock_pid(path)
+        if owner_pid is not None and owner_pid != os.getpid():
+            return
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _acquire_lock(path: Path, logger: "Logger") -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "pid": int(os.getpid()),
+        "acquired_at": iso_now(),
+        "argv": list(sys.argv),
+    }
+    body = json.dumps(payload, ensure_ascii=True, indent=2) + "\n"
+
+    for _ in range(2):
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, body.encode("utf-8"))
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            owner_pid = _parse_lock_pid(path)
+            if owner_pid is not None and owner_pid != os.getpid() and _pid_alive(owner_pid):
+                logger.info(
+                    f"[{iso_now()}] lock busy: {path} owner_pid={owner_pid}; "
+                    "another daemon instance is active"
+                )
+                return False
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                logger.info(f"[{iso_now()}] lock stale but cannot remove: {path}")
+                return False
+        except Exception as e:
+            logger.info(f"[{iso_now()}] lock acquire failed: {path} ({type(e).__name__}: {e})")
+            return False
+    logger.info(f"[{iso_now()}] lock acquire failed after retry: {path}")
+    return False
 
 
 class Logger:
@@ -374,12 +462,19 @@ def parse_args():
     )
     p.add_argument("--log-file", default=DEFAULT_LOG_FILE, help="Daemon log file path")
     p.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="Daemon state file path")
+    p.add_argument("--lock-file", default=DEFAULT_LOCK_FILE, help="Single-instance lock file path")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     logger = Logger(args.log_file)
+    repo_root = Path(args.repo_root).resolve()
+    lock_path = resolve_repo_path(repo_root, str(args.lock_file))
+    if not _acquire_lock(lock_path, logger):
+        return 3
+    atexit.register(_release_lock, lock_path)
+
     state_path = Path(args.state_file)
     state = load_state(state_path)
 
@@ -393,6 +488,7 @@ def main() -> int:
     )
     logger.info(f"[{iso_now()}] log={args.log_file}")
     logger.info(f"[{iso_now()}] state={args.state_file}")
+    logger.info(f"[{iso_now()}] lock={lock_path}")
     if state.halted:
         logger.info(f"[{iso_now()}] resume state: HALTED ({state.halt_reason})")
 

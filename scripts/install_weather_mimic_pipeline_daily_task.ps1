@@ -138,7 +138,12 @@ $actionArgs = ($argList -join " ")
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
 $trigger = New-ScheduledTaskTrigger -Daily -At $at
-$settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable
+$settings = New-ScheduledTaskSettingsSet `
+  -Hidden `
+  -MultipleInstances IgnoreNew `
+  -StartWhenAvailable `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
 $desc = "Run weather mimic pipeline daily (observe-only)"
 
@@ -149,7 +154,35 @@ try {
 }
 
 if ($RunNow.IsPresent) {
-  Start-ScheduledTask -TaskName $TaskName
+  $runArgs = @(
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $runnerPath,
+    "-NoBackground",
+    "-UserFile", $UserFile,
+    "-ProfileName", $ProfileName,
+    "-MinWeatherSharePct", "$MinWeatherSharePct",
+    "-MinTrades", "$MinTrades",
+    "-MinRealizedPnl", "$MinRealizedPnl",
+    "-ConsensusScoreMode", $ConsensusScoreMode
+  )
+  if ($NoRunScans.IsPresent) { $runArgs += "-NoRunScans" }
+  if ($LateprobDisableWeatherFilter.IsPresent) { $runArgs += "-LateprobDisableWeatherFilter" }
+  if ($Discord.IsPresent) { $runArgs += "-Discord" }
+  if ($FailOnReadinessNoGo.IsPresent) { $runArgs += "-FailOnReadinessNoGo" }
+  if (-not [double]::IsNaN($ConsensusWeightOverlap)) { $runArgs += @("-ConsensusWeightOverlap", "$ConsensusWeightOverlap") }
+  if (-not [double]::IsNaN($ConsensusWeightNetYield)) { $runArgs += @("-ConsensusWeightNetYield", "$ConsensusWeightNetYield") }
+  if (-not [double]::IsNaN($ConsensusWeightMaxProfit)) { $runArgs += @("-ConsensusWeightMaxProfit", "$ConsensusWeightMaxProfit") }
+  if (-not [double]::IsNaN($ConsensusWeightLiquidity)) { $runArgs += @("-ConsensusWeightLiquidity", "$ConsensusWeightLiquidity") }
+  if (-not [double]::IsNaN($ConsensusWeightVolume)) { $runArgs += @("-ConsensusWeightVolume", "$ConsensusWeightVolume") }
+
+  Write-Host "RunNow: executing runner directly (observe-only) ..."
+  & $PowerShellExe @runArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "RunNow direct runner failed with exit code $LASTEXITCODE"
+  }
 }
 
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName, State

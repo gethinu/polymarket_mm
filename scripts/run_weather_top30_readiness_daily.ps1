@@ -146,8 +146,12 @@ function Send-DiscordSummary([string]$SummaryTxtPath) {
 
 $judgeTool = Join-Path $RepoRoot "scripts\judge_weather_top30_readiness.py"
 $reportTool = Join-Path $RepoRoot "scripts\report_weather_top30_readiness.py"
+$consensusOverviewTool = Join-Path $RepoRoot "scripts\render_weather_consensus_overview.py"
 $realizedDailyTool = Join-Path $RepoRoot "scripts\record_simmer_realized_daily.py"
+$strategyRealizedTool = Join-Path $RepoRoot "scripts\materialize_strategy_realized_daily.py"
 $strategySnapshotTool = Join-Path $RepoRoot "scripts\render_strategy_register_snapshot.py"
+$strategyGateAlarmTool = Join-Path $RepoRoot "scripts\check_strategy_gate_alarm.py"
+$automationHealthTool = Join-Path $RepoRoot "scripts\report_automation_health.py"
 if (-not (Test-Path $judgeTool)) { throw "judge tool not found: $judgeTool" }
 if (-not (Test-Path $reportTool)) { throw "report tool not found: $reportTool" }
 
@@ -219,6 +223,25 @@ Run-Python @(
 )
 
 try {
+  if (-not (Test-Path $consensusOverviewTool)) {
+    Log "consensus_overview skip: renderer not found"
+  } else {
+    $overviewArgs = @(
+      $consensusOverviewTool,
+      "--top-n", "30"
+    )
+    foreach ($profile in $profileList) {
+      $overviewArgs += @("--profile", $profile)
+    }
+    Run-Python $overviewArgs
+    $overviewOut = Join-Path $logsDir "weather_consensus_overview_latest.html"
+    Log "consensus_overview done -> $overviewOut"
+  }
+} catch {
+  Log "consensus_overview failed (non-fatal): $($_.Exception.Message)"
+}
+
+try {
   if (-not (Test-Path $realizedDailyTool)) {
     Log "realized_daily skip: recorder not found"
   } else {
@@ -234,6 +257,25 @@ try {
 }
 
 try {
+  if (-not (Test-Path $strategyRealizedTool)) {
+    Log "strategy_realized_daily skip: materializer not found"
+  } else {
+    Run-Python @(
+      $strategyRealizedTool,
+      "--strategy-id", "weather_clob_arb_buckets_observe",
+      "--source-jsonl", "logs/clob_arb_realized_daily.jsonl",
+      "--out-jsonl", "logs/strategy_realized_pnl_daily.jsonl",
+      "--out-latest-json", "logs/strategy_realized_latest.json",
+      "--pretty"
+    )
+    $strategyRealizedOut = Join-Path $logsDir "strategy_realized_pnl_daily.jsonl"
+    Log "strategy_realized_daily done -> $strategyRealizedOut"
+  }
+} catch {
+  Log "strategy_realized_daily failed (non-fatal): $($_.Exception.Message)"
+}
+
+try {
   if (-not (Test-Path $strategySnapshotTool)) {
     Log "strategy_snapshot skip: renderer not found"
   } else {
@@ -246,6 +288,44 @@ try {
   }
 } catch {
   Log "strategy_snapshot failed (non-fatal): $($_.Exception.Message)"
+}
+
+try {
+  if (-not (Test-Path $strategyGateAlarmTool)) {
+    Log "strategy_gate_alarm skip: checker not found"
+  } else {
+    $alarmArgs = @(
+      $strategyGateAlarmTool,
+      "--snapshot-json", "logs/strategy_register_latest.json",
+      "--state-json", "logs/strategy_gate_alarm_state.json",
+      "--log-file", "logs/strategy_gate_alarm.log",
+      "--strategy-id", "weather_clob_arb_buckets_observe",
+      "--pretty"
+    )
+    if ($discordRequested) {
+      $alarmArgs += "--discord"
+    }
+    Run-Python $alarmArgs
+    $strategyGateAlarmOut = Join-Path $logsDir "strategy_gate_alarm_state.json"
+    Log "strategy_gate_alarm done -> $strategyGateAlarmOut"
+  }
+} catch {
+  Log "strategy_gate_alarm failed (non-fatal): $($_.Exception.Message)"
+}
+
+try {
+  if (-not (Test-Path $automationHealthTool)) {
+    Log "automation_health skip: reporter not found"
+  } else {
+    Run-Python @(
+      $automationHealthTool,
+      "--pretty"
+    )
+    $healthOut = Join-Path $logsDir "automation_health_latest.json"
+    Log "automation_health done -> $healthOut"
+  }
+} catch {
+  Log "automation_health failed (non-fatal): $($_.Exception.Message)"
 }
 
 $strictTxt = Join-Path $logsDir "weather_top30_readiness_report_strict_latest.txt"

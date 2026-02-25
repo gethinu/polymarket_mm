@@ -6,10 +6,11 @@ This document is the highest-priority behavioral spec for assistant-driven chang
 
 When implementing or reviewing changes, treat these files as authoritative in this order:
 1. `docs/llm/SPEC.md`
-2. `docs/llm/ARCHITECTURE.md`
-3. `docs/llm/INTERFACES.md`
-4. `docs/llm/STATE.md`
-5. `docs/llm/STRATEGY.md`
+2. `docs/llm/CANON.md`
+3. `docs/llm/ARCHITECTURE.md`
+4. `docs/llm/INTERFACES.md`
+5. `docs/llm/STATE.md`
+6. `docs/llm/STRATEGY.md`
 
 If documents conflict, do not guess. Resolve by asking for clarification and then update docs before code changes.
 

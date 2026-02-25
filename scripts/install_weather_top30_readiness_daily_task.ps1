@@ -115,7 +115,12 @@ $actionArgs = ($argList -join " ")
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
 $trigger = New-ScheduledTaskTrigger -Daily -At $at
-$settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable
+$settings = New-ScheduledTaskSettingsSet `
+  -Hidden `
+  -MultipleInstances IgnoreNew `
+  -StartWhenAvailable `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries
 $desc = "Run Weather Top30 readiness daily report (observe-only)"
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -147,7 +152,26 @@ if (-not $registered) {
 Write-Host ("Registered principal mode: {0}" -f $principalMode)
 
 if ($RunNow.IsPresent) {
-  Start-ScheduledTask -TaskName $TaskName
+  $runArgs = @(
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $runnerPath,
+    "-NoBackground",
+    "-Profiles", $Profiles
+  )
+  if ($FailOnNoGo.IsPresent) {
+    $runArgs += "-FailOnNoGo"
+  }
+  if ($Discord.IsPresent) {
+    $runArgs += "-Discord"
+  }
+  Write-Host "RunNow: executing runner directly (observe-only) ..."
+  & $PowerShellExe @runArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "RunNow direct runner failed with exit code $LASTEXITCODE"
+  }
 }
 
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName,State

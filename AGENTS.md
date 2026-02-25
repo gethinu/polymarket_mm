@@ -7,5 +7,5 @@ This repository contains automation code that can place trades.
 - Keep runtime outputs under `logs/` (gitignored).
 - If you add new long-lived state files, document them in `docs/STATE.md`.
 - If you add new CLI entrypoints or flags, document them in `docs/INTERFACES.md`.
+- Before implementing anything non-trivial, check `docs/llm/IMPLEMENTATION_LEDGER.md` to avoid duplicate work, and refresh it after changes (`python scripts/render_implementation_ledger.py`).
 </INSTRUCTIONS>
-

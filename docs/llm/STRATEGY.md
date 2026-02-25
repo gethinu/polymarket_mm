@@ -1,6 +1,7 @@
 # Strategy Canon (polymarket_mm)
 
 This file is the canonical strategy register for concurrent chat/workstream coordination.
+For operational source-of-truth workflow, follow `docs/llm/CANON.md`.
 
 ## Adoption Rule
 
@@ -10,8 +11,16 @@ This file is the canonical strategy register for concurrent chat/workstream coor
 
 ## Current KPI
 
-- `monthly_return_now`: `+3.57%` (as of 2026-02-25T10:26:42Z, source: `logs/no_longshot_daily_summary.txt`, field `monthly_return_now`)
-- `rolling_30d_monthly_return`: `+3.57%` (source: `logs/no_longshot_monthly_return_latest.txt`, `rolling_30d_resolved_trades=1`)
+Do not hand-edit KPI numbers in this file.
+
+Always read the latest values from:
+- `logs/strategy_register_latest.json`
+
+Primary keys:
+- `no_longshot_status.monthly_return_now_text`
+- `no_longshot_status.monthly_return_now_source`
+- `no_longshot_status.rolling_30d_monthly_return_text`
+- `realized_30d_gate.decision`
 
 ## Active Strategies
 
@@ -42,16 +51,14 @@ This file is the canonical strategy register for concurrent chat/workstream coor
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh --realized-refresh-sec 900 --realized-entry-top-n 0`
 - Evidence snapshot (2026-02-25 daily summary):
   - Source summary: `logs/no_longshot_daily_summary.txt`
-  - `monthly_return_now`: `+3.57%` (`monthly_return_now_source=realized_rolling_30d`)
-  - `rolling_30d_monthly_return`: `+3.57%` (`rolling_30d_resolved_trades=1`)
+  - Read latest keys: `monthly_return_now`, `rolling_30d_monthly_return`, `monthly_return_now_source`
 - Evidence snapshot (2026-02-25 realized refresh):
   - Source JSON: `logs/no_longshot_realized_latest.json`
-  - `metrics.resolved_positions=1`, `metrics.open_positions=35`, `metrics.observed_days=1`
-  - `metrics.rolling_30d.return_pct=+3.5733%`
+  - Read latest keys: `metrics.resolved_positions`, `metrics.open_positions`, `metrics.observed_days`, `metrics.rolling_30d.return_pct`
 - Evidence snapshot (2026-02-25 guarded OOS):
   - Source JSON: `logs/no_longshot_daily_oos_guarded.json`
   - `walkforward_oos.capital_return`: `+9.3882%` (`n=36`, span `49.6d`, annualized `+93.59%`, `LOW_CONF span<90d`)
-- Decision note: rolling-30d realized return became positive (`+3.57%`), but evidence is still low-confidence (`resolved_positions=1`), so keep this strategy in observe-only.
+- Decision note: keep this strategy in observe-only; monthly-return claims must always be read from latest realized artifacts.
 - Operational gate: treat `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` as authority for monthly return; keep quality review active until resolved sample size is non-trivial.
 
 3. `link_intake_walletseed_cohort_observe`
@@ -85,6 +92,10 @@ This file is the canonical strategy register for concurrent chat/workstream coor
   - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-adopt-20260225_182309.jsonl` (`rows=134`, `rows_blocked=44`)
   - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-adopt-20260225_182309-base.json`, `logs/clob-arb-kelly-replay-eventpair-adopt-20260225_182309-gap5s.json`
   - Monthly estimate (outlier-trim recommendation): `logs/clob-arb-eventpair-monthly-estimate-adopt-20260225_182309.json` (`recommended_monthly_return=+3.46%`, rule: `mean_edge_pct_raw <= 25%`)
+- Evidence snapshot (extended observe refresh 2026-02-25):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-adopt-extended-20260225_205027.jsonl` (`rows=443`, `rows_blocked=180`)
+  - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-adopt-extended-20260225_205027-base.json`, `logs/clob-arb-kelly-replay-eventpair-adopt-extended-20260225_205027-gap5s.json`
+  - Monthly estimate (outlier-trim recommendation): `logs/clob-arb-eventpair-monthly-estimate-adopt-extended-20260225_205027.json` (`recommended_monthly_return=+2.60%`, rule: `mean_edge_pct_raw <= 25%`)
 - Evidence snapshot (coverage refresh 2026-02-25):
   - Source coverage: `logs/clob-arb-eventpair-metrics-coverage-latest.json`
   - `distinct_events_all=4` (`event_gate_target=20`, not met)
@@ -102,7 +113,7 @@ This file is the canonical strategy register for concurrent chat/workstream coor
   - Per-link note: `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-link5-retry/01_synthdata-on-x-launch-a-polymarket-tradi.md`
 - Evidence snapshot (2026-02-25 expanded run):
   - Source summary: `logs/hourly_updown_highprob_calibration_168h_tte45_70_95_btc_eth_sol_xrp.json`
-  - `qualified_samples=221` (gate `>=200` met), `edge_empirical_minus_price=+0.0438` (gate `>0` met)
+  - Read latest keys: `summary.qualified_samples`, `summary.edge_empirical_minus_price`
 - Decision note: expanded-asset calibration run met sample and edge gates; promote to active observe calibration monitoring.
 - Operational gate: keep observe-only and revert to `REVIEW` when either `qualified_samples < 200` or `edge_empirical_minus_price <= 0` on the latest 7-day-equivalent calibration run.
 

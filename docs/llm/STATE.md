@@ -19,6 +19,7 @@ Bot supervisor:
 No-longshot daily daemon (observe-only):
 - Log: `logs/no_longshot_daily_daemon.log`
 - State: `logs/no_longshot_daily_daemon_state.json`
+- Instance lock: `logs/no_longshot_daily_daemon.lock`
 - 既存の日次レポート出力（`logs/no_longshot_daily_*.txt/.json/.csv`）は `run_no_longshot_daily_report.ps1` 側の仕様を継承。
 - `no_longshot_daily_daemon.py` の `--realized-refresh-sec` が有効な場合、同 daemon が下記 realized tracker artifacts を日中にも更新する（observe-only）。
 - Forward realized tracker state/artifacts:

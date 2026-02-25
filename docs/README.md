@@ -6,4 +6,7 @@
 - For link-intake research outputs, use:
   - `docs/knowledge/link-intake/sessions/<date>_<topic>/`
   - one file per source URL + one session overview
+- Canonical implementation-history document:
+  - `docs/llm/IMPLEMENTATION_LEDGER.md`
+  - refresh with `python scripts/render_implementation_ledger.py`
 - Do not add new files under `doc/` (legacy path).

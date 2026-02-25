@@ -223,7 +223,19 @@ if ($mode -eq "default") {
 Write-Host ("Registered principal mode: {0}" -f $principalModeUsed)
 
 if ($RunNow.IsPresent) {
-  Start-ScheduledTask -TaskName $TaskName
+  $runArgs = @(
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $runnerPath
+  )
+  $runArgs += $runnerArgList
+  Write-Host "RunNow: executing runner directly (observe-only) ..."
+  & $PowerShellExe @runArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "RunNow direct runner failed with exit code $LASTEXITCODE"
+  }
 }
 
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName, State

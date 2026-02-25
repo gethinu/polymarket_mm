@@ -497,6 +497,16 @@ Polymarket strategy register snapshot (observe-only):
   - `--out-json`, `--out-html`, `--pretty`
   - `--skip-process-scan`（実行中プロセス検出を省略）
 
+Implementation ledger renderer (observe-only):
+- Build one consolidated implementation-history document from git/worktree/session artifacts:
+  - `python scripts/render_implementation_ledger.py`
+  - `python scripts/render_implementation_ledger.py --max-commits 200`
+  - `python scripts/render_implementation_ledger.py --out-md docs/llm/IMPLEMENTATION_LEDGER.md`
+- Key flags:
+  - `--max-commits`（走査する最新コミット件数）
+  - `--max-files-per-commit`（コミット行に表示するファイル数）
+  - `--out-md`（出力Markdownパス）
+
 Polymarket strategy gate stage alarm (observe-only):
 - Detect 3-stage gate transitions from strategy snapshot and emit one alarm event:
   - `python scripts/check_strategy_gate_alarm.py`
@@ -556,6 +566,8 @@ Automation health report (observe-only):
   - `--task`（repeatable。監視対象Scheduled Task名）
   - `--artifact`（repeatable。`PATH[:MAX_AGE_HOURS]` 形式）
   - `--out-json`, `--out-txt`, `--pretty`
+- Default task checks include:
+  - `WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `MorningStrategyStatusDaily`
 - Default artifact checks include:
   - `logs/strategy_register_latest.json`, `logs/clob_arb_realized_daily.jsonl`, `logs/strategy_realized_pnl_daily.jsonl`
   - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`
@@ -758,9 +770,10 @@ Polymarket NO-longshot toolkit (observe-only):
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --poll-sec 15 --retry-delay-sec 900 --max-run-seconds 1800 --run-on-start`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
-  - key flags: `--run-at-hhmm`, `--poll-sec`, `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`, `--run-on-start`, `--skip-refresh/--no-skip-refresh`, `--discord`, `--log-file`, `--state-file`
+  - key flags: `--run-at-hhmm`, `--poll-sec`, `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`, `--run-on-start`, `--skip-refresh/--no-skip-refresh`, `--discord`, `--log-file`, `--state-file`, `--lock-file`
   - realized refresh key flags: `--python-exe`, `--realized-refresh-sec`, `--realized-timeout-sec`, `--realized-tool-path`, `--realized-screen-csv`, `--realized-positions-json`, `--realized-out-daily-jsonl`, `--realized-out-latest-json`, `--realized-out-monthly-txt`, `--realized-entry-top-n`, `--realized-per-trade-cost`, `--realized-api-timeout-sec`
   - `--realized-refresh-sec > 0` で daemon が `record_no_longshot_realized_daily.py` を定期実行し、`--realized-entry-top-n 0` なら resolve-only（新規エントリー追加なし）で rolling-30d 実測を同日更新できる
+  - daemon は `--lock-file`（既定: `logs/no_longshot_daily_daemon.lock`）で単一起動を強制し、既存インスタンスが稼働中なら 2本目は非0終了する
   - daemon は内部で `run_no_longshot_daily_report.ps1 -NoBackground` を呼び出し、observe-only 日次運用を supervisor 配下で継続する
 
 Polymarket event-driven mispricing monitor (observe-only):
