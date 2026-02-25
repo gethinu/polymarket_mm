@@ -1,10 +1,9 @@
 # IMPLEMENTATION LEDGER
 
-- generated_utc: `2026-02-25T12:10:59.358692+00:00`
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `16`
-- worktree_changes: `29`
+- commits_scanned: `17`
+- worktree_changes: `13`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -21,19 +20,20 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 4 | `2026-02-25 21:03` | `0abb067c` | Add no-longshot monthly tracking and strategy-register visibility |
+| `docs_llm` | 5 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
-| `no_longshot` | 3 | `2026-02-25 21:03` | `0abb067c` | Add no-longshot monthly tracking and strategy-register visibility |
-| `security_or_ops` | 3 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
+| `no_longshot` | 4 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
+| `security_or_ops` | 4 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
 | `simmer_clob` | 13 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
-| `strategy_register` | 3 | `2026-02-25 21:03` | `0abb067c` | Add no-longshot monthly tracking and strategy-register visibility |
-| `task_automation` | 5 | `2026-02-25 21:03` | `0abb067c` | Add no-longshot monthly tracking and strategy-register visibility |
-| `weather_pipeline` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
+| `strategy_register` | 4 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
+| `task_automation` | 6 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
+| `weather_pipeline` | 3 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-25 21:11` | `36ebdddf` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation,weather_pipeline` | feat: add morning status automation and strategy health reporting | `AGENTS.md`, `configs/bot_supervisor.observe.json`, `docs/IMPLEMENTATION_LEDGER.md`, `docs/README.md`, +25 |
 | `2026-02-25 21:03` | `0abb067c` | `docs_llm,no_longshot,strategy_register,task_automation` | Add no-longshot monthly tracking and strategy-register visibility | `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, `scripts/render_strategy_register_snapshot.py`, +1 |
 | `2026-02-25 17:04` | `faaa2948` | `docs_llm,strategy_register` | feat: improve realized pnl handling in strategy register snapshot | `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `scripts/render_strategy_register_snapshot.py` |
 | `2026-02-25 16:45` | `e8150e70` | `docs_llm,knowledge_intake,no_longshot,security_or_ops,simmer_clob,strategy_register,task_automation,weather_pipeline` | 20260225 | `README.md`, `configs/bot_supervisor.observe.json`, `configs/weather_mimic_target_users.txt`, `docs/ARCHITECTURE.md`, +96 |
@@ -54,35 +54,19 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `AGENTS.md` |
-| `M` | `configs/bot_supervisor.observe.json` |
-| `A` | `docs/IMPLEMENTATION_LEDGER.md` |
+| `M` | `README.md` |
 | `M` | `docs/README.md` |
 | `M` | `docs/llm/ARCHITECTURE.md` |
-| `A` | `docs/llm/CANON.md` |
-| `A` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/SPEC.md` |
+| `MM` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
+| `MM` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STATE.md` |
-| `MM` | `docs/llm/STRATEGY.md` |
-| `M` | `docs/memo0221_1.txt` |
-| `A` | `scripts/check_morning_status.ps1` |
-| `A` | `scripts/check_morning_status.py` |
-| `A` | `scripts/check_strategy_gate_alarm.py` |
-| `M` | `scripts/install_event_driven_daily_task.ps1` |
-| `A` | `scripts/install_morning_status_daily_task.ps1` |
-| `M` | `scripts/install_no_longshot_daily_task.ps1` |
-| `M` | `scripts/install_weather_mimic_pipeline_daily_task.ps1` |
-| `M` | `scripts/install_weather_top30_readiness_daily_task.ps1` |
-| `A` | `scripts/materialize_strategy_realized_daily.py` |
+| `M` | `scripts/check_morning_status.py` |
+| `M` | `scripts/install_wallet_autopsy_daily_task.ps1` |
 | `M` | `scripts/no_longshot_daily_daemon.py` |
-| `M` | `scripts/record_no_longshot_realized_daily.py` |
-| `A` | `scripts/render_implementation_ledger.py` |
-| `A` | `scripts/render_weather_consensus_overview.py` |
-| `A` | `scripts/report_automation_health.py` |
-| `A` | `scripts/run_morning_status_daily.ps1` |
-| `M` | `scripts/run_weather_mimic_pipeline_daily.ps1` |
-| `M` | `scripts/run_weather_top30_readiness_daily.ps1` |
+| `M` | `scripts/render_implementation_ledger.py` |
+| `MM` | `scripts/report_automation_health.py` |
+| `??` | `docs/memo0225_1.txt` |
+| `??` | `scripts/weather_daily_daemon.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

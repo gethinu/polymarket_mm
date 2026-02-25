@@ -9,4 +9,6 @@
 - Canonical implementation-history document:
   - `docs/llm/IMPLEMENTATION_LEDGER.md`
   - refresh with `python scripts/render_implementation_ledger.py`
+- Canonical multi-chat operations document:
+  - `docs/llm/CANON.md`
 - Do not add new files under `doc/` (legacy path).

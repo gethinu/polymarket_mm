@@ -138,18 +138,71 @@ $actionArgs = ($argList -join " ")
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
 $trigger = New-ScheduledTaskTrigger -Daily -At $at
 $settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
 $desc = "Run wallet autopsy daily candidate + timing reports"
 
-try {
-  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description $desc -Force | Out-Null
+$currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+if ([string]::IsNullOrWhiteSpace($currentUser)) {
+  if (-not [string]::IsNullOrWhiteSpace($env:USERDOMAIN) -and -not [string]::IsNullOrWhiteSpace($env:USERNAME)) {
+    $currentUser = "$($env:USERDOMAIN)\$($env:USERNAME)"
+  } else {
+    $currentUser = $env:USERNAME
+  }
 }
-catch {
+
+$registered = $false
+$principalMode = "default"
+if (-not [string]::IsNullOrWhiteSpace($currentUser)) {
+  foreach ($logonType in @("S4U", "Interactive")) {
+    try {
+      $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType $logonType -RunLevel Limited
+      Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description $desc -Force | Out-Null
+      $registered = $true
+      $principalMode = "${logonType}:$currentUser"
+      break
+    } catch {
+    }
+  }
+}
+if (-not $registered) {
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description $desc -Force | Out-Null
+}
+Write-Host ("Registered principal mode: {0}" -f $principalMode)
+try {
+  Enable-ScheduledTask -TaskName $TaskName | Out-Null
+} catch {
 }
 
 if ($RunNow.IsPresent) {
-  Start-ScheduledTask -TaskName $TaskName
+  $runArgs = @(
+    "-NoLogo",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-File", $runnerPath,
+    "-NoBackground",
+    "-Statuses", $Statuses,
+    "-MinProfitablePct", "$MinProfitablePct",
+    "-MinHedgeEdgePct", "$MinHedgeEdgePct",
+    "-MinTrades", "$MinTrades",
+    "-TimingProfile", $TimingProfile,
+    "-TimingSides", $TimingSides,
+    "-TimingMaxTrades", "$TimingMaxTrades",
+    "-MinTimingTradeCount", "$MinTimingTradeCount",
+    "-Top", "$Top",
+    "-BatchTop", "$BatchTop"
+  )
+  if ($LatestPerMarket.IsPresent) {
+    $runArgs += "-LatestPerMarket"
+  }
+  if ($Discord.IsPresent) {
+    $runArgs += "-Discord"
+  }
+
+  Write-Host "RunNow: executing runner directly (observe-only) ..."
+  & $PowerShellExe @runArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "RunNow direct runner failed with exit code $LASTEXITCODE"
+  }
 }
 
 Get-ScheduledTask -TaskName $TaskName | Select-Object TaskName, State

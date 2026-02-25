@@ -38,6 +38,7 @@ DEFAULT_ARTIFACT_SPECS = [
     "logs/weather_top30_readiness_daily_run.log:30",
     "logs/weather_mimic_pipeline_daily_run.log:30",
     "logs/no_longshot_daily_run.log:30",
+    "logs/morning_status_daily_run.log:30",
 ]
 
 
@@ -140,7 +141,8 @@ def _run_task_query(task_names: List[str]) -> List[dict]:
             check=False,
             capture_output=True,
             text=True,
-            timeout=20,
+            # ScheduledTask cmdlets can be slow on some hosts; avoid false NO_GO due to short timeout.
+            timeout=90,
         )
     except Exception as exc:
         return [{"task_name": x, "exists": False, "error": f"query_failed:{exc}"} for x in task_names]
@@ -195,6 +197,8 @@ def _task_status(row: dict) -> str:
     state = str(row.get("state") or "").strip().lower()
     if state == "disabled":
         return "DISABLED"
+    if state == "running":
+        return "RUNNING"
 
     raw_result = row.get("last_task_result")
     result = None
@@ -208,6 +212,8 @@ def _task_status(row: dict) -> str:
     last_run_text = str(row.get("last_run_time") or "").strip()
     if result is None:
         return "UNKNOWN"
+    if result == 267009:
+        return "RUNNING"
     if result == 0:
         return "OK"
     if not last_run_text or _looks_like_no_run_time(last_run_text):
@@ -243,7 +249,7 @@ def _is_fresh_artifact(artifact_rows: List[dict], suffix: str) -> bool:
     return False
 
 
-def _is_no_longshot_daemon_enabled() -> bool:
+def _is_supervisor_job_enabled(job_name: str) -> bool:
     cfg = repo_root() / "configs" / "bot_supervisor.observe.json"
     if not cfg.exists():
         return False
@@ -257,7 +263,7 @@ def _is_no_longshot_daemon_enabled() -> bool:
     for job in jobs:
         if not isinstance(job, dict):
             continue
-        if str(job.get("name") or "").strip() != "no_longshot_daily_daemon":
+        if str(job.get("name") or "").strip() != str(job_name):
             continue
         return bool(job.get("enabled"))
     return False
@@ -268,6 +274,7 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
     top30_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\weather_top30_readiness_daily_run.log")
     mimic_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\weather_mimic_pipeline_daily_run.log")
     no_longshot_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\no_longshot_daily_run.log")
+    morning_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\morning_status_daily_run.log")
 
     for row in task_rows:
         if not isinstance(row, dict):
@@ -279,6 +286,11 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
         try:
             code = int(row.get("last_task_result"))
         except Exception:
+            continue
+
+        if name == "MorningStrategyStatusDaily" and morning_log_fresh and code in (3221225786, 267014):
+            row["status"] = "SOFT_FAIL_INTERRUPTED"
+            row["status_note"] = "last_result indicates interrupted task host but morning status runner log is fresh"
             continue
 
         # Some Windows task host terminations report STATUS_CONTROL_C_EXIT (0xC000013A)
@@ -298,18 +310,20 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
 
 
 def _apply_supervisor_overrides(task_rows: List[dict]) -> None:
-    no_longshot_daemon_enabled = _is_no_longshot_daemon_enabled()
-    if not no_longshot_daemon_enabled:
-        return
+    no_longshot_daemon_enabled = _is_supervisor_job_enabled("no_longshot_daily_daemon")
+    weather_daemon_enabled = _is_supervisor_job_enabled("weather_daily_daemon")
     for row in task_rows:
         if not isinstance(row, dict):
             continue
-        if str(row.get("task_name") or "") != "NoLongshotDailyReport":
-            continue
         if str(row.get("status") or "") != "DISABLED":
             continue
-        row["status"] = "SUPPRESSED_BY_SUPERVISOR"
-        row["status_note"] = "NoLongshotDailyReport disabled while no_longshot_daily_daemon is enabled"
+        task_name = str(row.get("task_name") or "")
+        if task_name == "NoLongshotDailyReport" and no_longshot_daemon_enabled:
+            row["status"] = "SUPPRESSED_BY_SUPERVISOR"
+            row["status_note"] = "NoLongshotDailyReport disabled while no_longshot_daily_daemon is enabled"
+        elif task_name in {"WeatherMimicPipelineDaily", "WeatherTop30ReadinessDaily"} and weather_daemon_enabled:
+            row["status"] = "SUPPRESSED_BY_SUPERVISOR"
+            row["status_note"] = f"{task_name} disabled while weather_daily_daemon is enabled"
 
 
 def _artifact_rows(specs: List[Tuple[str, float]]) -> List[dict]:

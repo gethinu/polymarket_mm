@@ -197,12 +197,13 @@ def render_md(
     worktree: List[dict],
     sessions: List[dict],
     max_files_per_commit: int,
+    include_generated_utc: bool,
 ) -> str:
-    generated = now_iso_utc()
     lines: List[str] = []
     lines.append("# IMPLEMENTATION LEDGER")
     lines.append("")
-    lines.append(f"- generated_utc: `{generated}`")
+    if include_generated_utc:
+        lines.append(f"- generated_utc: `{now_iso_utc()}`")
     lines.append(f"- source_repo: `{repo_root()}`")
     lines.append(f"- output_path: `{out_path}`")
     lines.append(f"- commits_scanned: `{len(commits)}`")
@@ -297,6 +298,11 @@ def parse_args() -> argparse.Namespace:
         default="docs/llm/IMPLEMENTATION_LEDGER.md",
         help="Output markdown path",
     )
+    p.add_argument(
+        "--include-generated-utc",
+        action="store_true",
+        help="Include generated_utc header line (off by default to reduce churn-only diffs).",
+    )
     return p.parse_args()
 
 
@@ -319,6 +325,7 @@ def main() -> int:
         worktree=worktree,
         sessions=sessions,
         max_files_per_commit=max(1, int(args.max_files_per_commit)),
+        include_generated_utc=bool(args.include_generated_utc),
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

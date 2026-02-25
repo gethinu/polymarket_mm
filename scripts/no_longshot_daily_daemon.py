@@ -101,6 +101,19 @@ def _parse_lock_pid(path: Path) -> Optional[int]:
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if h:
+                k32.CloseHandle(h)
+                return True
+            return False
+        except Exception:
+            return False
     try:
         os.kill(pid, 0)
         return True
@@ -460,6 +473,11 @@ def parse_args():
         default=20.0,
         help="Gamma API timeout seconds passed to realized tracker.",
     )
+    p.add_argument(
+        "--allow-realized-entry-ingest",
+        action="store_true",
+        help="Allow realized refresh to ingest new entries when realized-entry-top-n > 0.",
+    )
     p.add_argument("--log-file", default=DEFAULT_LOG_FILE, help="Daemon log file path")
     p.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="Daemon state file path")
     p.add_argument("--lock-file", default=DEFAULT_LOCK_FILE, help="Single-instance lock file path")
@@ -469,6 +487,16 @@ def parse_args():
 def main() -> int:
     args = parse_args()
     logger = Logger(args.log_file)
+    if (
+        float(args.realized_refresh_sec) > 0.0
+        and int(args.realized_entry_top_n) > 0
+        and (not bool(args.allow_realized_entry_ingest))
+    ):
+        logger.info(
+            f"[{iso_now()}] refused: realized-entry-top-n={int(args.realized_entry_top_n)} "
+            "requires --allow-realized-entry-ingest"
+        )
+        return 2
     repo_root = Path(args.repo_root).resolve()
     lock_path = resolve_repo_path(repo_root, str(args.lock_file))
     if not _acquire_lock(lock_path, logger):

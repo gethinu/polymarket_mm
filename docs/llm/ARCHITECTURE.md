@@ -40,6 +40,25 @@ Polymarket CLOB:
 - `scripts/fetch_trades.py`
   - Observe-only Data API fetcher for wallet/profile trade history
   - Accepts wallet, `@handle`, and Polymarket profile URLs
+- `scripts/analyze_trades.py`
+  - Observe-only single-wallet trade autopsy analyzer
+  - Computes timeline profitability, hedge status, and behavior diagnostics from saved trade JSON
+- `scripts/analyze_user.py`
+  - Observe-only market-resolve + wallet autopsy wrapper
+  - Supports one-wallet analysis and top-holder batch scans
+- `scripts/report_wallet_autopsy_candidates.py`
+  - Observe-only cross-market candidate extractor from top-holder autopsy logs
+  - Supports hedge-edge and endgame timing filters
+- `scripts/report_wallet_entry_timing.py`
+  - Observe-only timing profiler for one autopsy JSON
+  - Reports time-to-end distributions and minute-of-hour concentration
+- `scripts/report_wallet_entry_timing_batch.py`
+  - Observe-only batch timing profiler from candidate JSON
+  - Produces comparable per-wallet timing rows for ranked review
+- `scripts/run_wallet_autopsy_daily_report.ps1`
+  - Background-by-default daily runner for candidate extraction + timing batch + summary artifacts
+- `scripts/install_wallet_autopsy_daily_task.ps1`
+  - Scheduled-task installer for recurring wallet autopsy daily reports
 - `scripts/extract_link_intake_users.py`
   - Observe-only bridge from link-intake JSON to wallet/profile seed lists
   - Emits `--user-file` compatible outputs for cohort and mimic pipeline entrypoints
@@ -90,6 +109,9 @@ Polymarket CLOB:
   - Background-by-default daily runner wrapper for weather mimic pipeline
 - `scripts/install_weather_mimic_pipeline_daily_task.ps1`
   - Scheduled-task installer for recurring weather mimic pipeline runs
+- `scripts/weather_daily_daemon.py`
+  - Observe-only daemon for weather mimic/top30 daily jobs without relying on Task Scheduler
+  - Keeps runtime artifacts under `logs/` with single-instance lock semantics
 - `scripts/run_weather_24h_alarm_action.ps1`
   - One-shot alarm action (append log + marker + bounded notification)
 - `scripts/run_weather_24h_postcheck.ps1`

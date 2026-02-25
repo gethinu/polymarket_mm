@@ -126,6 +126,21 @@ Polymarket weather arb monthly-return window estimator (observe-only):
 - Profit-window summary JSON: `logs/weather_arb_profit_window_latest.json`
 - Profit-window summary TXT: `logs/weather_arb_profit_window_latest.txt`
 
+Polymarket wallet autopsy toolkit (observe-only):
+- Trade snapshot JSON: `logs/trades_<wallet_prefix>_<market_tag>_<utc_tag>.json` (default from `fetch_trades.py`)
+- Single-wallet autopsy JSON: `logs/autopsy_<market_slug>_<wallet_prefix>_<utc_tag>.json` (default from `analyze_user.py`)
+- Top-holder autopsy JSON: `logs/autopsy_<market_slug>_top<holders>_<utc_tag>.json` (default from `analyze_user.py --top-holders`)
+- Candidate report JSON: `logs/wallet_autopsy_candidates*.json` (when simple output filename is used in `report_wallet_autopsy_candidates.py`)
+- Entry timing report JSON: `logs/wallet_entry_timing_report.json` (default from `report_wallet_entry_timing.py`)
+- Entry timing batch JSON: `logs/wallet_entry_timing_batch.json` (default from `report_wallet_entry_timing_batch.py`)
+
+Polymarket wallet autopsy daily runner (observe-only):
+- Runner log: `logs/wallet_autopsy_daily_run.log`
+- Candidate snapshot JSON: `logs/wallet_autopsy_daily_candidates_<utc_tag>.json`
+- Timing batch JSON: `logs/wallet_autopsy_daily_timing_<utc_tag>.json`
+- Summary TXT: `logs/wallet_autopsy_daily_summary_<utc_tag>.txt`
+- Summary JSON: `logs/wallet_autopsy_daily_summary_<utc_tag>.json`
+
 Polymarket trader cohort autopsy toolkit (observe-only):
 - Report JSON: `logs/trader_cohort_*.json` (default output)
 - Optional report JSON: 任意の `--out` パス（relativeはrepo基準、単純ファイル名は `logs/` 配下）
@@ -206,6 +221,11 @@ Polymarket weather mimic pipeline daily runner (observe-only):
 - Daily run also refreshes `logs/strategy_realized_pnl_daily.jsonl` and `logs/strategy_realized_latest.json`.
 - Daily run also refreshes `logs/strategy_gate_alarm.log` and `logs/strategy_gate_alarm_state.json`.
 - Daily run also refreshes `logs/automation_health_latest.json` and `logs/automation_health_latest.txt`.
+
+Polymarket weather daily daemon (observe-only):
+- Daemon log: `logs/weather_daily_daemon.log`
+- Daemon state: `logs/weather_daily_daemon_state.json`
+- Daemon lock: `logs/weather_daily_daemon.lock`
 
 Morning status daily runner (observe-only):
 - Runner log: `logs/morning_status_daily_run.log`

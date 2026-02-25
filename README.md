@@ -56,6 +56,7 @@ Do **not** commit secrets.
 
 ## Runbooks
 
+- `docs/llm/CANON.md` (single operational source-of-truth for multi-chat coordination)
 - `docs/CLOB_MM.md`
 - `docs/SIMMER_PINGPONG.md`
 - `docs/SECURITY.md`

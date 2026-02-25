@@ -1,0 +1,531 @@
+
+
+Summarize Polymarket arbitrage guide
+
+19
+19件のタスクが進行中
+
+
+ユーザーの添付画像
+ユーザーの添付画像
+やりたいです。
+
+Risk-free Arbitrage on Polymarket: step-by-step Python Guide
+
+Want to find traders earning guaranteed profits? 
+Start by analyzing who you're copying.
+
+In this article, Jayden showed how to use the script that identifies a wallet strategy and helps to copy it.
+
+Quick setup guide:
+
+> Install Python3 on your computer
+> Open terminal and run: pip3 install requests
+> Create a folder for the project
+> Download scripts from the article
+
+Check top 10 holders in any market. 
+Find the arbitrageurs. 
+Copy their timing.
+
+If you use this guide, you're already better off than 90% of Polymarket traders.
+
+Hope now, you stop gambling, and start printing.
+
+
+
+The Autopsy: How to Read the Mind of a Polymarket Whale
+In my last post, I gave you the code to pull the raw trading data of any wallet on Polymarket. But data without context is just noise.
+
+Before we move on, JOIN HERE.
+Today, we are going to learn how to read the output of the Trade Autopsy Tool. We are going to dissect a real log (from the script I shared) to show you how to spot:
+Fake Gurus (High PnL, but terrible entry).
+Bots (Inhuman trading speed).
+The "Holy Grail" (Risk-free arbitrage).
+If you are copying trades without checking these metrics, you are flying blind. Here is how to open your eyes.
+1. The "Time Profitable" Metric: The Truth Serum
+Most traders only care about the final result: "Did they make money? "Real analysts ask: "How much pain did they endure to get there?"
+Look at this section from the tool's output:
+plaintext
+⏱️ PROFITABILITY TIMELINE ANALYSIS
+Total Trading Period:     0.66 hours
+Time Profitable:          33.87% (0.22 hours)
+Time Unprofitable:        66.13% (0.43 hours)
+What this tells you: This trader was underwater for 66% of the trade. They spent twice as much time losing as they did winning.
+The Lesson: If you copy-traded this wallet, you would have been staring at red numbers for most of the hour. You need "diamond hands" to follow them.
+The Alpha: Look for traders with >80% Time Profitable. These are the "Snipers." Their entry timing is so perfect that they go green immediately and stay green. That is who you want to copy.
+2. The Hedge Check: Finding Free Money
+This is the most critical metric in the entire script. It tells you if the trader is gambling or printing cash.
+plaintext
+📊 CURRENT STATUS
+Current YES Avg Price:    $0.7485
+Current NO Avg Price:     $0.2515
+Combined Avg (YES+NO):    $1.0000
+Current Profitability:    ❌ NOT PROFITABLE
+The Math:In a binary market, YES + NO always settles at $1.00.
+If a trader's Combined Avg is $1.00, they are neutral. They have zero edge.
+If the Combined Avg is $0.95, they have locked in a 5% risk-free profit. It doesn't matter who wins; they paid 95 cents for a dollar bill.
+The Strategy:Run this script on the top 10 holders of a market. If you find someone with a Combined Avg < $1.00, stop everything. Analyze when they bought. You just found an arbitrage opportunity.
+3. Behavioral Forensics: Bot vs. Human
+How do you know if you are competing against a person or an algorithm? The tool tells you instantly.
+plaintext
+🎯 TRADING BEHAVIOR
+Trading Intensity:        HIGH (avg 0.0 min between trades)
+Interpretation:           Very active trader, making rapid decisions
+0.0 minutes between trades.No human can click that fast. This is a bot.
+Why this matters: Do not try to "race" this trader. They will front-run you. If you see this pattern, you need to beat them on strategy, not speed.
+4. The "Accumulation" Signal
+Did they panic buy? Or did they slowly build a position like a pro?
+plaintext
+🔍 TRADING PATTERN INSIGHTS
+- YES Accumulation:    INCREASING (late trades 1.6x larger)
+- YES Price Trend:     CHASING HIGHER
+Accumulation INCREASING: They started small (testing the water) and bet bigger as they got confident. This is a sign of a disciplined trader.
+Price Trend CHASING HIGHER: This is a warning sign. It means they were FOMOing (Fear Of Missing Out). They kept buying even as the price got worse.
+📊 Tutorial: How to Run The Autopsy
+You have the 3 scripts 
+fetch_trades.py - https://pastebin.com/4zRS0PYb
+analyze_trades.py - https://pastebin.com/DA2DpwBd
+analyze_user.py - https://pastebin.com/BRAr09aT
+Here is the 30-second guide to using them.
+Step 1: Install DependenciesYou only need one library. Open your terminal and run:
+pip3 install requests
+Step 2: Find Your TargetGo to Polymarket. Click on a leaderboard or a specific market. Copy two things:
+The Market Name (e.g., "Bitcoin Up or Down February 6").
+The Wallet Address of the trader (e.g., 0x6031...).
+Step 3: Run The CommandOpen your terminal in the folder where you saved the scripts. Run this single command:
+python
+python3 analyze_user.py "Bitcoin Up or Down February 6" 0x6031b6eed1c97e853c6e0f03ad3ce3529351f96d
+Step 4: Read the OutputThe script will:
+Search Polymarket for that event.
+Download every single trade that wallet made.
+Print the full forensic report we discussed above.
+Pro Tip:Want to save the data to analyze later? Add a filename at the end:
+python
+python3 analyze_user.py "Market Name" 0xAddress my_analysis.json
+Use the tools. Stop guessing.
+
+1:04 AM · Feb 10, 2026
+·
+144.1K
+ Views
+
+
+13 previous messages
+observe-only の「ウォレット解剖」フローをこのリポジトリに実装しました。
+
+fetch_trades.py (line 61)
+user + market(conditionId) で Data API のトレードをページング取得し、既定で logs/ に保存。
+analyze_trades.py (line 52)
+取得済みJSONを解析して、Time Profitable、取引強度、在庫ベースの combined_avg、行動パターンを出力。
+analyze_user.py (line 225)
+市場名を解決して1ウォレットを解析。--top-holders N で上位保有者の一括解析も可能。
+INTERFACES.md (line 38)
+新しいCLIエントリと主要フラグを追記。
+実行コマンド（そのまま使えます）:
+
+analyze_user.py "Bitcoin Up or Down February 6" 0xYourWallet
+analyze_user.py "Bitcoin Up or Down February 6" --top-holders 10
+fetch_trades.py 0xYourWallet --market 0xConditionId --out my_trades.json --pretty
+my_trades_summary.json --pretty
+動作確認済み:
+
+python -m py_compile で3スクリプトの構文OK
+実APIで単体解析・top holders解析・logs/ への出力まで確認済み
+※「risk-free」は手数料・スリッページ・約定失敗で崩れるので、出力はあくまで候補検出として使ってください。
+
+
+進めて
+
+
+4 previous messages
+進めました。実行と精度改善まで完了しています。
+
+実行:
+analyze_user.py "Bitcoin Up or Down February 6" --top-holders 10 --holders-limit 30 --max-trades 1500
+出力:
+autopsy_bitcoin-up-or-down-february-6-3am-et_top10_20260221_040444.json
+結果サマリ:
+
+今回の上位10では、厳密な ARBITRAGE_CANDIDATE はなし。
+以前 ARBITRAGE_CANDIDATE に見えたウォレットは、片側在庫が極小で PARTIAL_HEDGE 判定に是正。
+改善内容:
+
+analyze_trades.py を更新し、ヘッジ判定に以下を追加:
+hedgeable_shares = min(q_yes, q_no)
+balance_ratio = min/max
+hedgeable_shares < 1.0 または balance_ratio < 0.20 は PARTIAL_HEDGE
+レポートに Hedgeable shares / Balance ratio を表示。
+次に進める候補:
+
+別マーケット名で同じ --top-holders 10 を回す
+PARTIAL_HEDGE の閾値（1.0株 / 0.20）を調整する
+上位ホルダー結果をCSVでも出すように拡張する
+
+進めて
+
+
+6 previous messages
+進めました。実行・改善・集計まで完了です。
+
+市場スキャン実行:
+Will Trump deport less than 250,000? の top20
+Bitcoin Up or Down February 20 の top20
+単体深掘り:
+0x38e59... は ARBITRAGE_CANDIDATE（combined_avg=0.9630, hedgeable_shares=3619）
+0xa6a13... は ARBITRAGE_CANDIDATE（combined_avg=0.9836, hedgeable_shares=150）
+改善点:
+
+PARTIAL_HEDGE 判定を追加して誤検知を低減
+analyze_trades.py (line 244)
+analyze_trades.py (line 258)
+候補抽出レポートCLIを追加
+report_wallet_autopsy_candidates.py (line 43)
+インターフェース追記
+INTERFACES.md (line 86)
+出力:
+
+候補一覧JSON: wallet_autopsy_candidates.json
+現在の抽出結果は 2件（ARBITRAGE_CANDIDATE 1件、PARTIAL_HEDGE 1件）
+次にそのまま回すなら:
+
+report_wallet_autopsy_candidates.py --latest-per-market --min-trades 10 --min-profitable-pct 80 --statuses ARBITRAGE_CANDIDATE --out wallet_autopsy_candidates_strict.json
+analyze_user.py "任意の市場名" --top-holders 20 --holders-limit 40 --max-trades 2000 --pretty
+
+進めて
+
+
+12 previous messages
+進めました。すべて observe-only で実行しています。
+
+追加修正:
+
+report_wallet_autopsy_candidates.py (line 40) に safe_print を入れて、Windows cp932 での UnicodeEncodeError を解消。
+出力箇所を safe_print 化（report_wallet_autopsy_candidates.py (line 149) など）。
+走査実行:
+
+複数市場で python scripts/analyze_user.py "<market>" --top-holders 15 ... を連続実行。
+新規ログ例:
+autopsy_will-oviedo-win-the-202526-la-liga_top15_20260221_073338.json
+autopsy_will-lens-win-the-202526-french-ligue-1_top15_20260221_073355.json
+autopsy_will-tottenham-win-the-202526-champions-league_top15_20260221_073423.json
+候補集計:
+
+全ARBITRAGE候補（緩め）: wallet_autopsy_candidates_arb_all.json
+3件抽出
+strict条件（min_trades>=10, time_profitable>=70%）:
+wallet_autopsy_candidates_arb_strict_latest.json
+1件抽出: 0xa6a13ad1078ccfebb083c60f56b1e3695ed611de
+追加分析:
+
+単体 cohort: cohort_candidate_a6a13.json
+2候補比較 cohort: cohort_candidates_pair.json
+次に進めるなら:
+
+strict候補ウォレットを対象に、市場別エントリー時刻分布（分/秒粒度）を追加レポート化
+report_wallet_autopsy_candidates.py に --min-hedge-edge-pct を追加して、候補精度をさらに上げる
+
+進めて
+
+
+4m 51s作業しました
+進めました。今回は2点実装して、実データで確認済みです。
+
+候補抽出の精度向上
+
+report_wallet_autopsy_candidates.py (line 65) に --min-hedge-edge-pct を追加。
+combined_avg から hedge_edge_pct を計算してフィルタ・表示（edge%列）できるように更新。
+Windows文字コード落ち対策の safe_print も維持（report_wallet_autopsy_candidates.py (line 40)）。
+エントリータイミング分析CLIを追加
+
+report_wallet_entry_timing.py (line 163) を新規追加。
+analyze_user.py の単体 autopsy JSON を入力に、time-to-end 分布・間隔・分単位偏りを出力。
+市場 endDate は Gamma API から解決（report_wallet_entry_timing.py (line 71)）。
+ドキュメント更新
+
+INTERFACES.md (line 90) に --min-hedge-edge-pct 例を追記。
+INTERFACES.md (line 94) に report_wallet_entry_timing.py の使い方を追記。
+実行結果（要点）:
+
+strict候補（--min-trades 10 --min-profitable-pct 70 --min-hedge-edge-pct 1.5）は1件
+0xa6a13...（edge=1.64%, 67 trades）
+出力: wallet_autopsy_candidates_arb_strict_v2.json
+エントリータイミング例:
+0xa6a13... は市場終了の約23〜56分前に集中（BUY 67件）
+出力: wallet_entry_timing_a6a13.json
+0x38e59... は終了よりかなり前（数週間〜数ヶ月前）に分布
+出力: wallet_entry_timing_38e59.json
+次に進めるなら:
+
+report_wallet_autopsy_candidates.py に --max-time-to-end-p50-sec を追加して「終盤型だけ」抽出
+strict候補を自動で report_wallet_entry_timing.py に流すバッチCLIを追加
+
+3 個のファイルが変更されました
++343
+-3
+元に戻す
+
+レビューする
+docs/INTERFACES.md
+scripts/report_wallet_autopsy_candidates.py
+scripts/report_wallet_entry_timing.py
+進めて
+
+
+2m 36s作業しました
+進めました。今回は「終盤エントリー型」の絞り込みまで実装して検証済みです。
+
+追加実装
+--max-time-to-end-p50-sec（候補ごとに p50(seconds-to-end) でフィルタ）
+--timing-sides / --timing-max-trades（タイミング計算時の対象サイド・取得件数）
+主要箇所: report_wallet_autopsy_candidates.py (line 148), report_wallet_autopsy_candidates.py (line 154), report_wallet_autopsy_candidates.py (line 160), report_wallet_autopsy_candidates.py (line 291)
+補助実装
+タイミング計算用の user+market 取得と market end 解決
+report_wallet_autopsy_candidates.py (line 73), report_wallet_autopsy_candidates.py (line 101)
+ドキュメント更新
+INTERFACES.md (line 91)（新フラグ付き実行例）
+実行結果:
+
+--max-time-to-end-p50-sec 3600 では 1件ヒット
+0xa6a13... / time_to_end_sec_p50=1940
+wallet_autopsy_candidates_arb_endgame_3600.json
+--max-time-to-end-p50-sec 1200 では 0件
+wallet_autopsy_candidates_arb_endgame_1200.json
+次にそのまま回せるコマンド:
+
+report_wallet_autopsy_candidates.py --latest-per-market --statuses ARBITRAGE_CANDIDATE --min-trades 10 --min-profitable-pct 70 --min-hedge-edge-pct 1.0 --max-time-to-end-p50-sec 3600 --timing-sides BUY --out wallet_autopsy_candidates_arb_endgame.json
+autopsy_bitcoin-up-or-down-february-20-1pm-et_0xa6a13ad1_20260221_063907.json --sides BUY --out wallet_entry_timing_a6a13.json
+
+2 個のファイルが変更されました
++154
+-5
+元に戻す
+
+レビューする
+docs/INTERFACES.md
+scripts/report_wallet_autopsy_candidates.py
+進めて
+
+
+1m 34s作業しました
+進めました。バッチ化まで完了です。
+
+新規追加
+
+report_wallet_entry_timing_batch.py (line 208)
+候補JSON（report_wallet_autopsy_candidates.py の出力）を入力に、各ウォレットの time_to_end_sec_p50 などを一括算出。
+source_file から condition_id を補完する fallback 付き（古い候補JSONにも対応）。
+既存機能との連携
+
+report_wallet_autopsy_candidates.py の strict/endgame 出力をそのままバッチ入力可能。
+主要値: time_to_end_sec_p10/p50/p90, histogram, minute-of-hour top。
+ドキュメント更新
+
+INTERFACES.md (line 99) にバッチCLIの実行例を追記。
+実行確認:
+
+wallet_autopsy_candidates_arb_all_v2.json --top 10 --sides BUY --max-trades 1500 --out wallet_entry_timing_batch_all_v2.json
+3件処理、tte_p50 昇順で出力
+wallet_entry_timing_batch_all_v2.json
+wallet_autopsy_candidates_arb_endgame_3600.json --out wallet_entry_timing_batch_endgame_3600.json
+1件処理
+wallet_entry_timing_batch_endgame_3600.json
+次に進めるなら:
+
+report_wallet_autopsy_candidates.py に --max-time-to-end-p90-sec も追加（より厳密な終盤フィルタ）
+バッチ結果から上位N件だけを自動で再解析する runner を追加
+
+2 個のファイルが変更されました
++363
+-0
+元に戻す
+
+レビューする
+docs/INTERFACES.md
+scripts/report_wallet_entry_timing_batch.py
+進めて。
+
+
+2m 6s作業しました
+進めました。p90 まで使った終盤フィルタを追加して、実行確認まで完了です。
+
+変更
+
+report_wallet_autopsy_candidates.py (line 166)
+--max-time-to-end-p90-sec を追加。
+report_wallet_autopsy_candidates.py (line 127)
+percentile() を追加し、time_to_end_sec_p90 を算出。
+report_wallet_autopsy_candidates.py (line 307)
+p50/p90 の両方で候補をフィルタ。
+report_wallet_autopsy_candidates.py (line 331)
+一覧表示に tte_p90 列を追加。
+INTERFACES.md (line 92)
+p50+p90 条件の実行例を追記。
+実行結果
+
+--max-time-to-end-p50-sec 3600 --max-time-to-end-p90-sec 5400
+1件ヒット
+wallet_autopsy_candidates_arb_endgame_consistent_5400.json
+--max-time-to-end-p50-sec 3600 --max-time-to-end-p90-sec 1800
+0件
+wallet_autopsy_candidates_arb_endgame_consistent_1800.json
+上記ヒット1件をバッチタイミング解析
+wallet_entry_timing_batch_endgame_consistent_5400.json
+次に進めるなら:
+
+--max-time-to-end-p10-sec も追加して「早すぎるエントリー」を除外
+候補JSONから自動で日次レポート化する runner（1コマンド運用）を追加
+
+2 個のファイルが変更されました
++38
+-6
+元に戻す
+
+レビューする
+docs/INTERFACES.md
+scripts/report_wallet_autopsy_candidates.py
+進めて
+
+
+1m 46s作業しました
+進めました。p10 フィルタまで追加して、終盤一貫性をさらに厳密化しました。
+
+追加機能
+
+report_wallet_autopsy_candidates.py (line 160)
+--max-time-to-end-p10-sec を追加
+report_wallet_autopsy_candidates.py (line 127)
+percentile() を使って time_to_end_sec_p10 を算出
+report_wallet_autopsy_candidates.py (line 332)
+出力列に tte_p10 を追加
+report_wallet_autopsy_candidates.py (line 385)
+出力JSON meta に max_time_to_end_p10_sec を追加
+ドキュメント
+
+INTERFACES.md (line 92)
+p10+p50+p90 を使う tight 実行例を追記
+実行結果:
+
+--max-time-to-end-p10-sec 1200 では 0件
+wallet_autopsy_candidates_arb_endgame_tight_1200.json
+--max-time-to-end-p10-sec 2000 では 1件
+wallet_autopsy_candidates_arb_endgame_tight_2000.json
+その1件をバッチ時刻分析
+wallet_entry_timing_batch_endgame_tight_2000.json
+次に進めるなら:
+
+--min-timing-trade-count を追加して、時刻判定の最低サンプル数を強制
+p10/p50/p90 の閾値セットをプリセット化（--timing-profile endgame_strict など）
+
+2 個のファイルが変更されました
++20
+-4
+元に戻す
+
+レビューする
+docs/INTERFACES.md
+scripts/report_wallet_autopsy_candidates.py
+進めて
+
+
+1m 50s作業しました
+進めました。今回は候補抽出をさらに運用しやすくしています。
+
+追加機能
+
+report_wallet_autopsy_candidates.py (line 167)
+--timing-profile 追加
+プリセット: none, endgame_loose, endgame_consistent, endgame_tight
+report_wallet_autopsy_candidates.py (line 202)
+--min-timing-trade-count 追加（時刻判定の最低サンプル数）
+report_wallet_autopsy_candidates.py (line 21)
+TIMING_PROFILES 定義
+report_wallet_autopsy_candidates.py (line 413)
+出力JSON meta に timing_profile と min_timing_trade_count を保存
+ドキュメント更新
+
+INTERFACES.md (line 94)
+--timing-profile endgame_consistent --min-timing-trade-count 50 の実行例を追加
+実行確認:
+
+timing-profile=endgame_consistent で 1件ヒット
+wallet_autopsy_candidates_arb_profile_consistent.json
+同条件 + --min-timing-trade-count 80 で 0件
+wallet_autopsy_candidates_arb_profile_consistent_min80.json
+ヒット1件のバッチ時刻分析
+wallet_entry_timing_batch_profile_consistent.json
+次に進めるなら:
+
+--timing-profile を report_wallet_entry_timing_batch.py 側にも追加
+日次実行用の run_wallet_autopsy_daily_report.ps1 を追加（strict抽出→batchまで自動）
+
+2 個のファイルが変更されました
++35
+-4
+元に戻す
+
+レビューする
+docs/INTERFACES.md
+scripts/report_wallet_autopsy_candidates.py
+進めて
+
+
+2m 30s作業しました
+進めました。2点とも実装・実行確認済みです。
+
+report_wallet_entry_timing_batch.py に --timing-profile 追加
+
+追加箇所: report_wallet_entry_timing_batch.py (line 33), report_wallet_entry_timing_batch.py (line 261)
+プロファイル: none, endgame_loose, endgame_consistent, endgame_tight
+出力JSON meta.timing_profile も保存
+日次 runner 追加
+
+新規: run_wallet_autopsy_daily_report.ps1 (line 1)
+既定でバックグラウンド実行、-NoBackground 対応
+フロー:
+report_wallet_autopsy_candidates.py 実行
+候補があれば report_wallet_entry_timing_batch.py 実行
+サマリー txt 生成
+-Discord または WALLET_AUTOPSY_DAILY_DISCORD=1 で送信試行
+ドキュメント更新
+
+INTERFACES.md (line 16) に runner 追加
+INTERFACES.md (line 105) 以降に batch --timing-profile / daily runner の実行例を追記
+実行確認で生成されたファイル:
+
+wallet_autopsy_daily_candidates_20260221_234303.json
+wallet_autopsy_daily_timing_20260221_234303.json
+wallet_autopsy_daily_summary_20260221_234303.txt
+wallet_entry_timing_batch_profiled_test.json
+次に進めるなら:
+
+install_wallet_autopsy_daily_task.ps1 を追加してタスク登録まで自動化
+daily summary を JSON でも出力して、後段の集計に使えるようにする
+
+3 個のファイルが変更されました
++292
+-4
+元に戻す
+
+レビューする
+docs/INTERFACES.md
+scripts/report_wallet_entry_timing_batch.py
+scripts/run_wallet_autopsy_daily_report.ps1
+進めて
+
+進めて
+
+
+
+
+
+GPT-5.3-Codex
+
+非常に高い
+
+IDE コンテキスト
+
+
+ローカル環境
+
+フルアクセス

@@ -79,6 +79,32 @@ def fmt_ratio_pct(v: Any) -> str:
     return f"{x * 100.0:+.2f}%"
 
 
+def no_longshot_confidence_label(resolved_trades: int) -> str:
+    n = max(0, int(resolved_trades))
+    if n >= 30:
+        return "HIGH"
+    if n >= 10:
+        return "MEDIUM"
+    if n >= 3:
+        return "LOW"
+    return "VERY_LOW"
+
+
+def real_capital_gate_decision(
+    gate_decision_3stage: str,
+    resolved_trades: int,
+    health_decision: str,
+) -> tuple[str, list[str]]:
+    reasons: list[str] = []
+    if str(gate_decision_3stage or "").strip() != "READY_FINAL":
+        reasons.append(f"strategy_stage={gate_decision_3stage or 'UNKNOWN'}")
+    if int(resolved_trades) < 30:
+        reasons.append(f"rolling_30d_resolved_trades={int(resolved_trades)}<30")
+    if str(health_decision or "").strip() not in {"GO", "SKIPPED"}:
+        reasons.append(f"automation_health={health_decision or 'UNKNOWN'}")
+    return ("HOLD", reasons) if reasons else ("ELIGIBLE_REVIEW", [])
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Morning strategy gate check (observe-only).")
     p.add_argument("--no-refresh", action="store_true", help="Skip refresh commands and only read existing snapshot.")
@@ -230,11 +256,16 @@ def main() -> int:
         or fmt_ratio_pct(no_longshot.get("monthly_return_now_ratio"))
     )
     no_longshot_source = str(no_longshot.get("monthly_return_now_source") or "-")
-    no_longshot_obs_days = _as_int(no_longshot.get("observed_days"), 0)
+    no_longshot_obs_days_val = no_longshot.get("observed_days")
+    no_longshot_obs_days_txt = (
+        str(_as_int(no_longshot_obs_days_val, 0)) if no_longshot_obs_days_val is not None else "n/a"
+    )
     no_longshot_resolved = _as_int(
         no_longshot.get("rolling_30d_resolved_trades"),
         _as_int(no_longshot.get("resolved_positions"), 0),
     )
+    no_longshot_open = _as_int(no_longshot.get("open_positions"), 0)
+    no_longshot_conf = no_longshot_confidence_label(no_longshot_resolved)
 
     strict_go = _as_int(strict.get("go_count"), 0)
     strict_cnt = _as_int(strict.get("count"), 0)
@@ -258,8 +289,10 @@ def main() -> int:
     print(
         "no_longshot_monthly_now="
         f"{no_longshot_monthly_text} source={no_longshot_source} "
-        f"rolling_30d_resolved={no_longshot_resolved} observed_days={no_longshot_obs_days}"
+        f"rolling_30d_resolved={no_longshot_resolved} open_positions={no_longshot_open} "
+        f"observed_days={no_longshot_obs_days_txt}"
     )
+    print(f"no_longshot_confidence={no_longshot_conf} threshold_resolved_trades>=30")
     print(f"readiness_strict=GO {strict_go}/{strict_cnt} readiness_quality=GO {quality_go}/{quality_cnt}")
     print(f"snapshot={snapshot_path}")
 
@@ -271,6 +304,14 @@ def main() -> int:
         print(f"automation_health={health_decision} reasons={reason_txt}")
     elif not args.skip_health:
         print("automation_health=UNKNOWN reasons=health_json_missing_or_invalid")
+
+    capital_gate, capital_reasons = real_capital_gate_decision(
+        gate_decision_3stage=gate_decision_3,
+        resolved_trades=no_longshot_resolved,
+        health_decision=health_decision,
+    )
+    reason_txt = "; ".join(capital_reasons) if capital_reasons else "all checks passed"
+    print(f"real_capital_gate={capital_gate} reasons={reason_txt}")
 
     if args.fail_on_gate_not_ready and gate_decision != "READY_FOR_JUDGMENT":
         return 3

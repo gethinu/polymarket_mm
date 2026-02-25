@@ -57,6 +57,7 @@ Bot supervisor (parallel manager for multiple bots):
   - enabled: `btc5m_panic`, `event_driven`, `no_longshot_daily_daemon`, `fade_both`, `fade_long_canary`, `fade_short_canary`, `fade_router`
   - disabled by default: `btc5m_lag`, `clob_fade`
   - `no_longshot_daily_daemon` を有効化する場合、重複実行防止のため Scheduled Task `NoLongshotDailyReport` は停止/無効化して運用する
+  - `weather_daily_daemon` を使う場合は、`WeatherMimicPipelineDaily` / `WeatherTop30ReadinessDaily` Scheduled Task を停止/無効化して重複実行を避ける
 
 Polymarket CLOB market making:
 - Observe:
@@ -223,6 +224,10 @@ Polymarket wallet autopsy toolkit (observe-only):
 - Daily task installer (PowerShell):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_wallet_autopsy_daily_task.ps1 -NoBackground -StartTime 00:10 -LatestPerMarket`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_wallet_autopsy_daily_task.ps1 -NoBackground -StartTime 00:10 -TimingProfile endgame_consistent -MinTimingTradeCount 30 -RunNow`
+  - installer key flags: `-TaskName`, `-StartTime`, `-LatestPerMarket`, `-Statuses`, `-MinProfitablePct`, `-MinHedgeEdgePct`, `-MinTrades`, `-TimingProfile`, `-TimingSides`, `-TimingMaxTrades`, `-MinTimingTradeCount`, `-Top`, `-BatchTop`, `-Discord`, `-RunNow`
+  - installer は principal を `S4U` -> `Interactive` -> default の順で登録を試行。
+  - installer 実行後は `Enable-ScheduledTask` を呼び、無効化状態を自動解除。
+  - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
 
 Polymarket link-intake user extractor (observe-only):
 - Extract wallet/profile seeds from link-intake JSON:
@@ -448,6 +453,18 @@ Polymarket weather mimic pipeline daily runner (observe-only):
   - `-FailOnReadinessNoGo` を指定すると readiness 判定が `GO` 以外（または判定不能）の場合に非0終了する
   - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
 
+Polymarket weather daily daemon (observe-only):
+- Run weather mimic/top30 daily jobs without relying on Windows Task Scheduler:
+  - `python scripts/weather_daily_daemon.py`
+  - `python scripts/weather_daily_daemon.py --run-on-start --mimic-no-run-scans --run-seconds 120`
+  - `python scripts/weather_daily_daemon.py --mimic-run-at-hhmm 00:20 --top30-run-at-hhmm 00:40 --poll-sec 15`
+- Key flags:
+  - timing: `--mimic-run-at-hhmm`, `--top30-run-at-hhmm`, `--run-on-start`, `--poll-sec`, `--run-seconds`
+  - runners: `--mimic-profile-name`, `--mimic-user-file`, `--top30-profiles`, `--mimic-no-run-scans`
+  - guards: `--top30-fail-on-no-go`, `--mimic-fail-on-readiness-no-go`, `--discord`
+  - reliability: `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`
+  - files: `--log-file`, `--state-file`, `--lock-file`
+
 Polymarket CLOB realized PnL daily capture (observe-only):
 - Capture/update one daily realized-PnL row from Simmer SDK:
   - `python scripts/record_simmer_realized_daily.py`
@@ -506,6 +523,7 @@ Implementation ledger renderer (observe-only):
   - `--max-commits`（走査する最新コミット件数）
   - `--max-files-per-commit`（コミット行に表示するファイル数）
   - `--out-md`（出力Markdownパス）
+  - `--include-generated-utc`（ヘッダに生成時刻を出す。既定は差分ノイズ抑制のためOFF）
 
 Polymarket strategy gate stage alarm (observe-only):
 - Detect 3-stage gate transitions from strategy snapshot and emit one alarm event:
@@ -570,11 +588,14 @@ Automation health report (observe-only):
   - `WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `MorningStrategyStatusDaily`
 - Default artifact checks include:
   - `logs/strategy_register_latest.json`, `logs/clob_arb_realized_daily.jsonl`, `logs/strategy_realized_pnl_daily.jsonl`
-  - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`
+  - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`, `logs/morning_status_daily_run.log`
 - Soft-fail behavior:
   - `LastTaskResult=0xC000013A (3221225786)` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する。
+  - `MorningStrategyStatusDaily` は `LastTaskResult=267014 (0x41306)` でも `logs/morning_status_daily_run.log` が fresh なら `SOFT_FAIL_INTERRUPTED` として扱う。
   - 再登録直後などの no-run sentinel 時刻（例: `0001` / `1601` / `1999-11-30`）は `NO_RUN_YET` として扱い、失敗扱いしない。
+  - `state=Running` または `LastTaskResult=267009 (0x41301)` は `RUNNING` として扱い、失敗扱いしない。
   - `NoLongshotDailyReport` が `Disabled` でも、`configs/bot_supervisor.observe.json` で `no_longshot_daily_daemon.enabled=true` の場合は `SUPPRESSED_BY_SUPERVISOR` として `NO_GO` 判定から除外する。
+  - `WeatherMimicPipelineDaily` / `WeatherTop30ReadinessDaily` が `Disabled` でも、`configs/bot_supervisor.observe.json` で `weather_daily_daemon.enabled=true` の場合は `SUPPRESSED_BY_SUPERVISOR` として `NO_GO` 判定から除外する。
 
 Polymarket BTC 5m LMSR/Bayes monitor (observe-only):
 - Observe:
@@ -770,9 +791,10 @@ Polymarket NO-longshot toolkit (observe-only):
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --poll-sec 15 --retry-delay-sec 900 --max-run-seconds 1800 --run-on-start`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
-  - key flags: `--run-at-hhmm`, `--poll-sec`, `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`, `--run-on-start`, `--skip-refresh/--no-skip-refresh`, `--discord`, `--log-file`, `--state-file`, `--lock-file`
+  - key flags: `--run-at-hhmm`, `--poll-sec`, `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`, `--run-on-start`, `--skip-refresh/--no-skip-refresh`, `--discord`, `--log-file`, `--state-file`, `--lock-file`, `--allow-realized-entry-ingest`
   - realized refresh key flags: `--python-exe`, `--realized-refresh-sec`, `--realized-timeout-sec`, `--realized-tool-path`, `--realized-screen-csv`, `--realized-positions-json`, `--realized-out-daily-jsonl`, `--realized-out-latest-json`, `--realized-out-monthly-txt`, `--realized-entry-top-n`, `--realized-per-trade-cost`, `--realized-api-timeout-sec`
   - `--realized-refresh-sec > 0` で daemon が `record_no_longshot_realized_daily.py` を定期実行し、`--realized-entry-top-n 0` なら resolve-only（新規エントリー追加なし）で rolling-30d 実測を同日更新できる
+  - 安全策として、`--realized-refresh-sec > 0` かつ `--realized-entry-top-n > 0` で起動する場合は `--allow-realized-entry-ingest` が必須（指定なしは非0終了）
   - daemon は `--lock-file`（既定: `logs/no_longshot_daily_daemon.lock`）で単一起動を強制し、既存インスタンスが稼働中なら 2本目は非0終了する
   - daemon は内部で `run_no_longshot_daily_report.ps1 -NoBackground` を呼び出し、observe-only 日次運用を supervisor 配下で継続する
 
