@@ -10,8 +10,8 @@ This file is the canonical strategy register for concurrent chat/workstream coor
 
 ## Current KPI
 
-- `monthly_return_now`: `+5.14%` (as of 2026-02-25, source: `logs/no_longshot_daily_summary.txt`, field `monthly_return_now`)
-- `rolling_30d_monthly_return`: `n/a` (source: `logs/no_longshot_monthly_return_latest.txt`)
+- `monthly_return_now`: `+3.57%` (as of 2026-02-25T10:26:42Z, source: `logs/no_longshot_daily_summary.txt`, field `monthly_return_now`)
+- `rolling_30d_monthly_return`: `+3.57%` (source: `logs/no_longshot_monthly_return_latest.txt`, `rolling_30d_resolved_trades=1`)
 
 ## Active Strategies
 
@@ -39,16 +39,72 @@ This file is the canonical strategy register for concurrent chat/workstream coor
 - Scope: Polymarket no-longshot daily monitor + logical-gap scan + forward realized tracker, observe-only.
 - Runtime:
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground`
-  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh --realized-refresh-sec 900 --realized-entry-top-n 0`
 - Evidence snapshot (2026-02-25 daily summary):
   - Source summary: `logs/no_longshot_daily_summary.txt`
-  - `monthly_return_now`: `+5.14%` (`monthly_return_now_source=backtest_oos_ann_to_monthly`)
-  - `rolling_30d_monthly_return`: `n/a` (`rolling_30d_resolved_trades=0`)
+  - `monthly_return_now`: `+3.57%` (`monthly_return_now_source=realized_rolling_30d`)
+  - `rolling_30d_monthly_return`: `+3.57%` (`rolling_30d_resolved_trades=1`)
+- Evidence snapshot (2026-02-25 realized refresh):
+  - Source JSON: `logs/no_longshot_realized_latest.json`
+  - `metrics.resolved_positions=1`, `metrics.open_positions=35`, `metrics.observed_days=1`
+  - `metrics.rolling_30d.return_pct=+3.5733%`
 - Evidence snapshot (2026-02-25 guarded OOS):
   - Source JSON: `logs/no_longshot_daily_oos_guarded.json`
-  - `walkforward_oos.capital_return`: `+20.4538%` (`n=81`, span `112.9d`, annualized `+82.49%`)
-- Decision note: added to active observe operations because current monthly proxy exceeds `+5%`; keep return claims anchored to realized tracker outputs.
-- Operational gate: treat `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` as authority for realized monthly return; keep quality review active until rolling-30d realized is no longer `n/a`.
+  - `walkforward_oos.capital_return`: `+9.3882%` (`n=36`, span `49.6d`, annualized `+93.59%`, `LOW_CONF span<90d`)
+- Decision note: rolling-30d realized return became positive (`+3.57%`), but evidence is still low-confidence (`resolved_positions=1`), so keep this strategy in observe-only.
+- Operational gate: treat `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` as authority for monthly return; keep quality review active until resolved sample size is non-trivial.
+
+3. `link_intake_walletseed_cohort_observe`
+- Status: `ADOPTED` (as of 2026-02-25, observe-only).
+- Scope: profile/wallet hints from social links are converted to reproducible cohort autopsy inputs, observe-only.
+- Runtime:
+  - `python scripts/run_link_intake_cohort.py logs/link_intake_20260224_7links.json --profile-name linkseed_7links --min-confidence medium --max-trades 2500 --pretty`
+- Evidence snapshot (2026-02-25 run):
+  - Source summary: `logs/linkseed_7links_link_intake_summary_latest.json`
+  - `stats.extracted_user_count=1`, `stats.resolved_user_count=1`, `stats.cohort_ok=true`, `stats.failed_user_count=0`
+- Evidence snapshot:
+  - Source claim links: `https://x.com/kunst13r/status/2022707250956243402`, `https://polymarket.com/@k9Q2mX4L8A7ZP3R`
+  - Intake evidence: `logs/link_intake_20260224_7links.json`
+  - Per-link notes:
+    - `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-7links/01_kunstler-on-x-trader-profile-t-co-scg6gt.md`
+    - `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-7links/02_k9q2mx4l8a7zp3r-on-polymarket.md`
+- Decision note: wallet/profile extraction and cohort analysis are coupled in one reproducible run; current gate conditions were satisfied on 2026-02-25.
+- Operational gate: keep this strategy in `REVIEW` for any run where `stats.resolved_user_count < 1` or `stats.cohort_ok != true`.
+
+4. `gamma_eventpair_exec_edge_filter_observe`
+- Status: `ADOPTED` (as of 2026-02-25, observe-only).
+- Scope: Polymarket gamma-active event-pair strategy with observe-only exec-edge suppression (`event-yes` filter).
+- Runtime:
+  - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --observe-exec-edge-filter --observe-exec-edge-min-usd 0 --observe-exec-edge-strike-limit 2 --observe-exec-edge-cooldown-sec 90 --observe-exec-edge-filter-strategies event-yes`
+  - `python scripts/replay_clob_arb_kelly.py --metrics-file logs/clob-arb-monitor-metrics-eventpair-session.jsonl --require-threshold-pass --fill-ratio-mode min --miss-penalty 0.005 --stale-grace-sec 2 --stale-penalty-per-sec 0.001 --max-worst-stale-sec 10 --scales 0.1,0.25,0.5,0.75,1.0 --bootstrap-iters 3000 --pretty --out-json logs/clob-arb-kelly-replay-eventpair-session-conservative-v2.json`
+- Evidence snapshot:
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-session.jsonl`
+  - AB quality summary: `logs/clob-arb-ab3-comparison-summary.json` (`filter_yes.pass_unblocked_exec_positive_rate=98.3%`)
+  - Monthly estimate (conservative): `logs/clob-arb-eventpair-monthly-estimate-conservative-20260225.json` (`weighted_monthly_return=+3.72%`)
+- Evidence snapshot (adopted observe refresh 2026-02-25):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-adopt-20260225_182309.jsonl` (`rows=134`, `rows_blocked=44`)
+  - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-adopt-20260225_182309-base.json`, `logs/clob-arb-kelly-replay-eventpair-adopt-20260225_182309-gap5s.json`
+  - Monthly estimate (outlier-trim recommendation): `logs/clob-arb-eventpair-monthly-estimate-adopt-20260225_182309.json` (`recommended_monthly_return=+3.46%`, rule: `mean_edge_pct_raw <= 25%`)
+- Evidence snapshot (coverage refresh 2026-02-25):
+  - Source coverage: `logs/clob-arb-eventpair-metrics-coverage-latest.json`
+  - `distinct_events_all=4` (`event_gate_target=20`, not met)
+- Decision note: promoted to active observe operations by operator decision on 2026-02-25; keep claims low-confidence until event coverage expands.
+- Operational gate: keep this strategy observe-only and mark `REVIEW` when `distinct_events_all < 20` and `observed_realized_days < 30`.
+
+5. `hourly_updown_highprob_calibration_observe`
+- Status: `ADOPTED` (as of 2026-02-25, observe-only).
+- Scope: short-horizon hourly crypto up/down high-probability pricing calibration, observe-only.
+- Runtime:
+  - `python scripts/report_hourly_updown_highprob_calibration.py --assets bitcoin,ethereum,solana,xrp --hours 168 --tte-minutes 45 --entry-max-age-minutes 90 --price-min 0.70 --price-max 0.95 --max-trades-per-market 3000 --pretty --out-json logs/hourly_updown_highprob_calibration_168h_tte45_70_95_btc_eth_sol_xrp.json --out-csv logs/hourly_updown_highprob_calibration_168h_tte45_70_95_btc_eth_sol_xrp_samples.csv`
+- Evidence snapshot:
+  - Source claim link: `https://x.com/SynthdataCo/status/2021658564109234501`
+  - Intake evidence: `logs/link_intake_20260224_link5_retry.json`
+  - Per-link note: `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-link5-retry/01_synthdata-on-x-launch-a-polymarket-tradi.md`
+- Evidence snapshot (2026-02-25 expanded run):
+  - Source summary: `logs/hourly_updown_highprob_calibration_168h_tte45_70_95_btc_eth_sol_xrp.json`
+  - `qualified_samples=221` (gate `>=200` met), `edge_empirical_minus_price=+0.0438` (gate `>0` met)
+- Decision note: expanded-asset calibration run met sample and edge gates; promote to active observe calibration monitoring.
+- Operational gate: keep observe-only and revert to `REVIEW` when either `qualified_samples < 200` or `edge_empirical_minus_price <= 0` on the latest 7-day-equivalent calibration run.
 
 ## Rejected Strategies
 
@@ -59,7 +115,7 @@ This file is the canonical strategy register for concurrent chat/workstream coor
 ## Pending Strategies
 
 1. `social_profit_claim_validation_observe`
-- Status: `PENDING` (as of 2026-02-24).
+- Status: `PENDING` (as of 2026-02-25).
 - Scope: social/X performance claims around Polymarket bot profitability, observe-only.
 - Runtime:
   - `python scripts/report_social_profit_claims.py`
@@ -68,31 +124,8 @@ This file is the canonical strategy register for concurrent chat/workstream coor
   - Source claim link: `https://x.com/frostikkkk/status/2015154001797390637`
   - Intake evidence: `logs/link_intake_20260224_7links.json`
   - Per-link note: `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-7links/07_frostikk-on-x-how-claude-polymarket-will.md`
+- Evidence snapshot (2026-02-25 run):
+  - Source summary: `logs/social_profit_claims_latest.json`
+  - `summary.observed_days=2`, `meta.min_days=30`, all claim statuses were `INSUFFICIENT_DATA`
 - Decision note: use measured realized PnL windows (`daily`, `rolling-30d`) to support/reject headline claims before considering strategy adoption.
 - Operational gate: require at least 30 observed realized-PnL days (`--min-days 30`) before support/no-support judgment.
-
-2. `hourly_updown_highprob_calibration_observe`
-- Status: `PENDING` (as of 2026-02-24).
-- Scope: short-horizon hourly crypto up/down high-probability pricing calibration, observe-only.
-- Runtime:
-  - `python scripts/report_hourly_updown_highprob_calibration.py --assets bitcoin,ethereum --hours 72 --tte-minutes 20 --price-min 0.80 --price-max 0.95 --max-trades-per-market 3000 --pretty`
-- Evidence snapshot:
-  - Source claim link: `https://x.com/SynthdataCo/status/2021658564109234501`
-  - Intake evidence: `logs/link_intake_20260224_link5_retry.json`
-  - Per-link note: `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-link5-retry/01_synthdata-on-x-launch-a-polymarket-tradi.md`
-- Decision note: calibrate realized hit-rate at fixed time-to-end against quoted high-probability prices before any model-based edge claims are trusted.
-- Operational gate: require non-trivial sample count (`qualified_samples >= 200`) and positive calibration edge (`empirical_win_rate - avg_entry_price > 0`) for review.
-
-3. `link_intake_walletseed_cohort_observe`
-- Status: `PENDING` (as of 2026-02-24).
-- Scope: profile/wallet hints from social links are converted to reproducible cohort autopsy inputs, observe-only.
-- Runtime:
-  - `python scripts/run_link_intake_cohort.py logs/link_intake_20260224_7links.json --profile-name linkseed_7links --min-confidence medium --max-trades 2500 --pretty`
-- Evidence snapshot:
-  - Source claim links: `https://x.com/kunst13r/status/2022707250956243402`, `https://polymarket.com/@k9Q2mX4L8A7ZP3R`
-  - Intake evidence: `logs/link_intake_20260224_7links.json`
-  - Per-link notes:
-    - `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-7links/01_kunstler-on-x-trader-profile-t-co-scg6gt.md`
-    - `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-7links/02_k9q2mx4l8a7zp3r-on-polymarket.md`
-- Decision note: keep wallet/profile extraction and cohort analysis coupled in one observable run to reduce manual copy errors.
-- Operational gate: require at least one resolved wallet and successful cohort output (`cohort.ok=true`) before strategy interpretation.

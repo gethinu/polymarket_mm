@@ -24,6 +24,9 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 
+DEFAULT_REALIZED_STRATEGY_ID = "weather_clob_arb_buckets_observe"
+
+
 def now_utc() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
@@ -375,6 +378,31 @@ def _fmt_ratio_pct(ratio: Optional[float], digits: int = 2) -> str:
     return f"{ratio:+.{max(0, int(digits))}%}"
 
 
+def _gate_stage_label_ja(stage: str, min_days: int) -> str:
+    s = str(stage or "").strip().upper()
+    d = max(1, int(min_days))
+    if s == "TENTATIVE":
+        return f"{d}日暫定"
+    if s == "INTERIM":
+        return f"{d}日中間"
+    if s == "FINAL":
+        return f"{d}日確定"
+    return "-"
+
+
+def _gate_decision_label_ja(decision: str, tentative_days: int, interim_days: int, final_days: int) -> str:
+    s = str(decision or "").strip().upper()
+    if s == "PENDING_TENTATIVE":
+        return f"{tentative_days}日暫定判定待ち"
+    if s == "READY_TENTATIVE":
+        return f"{tentative_days}日暫定判定"
+    if s == "READY_INTERIM":
+        return f"{interim_days}日中間判定"
+    if s == "READY_FINAL":
+        return f"{final_days}日確定判定"
+    return "-"
+
+
 def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, monthly_txt_path: Path) -> dict:
     out: dict = {
         "summary_path": str(summary_path),
@@ -557,6 +585,10 @@ def _extract_balance_value(row: dict) -> Optional[float]:
     return None
 
 
+def _extract_strategy_id(row: dict) -> str:
+    return str(row.get("strategy_id") or "").strip()
+
+
 def _looks_like_cumulative_snapshot(path: Path, rows_sorted: List[dict]) -> bool:
     name = path.name.lower()
     if "clob_arb_realized_daily" in name:
@@ -568,11 +600,47 @@ def _looks_like_cumulative_snapshot(path: Path, rows_sorted: List[dict]) -> bool
     return False
 
 
-def load_realized_daily_series() -> dict:
-    candidates = [
-        logs_dir() / "clob_arb_realized_daily.jsonl",
-        logs_dir() / "strategy_realized_pnl_daily.jsonl",
-    ]
+def _collect_day_rows(path: Path, strategy_id: str) -> Dict[str, dict]:
+    day_rows: Dict[str, dict] = {}
+    is_strategy_file = "strategy_realized_pnl_daily" in path.name.lower()
+    target_sid = str(strategy_id or "").strip()
+
+    for row in _iter_jsonl(path):
+        if target_sid and is_strategy_file:
+            row_sid = _extract_strategy_id(row)
+            if row_sid != target_sid:
+                continue
+
+        day = _extract_day_key(row)
+        if not day:
+            continue
+        pnl = _extract_realized_value(row)
+        if pnl is None:
+            continue
+
+        day_rows[day] = {
+            "day": day,
+            "realized_value": float(pnl),
+            "source": str(row.get("source") or "").strip(),
+            "balance_usd": _extract_balance_value(row),
+        }
+    return day_rows
+
+
+def load_realized_daily_series(strategy_id: str = DEFAULT_REALIZED_STRATEGY_ID) -> dict:
+    strategy_file = logs_dir() / "strategy_realized_pnl_daily.jsonl"
+    clob_file = logs_dir() / "clob_arb_realized_daily.jsonl"
+
+    candidates: List[Path] = []
+    preferred_rows: Dict[str, dict] = {}
+    if strategy_file.exists():
+        preferred_rows = _collect_day_rows(strategy_file, strategy_id=strategy_id)
+    if preferred_rows:
+        candidates = [strategy_file]
+    else:
+        for p in (clob_file, strategy_file):
+            if p.exists():
+                candidates.append(p)
 
     per_day: Dict[str, float] = {}
     used_files: List[str] = []
@@ -580,24 +648,7 @@ def load_realized_daily_series() -> dict:
     balance_rows: List[dict] = []
 
     for path in candidates:
-        if not path.exists():
-            continue
-
-        day_rows: Dict[str, dict] = {}
-        for row in _iter_jsonl(path):
-            day = _extract_day_key(row)
-            if not day:
-                continue
-            pnl = _extract_realized_value(row)
-            if pnl is None:
-                continue
-
-            day_rows[day] = {
-                "day": day,
-                "realized_value": float(pnl),
-                "source": str(row.get("source") or "").strip(),
-                "balance_usd": _extract_balance_value(row),
-            }
+        day_rows = preferred_rows if (path == strategy_file and preferred_rows) else _collect_day_rows(path, strategy_id=strategy_id)
 
         if not day_rows:
             continue
@@ -647,6 +698,7 @@ def load_realized_daily_series() -> dict:
 
     return {
         "per_day": per_day,
+        "strategy_id": str(strategy_id or "").strip(),
         "source_files": used_files,
         "source_modes": source_modes,
         "series_mode": series_mode,
@@ -665,21 +717,117 @@ def evaluate_realized_30d_gate(min_days: int, series: Optional[dict] = None) -> 
             per_day[str(k)] = float(n)
 
     observed_days = len(per_day)
-    decision = "READY_FOR_JUDGMENT" if observed_days >= int(min_days) else "PENDING_30D"
+    final_days = max(1, int(min_days))
+    tentative_days = min(7, final_days)
+    interim_days = min(14, final_days)
+    if interim_days < tentative_days:
+        interim_days = tentative_days
+
+    decision = "READY_FOR_JUDGMENT" if observed_days >= final_days else "PENDING_30D"
     reason = (
-        f"observed_realized_days={observed_days} >= min_days={int(min_days)}"
+        f"observed_realized_days={observed_days} >= min_days={final_days}"
         if decision == "READY_FOR_JUDGMENT"
-        else f"observed_realized_days={observed_days} < min_days={int(min_days)}"
+        else f"observed_realized_days={observed_days} < min_days={final_days}"
     )
+
+    decision_3stage = "PENDING_TENTATIVE"
+    stage_label = f"PRE_TENTATIVE_{tentative_days}D"
+    stage_label_ja = f"{tentative_days}日暫定到達前"
+    reason_3stage = f"observed_realized_days={observed_days} < tentative_days={tentative_days}"
+    next_stage: Optional[dict] = {
+        "stage": "TENTATIVE",
+        "label": f"{tentative_days}d tentative",
+        "label_ja": _gate_stage_label_ja("TENTATIVE", tentative_days),
+        "min_days": int(tentative_days),
+        "remaining_days": int(max(0, tentative_days - observed_days)),
+    }
+
+    if observed_days >= tentative_days:
+        decision_3stage = "READY_TENTATIVE"
+        stage_label = f"TENTATIVE_{tentative_days}D"
+        stage_label_ja = _gate_stage_label_ja("TENTATIVE", tentative_days)
+        reason_3stage = (
+            f"observed_realized_days={observed_days} >= tentative_days={tentative_days}"
+            f" and < interim_days={interim_days}"
+        )
+        next_stage = {
+            "stage": "INTERIM",
+            "label": f"{interim_days}d interim",
+            "label_ja": _gate_stage_label_ja("INTERIM", interim_days),
+            "min_days": int(interim_days),
+            "remaining_days": int(max(0, interim_days - observed_days)),
+        }
+
+    if observed_days >= interim_days:
+        decision_3stage = "READY_INTERIM"
+        stage_label = f"INTERIM_{interim_days}D"
+        stage_label_ja = _gate_stage_label_ja("INTERIM", interim_days)
+        reason_3stage = (
+            f"observed_realized_days={observed_days} >= interim_days={interim_days}"
+            f" and < final_days={final_days}"
+        )
+        next_stage = {
+            "stage": "FINAL",
+            "label": f"{final_days}d final",
+            "label_ja": _gate_stage_label_ja("FINAL", final_days),
+            "min_days": int(final_days),
+            "remaining_days": int(max(0, final_days - observed_days)),
+        }
+
+    if observed_days >= final_days:
+        decision_3stage = "READY_FINAL"
+        stage_label = f"FINAL_{final_days}D"
+        stage_label_ja = _gate_stage_label_ja("FINAL", final_days)
+        reason_3stage = f"observed_realized_days={observed_days} >= final_days={final_days}"
+        next_stage = None
+
     source_files = s.get("source_files") if isinstance(s.get("source_files"), list) else []
     if not source_files:
         reason += "; realized daily artifact not found"
+        reason_3stage += "; realized daily artifact not found"
+
+    stages = [
+        {
+            "stage": "TENTATIVE",
+            "label": f"{tentative_days}d tentative",
+            "label_ja": _gate_stage_label_ja("TENTATIVE", tentative_days),
+            "min_days": int(tentative_days),
+            "reached": bool(observed_days >= tentative_days),
+        },
+        {
+            "stage": "INTERIM",
+            "label": f"{interim_days}d interim",
+            "label_ja": _gate_stage_label_ja("INTERIM", interim_days),
+            "min_days": int(interim_days),
+            "reached": bool(observed_days >= interim_days),
+        },
+        {
+            "stage": "FINAL",
+            "label": f"{final_days}d final",
+            "label_ja": _gate_stage_label_ja("FINAL", final_days),
+            "min_days": int(final_days),
+            "reached": bool(observed_days >= final_days),
+        },
+    ]
 
     total_realized = sum(per_day.values()) if per_day else 0.0
     return {
         "decision": decision,
+        "decision_3stage": decision_3stage,
+        "decision_3stage_label_ja": _gate_decision_label_ja(decision_3stage, tentative_days, interim_days, final_days),
+        "stage_label": stage_label,
+        "stage_label_ja": stage_label_ja,
         "reason": reason,
-        "min_realized_days": int(min_days),
+        "reason_3stage": reason_3stage,
+        "next_stage": next_stage,
+        "stages": stages,
+        "stage_thresholds_days": {
+            "tentative": int(tentative_days),
+            "interim": int(interim_days),
+            "final": int(final_days),
+        },
+        "strategy_id": str(s.get("strategy_id") or ""),
+        "min_realized_days": int(final_days),
         "observed_realized_days": observed_days,
         "observed_total_realized_pnl_usd": float(total_realized),
         "series_mode": str(s.get("series_mode") or "none"),
@@ -725,6 +873,7 @@ def summarize_realized_monthly_return(min_days: int, series: Optional[dict] = No
     return {
         "decision": decision,
         "reason": reason,
+        "strategy_id": str(s.get("strategy_id") or ""),
         "min_realized_days": int(min_days),
         "observed_realized_days": observed_days,
         "series_mode": str(s.get("series_mode") or "none"),
@@ -762,14 +911,50 @@ def render_html_snapshot(payload: dict) -> str:
         payload.get("realized_monthly_return") if isinstance(payload.get("realized_monthly_return"), dict) else {}
     )
 
+    weather_view_specs = [
+        (
+            "weather_consensus_overview_latest.html",
+            "Weather consensus overview (cross-profile)",
+        ),
+        (
+            "weather_7acct_auto_consensus_snapshot_latest.html",
+            "Weather consensus snapshot: weather_7acct_auto",
+        ),
+        (
+            "weather_visual_test_consensus_snapshot_latest.html",
+            "Weather consensus snapshot: weather_visual_test",
+        ),
+    ]
+    weather_view_rows: List[str] = []
+    for file_name, label in weather_view_specs:
+        p = logs_dir() / file_name
+        exists = p.exists()
+        badge = '<span class="chip ok">AVAILABLE</span>' if exists else '<span class="chip bad">MISSING</span>'
+        mtime = "-"
+        if exists:
+            try:
+                mtime = dt.datetime.fromtimestamp(p.stat().st_mtime, tz=dt.timezone.utc).isoformat()
+            except Exception:
+                mtime = "-"
+        link_html = f'<a href="{html.escape(file_name)}" target="_blank" rel="noopener">{html.escape(file_name)}</a>'
+        weather_view_rows.append(
+            f"<tr><td>{html.escape(label)}</td><td>{badge}</td><td>{link_html}</td><td>{html.escape(mtime)}</td></tr>"
+        )
+
     def chip(status: str) -> str:
         s = (status or "").upper()
         cls = "unk"
-        if s in {"ADOPTED", "GO", "READY_FOR_JUDGMENT"}:
+        if s in {"ADOPTED", "GO", "READY_FOR_JUDGMENT", "READY_FINAL"}:
             cls = "ok"
         elif s in {"REJECTED", "NO_GO"}:
             cls = "bad"
-        elif s in {"PENDING", "PENDING_30D"}:
+        elif s in {
+            "PENDING",
+            "PENDING_30D",
+            "PENDING_TENTATIVE",
+            "READY_TENTATIVE",
+            "READY_INTERIM",
+        }:
             cls = "wait"
         return f'<span class="chip {cls}">{html.escape(s or "-")}</span>'
 
@@ -790,7 +975,8 @@ def render_html_snapshot(payload: dict) -> str:
             m_now = str(realized_monthly.get("projected_monthly_return_text") or "n/a")
             m_roll = str(realized_monthly.get("rolling_30d_return_text") or "n/a")
             m_days = str(realized_monthly.get("observed_realized_days") if realized_monthly.get("observed_realized_days") is not None else "-")
-            strategy_metric = f"realized_monthly_now={m_now}; roll30={m_roll}; observed_days={m_days}"
+            m_gate = str(gate.get("decision_3stage") or gate.get("decision") or "-")
+            strategy_metric = f"realized_monthly_now={m_now}; roll30={m_roll}; observed_days={m_days}; gate={m_gate}"
         if sid_raw == "no_longshot_daily_observe":
             m_now = str(no_longshot.get("monthly_return_now_text") or "n/a")
             m_roll = str(no_longshot.get("rolling_30d_monthly_return_text") or "n/a")
@@ -837,14 +1023,41 @@ def render_html_snapshot(payload: dict) -> str:
         live_rows_html.append(f"<tr><td>{pid}</td><td>{created}</td><td><code>{cmd}</code></td></tr>")
 
     gate_dec = str(gate.get("decision") or "")
+    gate_dec_stage = str(gate.get("decision_3stage") or gate_dec)
+    gate_dec_stage_ja = html.escape(str(gate.get("decision_3stage_label_ja") or "-"))
+    gate_stage_label = html.escape(str(gate.get("stage_label") or "-"))
+    gate_stage_label_ja = html.escape(str(gate.get("stage_label_ja") or "-"))
     gate_days = html.escape(str(gate.get("observed_realized_days") if gate.get("observed_realized_days") is not None else "-"))
-    gate_min = html.escape(str(gate.get("min_realized_days") if gate.get("min_realized_days") is not None else "-"))
     gate_realized = html.escape(
         str(gate.get("observed_total_realized_pnl_usd") if gate.get("observed_total_realized_pnl_usd") is not None else "-")
     )
-    gate_reason = html.escape(str(gate.get("reason") or ""))
+    gate_reason_stage = html.escape(str(gate.get("reason_3stage") or gate.get("reason") or ""))
+    gate_next = gate.get("next_stage") if isinstance(gate.get("next_stage"), dict) else {}
+    gate_next_txt = "-"
+    if gate_next:
+        next_label = str(gate_next.get("label") or gate_next.get("stage") or "-")
+        next_label_ja = str(gate_next.get("label_ja") or "")
+        rem = gate_next.get("remaining_days")
+        rem_txt = str(rem) if rem is not None else "-"
+        if next_label_ja:
+            gate_next_txt = f"{next_label_ja} / {next_label} (remaining_days={rem_txt})"
+        else:
+            gate_next_txt = f"{next_label} (remaining_days={rem_txt})"
+    gate_next_html = html.escape(gate_next_txt)
     gate_sources = gate.get("source_files") if isinstance(gate.get("source_files"), list) else []
     gate_src_html = "".join(f"<li><code>{html.escape(str(x))}</code></li>" for x in gate_sources) or "<li>-</li>"
+    gate_stage_rows: List[str] = []
+    for stage in (gate.get("stages") if isinstance(gate.get("stages"), list) else []):
+        if not isinstance(stage, dict):
+            continue
+        s_name = html.escape(str(stage.get("stage") or "-"))
+        s_label = html.escape(str(stage.get("label") or "-"))
+        s_label_ja = html.escape(str(stage.get("label_ja") or "-"))
+        s_min = html.escape(str(stage.get("min_days") if stage.get("min_days") is not None else "-"))
+        s_reached = "READY_FINAL" if bool(stage.get("reached")) else "PENDING_TENTATIVE"
+        gate_stage_rows.append(
+            f"<tr><td>{s_name}</td><td>{s_label_ja}</td><td>{s_label}</td><td>{s_min}</td><td>{chip(s_reached)}</td></tr>"
+        )
     no_monthly_now = html.escape(str(no_longshot.get("monthly_return_now_text") or "n/a"))
     no_roll30 = html.escape(str(no_longshot.get("rolling_30d_monthly_return_text") or "n/a"))
     no_open = html.escape(str(no_longshot.get("open_positions") if no_longshot.get("open_positions") is not None else "-"))
@@ -861,6 +1074,7 @@ def render_html_snapshot(payload: dict) -> str:
         str(realized_monthly.get("bankroll_usd") if realized_monthly.get("bankroll_usd") is not None else "-")
     )
     clob_series_mode = html.escape(str(realized_monthly.get("series_mode") or "none"))
+    clob_strategy_id = html.escape(str(realized_monthly.get("strategy_id") or "-"))
     clob_reason = html.escape(str(realized_monthly.get("reason") or ""))
     clob_mean_daily = html.escape(
         str(realized_monthly.get("mean_daily_realized_pnl_usd") if realized_monthly.get("mean_daily_realized_pnl_usd") is not None else "-")
@@ -927,6 +1141,8 @@ def render_html_snapshot(payload: dict) -> str:
     th {{ color: #8ac4df; background: rgba(10, 37, 56, 0.88); text-transform: uppercase; letter-spacing: .05em; }}
     tr:last-child td {{ border-bottom: none; }}
     code {{ color: #c3f6ff; }}
+    a {{ color: #7fe5ff; text-decoration: none; }}
+    a:hover {{ text-decoration: underline; }}
     .chip {{
       display: inline-block;
       border-radius: 999px;
@@ -963,7 +1179,7 @@ def render_html_snapshot(payload: dict) -> str:
       <div class="card"><div class="k">clob realized rolling_30d</div><div class="v">{clob_roll30}</div></div>
       <div class="card"><div class="k">no-longshot monthly_now</div><div class="v">{no_monthly_now}</div></div>
       <div class="card"><div class="k">no-longshot rolling_30d</div><div class="v">{no_roll30}</div></div>
-      <div class="card"><div class="k">30d gate</div><div class="v">{chip(gate_dec)}</div></div>
+      <div class="card"><div class="k">realized gate 7/14/30</div><div class="v">{chip(gate_dec_stage)}</div><div class="k" style="text-transform:none; letter-spacing:0.03em; margin-top:6px;">{gate_dec_stage_ja}</div></div>
     </div>
 
     <div class="section">
@@ -994,7 +1210,10 @@ def render_html_snapshot(payload: dict) -> str:
             <tr><td>live_processes.count</td><td>{live_count}</td></tr>
             <tr><td>clob_realized.projected_monthly_now</td><td>{clob_monthly_now}</td></tr>
             <tr><td>clob_realized.rolling_30d</td><td>{clob_roll30}</td></tr>
+            <tr><td>clob_realized.strategy_id</td><td>{clob_strategy_id}</td></tr>
             <tr><td>clob_realized.observed_days</td><td>{clob_obs_days}</td></tr>
+            <tr><td>clob_realized.gate_legacy</td><td>{chip(gate_dec)}</td></tr>
+            <tr><td>clob_realized.gate_stage</td><td>{chip(gate_dec_stage)}</td></tr>
             <tr><td>clob_realized.bankroll_usd</td><td>{clob_bankroll}</td></tr>
             <tr><td>no_longshot.monthly_return_now</td><td>{no_monthly_now}</td></tr>
             <tr><td>no_longshot.monthly_return_source</td><td>{no_source}</td></tr>
@@ -1011,10 +1230,22 @@ def render_html_snapshot(payload: dict) -> str:
     </div>
 
     <div class="section">
-      <h2>30-Day Realized PnL Gate</h2>
+      <h2>Weather Views</h2>
       <table>
-        <thead><tr><th>decision</th><th>observed_days</th><th>min_days</th><th>observed_total_realized_pnl_usd</th><th>reason</th></tr></thead>
-        <tbody><tr><td>{chip(gate_dec)}</td><td>{gate_days}</td><td>{gate_min}</td><td>{gate_realized}</td><td>{gate_reason}</td></tr></tbody>
+        <thead><tr><th>label</th><th>status</th><th>link</th><th>last_modified_utc</th></tr></thead>
+        <tbody>{''.join(weather_view_rows) if weather_view_rows else '<tr><td colspan="4">no weather views</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>Realized PnL Gate (7d / 14d / 30d)</h2>
+      <table>
+        <thead><tr><th>legacy_decision</th><th>stage_decision</th><th>stage_decision_ja</th><th>stage_label</th><th>stage_label_ja</th><th>observed_days</th><th>next_stage</th><th>observed_total_realized_pnl_usd</th><th>reason</th></tr></thead>
+        <tbody><tr><td>{chip(gate_dec)}</td><td>{chip(gate_dec_stage)}</td><td>{gate_dec_stage_ja}</td><td>{gate_stage_label}</td><td>{gate_stage_label_ja}</td><td>{gate_days}</td><td>{gate_next_html}</td><td>{gate_realized}</td><td>{gate_reason_stage}</td></tr></tbody>
+      </table>
+      <table style="margin-top:10px;">
+        <thead><tr><th>stage</th><th>label_ja</th><th>label</th><th>min_days</th><th>reached</th></tr></thead>
+        <tbody>{''.join(gate_stage_rows) if gate_stage_rows else '<tr><td colspan="5">no stage rows</td></tr>'}</tbody>
       </table>
       <ul>{gate_src_html}</ul>
     </div>
@@ -1026,6 +1257,7 @@ def render_html_snapshot(payload: dict) -> str:
         <tbody>
           <tr><td>projected_monthly_return_pct_now</td><td>{clob_monthly_now}</td></tr>
           <tr><td>rolling_30d_return_pct</td><td>{clob_roll30}</td></tr>
+          <tr><td>strategy_id</td><td>{clob_strategy_id}</td></tr>
           <tr><td>observed_realized_days</td><td>{clob_obs_days}</td></tr>
           <tr><td>mean_daily_realized_pnl_usd</td><td>{clob_mean_daily}</td></tr>
           <tr><td>trailing_window_days</td><td>{clob_trailing_days}</td></tr>
@@ -1050,6 +1282,11 @@ def main() -> int:
     p.add_argument("--readiness-glob", default="logs/*_top30_readiness_*latest.json", help="Readiness JSON glob")
     p.add_argument("--clob-state-file", default="logs/clob_arb_state.json", help="CLOB arb state JSON path")
     p.add_argument("--min-realized-days", type=int, default=30, help="Required realized-PnL days for gate")
+    p.add_argument(
+        "--realized-strategy-id",
+        default=DEFAULT_REALIZED_STRATEGY_ID,
+        help="Target strategy id for realized monthly/gate evaluation",
+    )
     p.add_argument("--skip-process-scan", action="store_true", help="Skip live process scan")
     p.add_argument("--out-json", default="", help="Output JSON path (simple filename goes under logs/)")
     p.add_argument("--out-html", default="", help="Output HTML path (simple filename goes under logs/)")
@@ -1065,7 +1302,8 @@ def main() -> int:
             readiness_loaded.append(rec)
     readiness_latest_rows = latest_readiness(readiness_loaded)
     min_realized_days = max(1, int(args.min_realized_days))
-    realized_series = load_realized_daily_series()
+    realized_strategy_id = str(args.realized_strategy_id or "").strip() or DEFAULT_REALIZED_STRATEGY_ID
+    realized_series = load_realized_daily_series(strategy_id=realized_strategy_id)
 
     payload = {
         "generated_utc": now_utc().isoformat(),
@@ -1077,6 +1315,7 @@ def main() -> int:
             "loaded_readiness_records": len(readiness_loaded),
             "latest_readiness_records": len(readiness_latest_rows),
             "clob_state_file": str(resolve_path(str(args.clob_state_file), "clob_arb_state.json")),
+            "realized_strategy_id": realized_strategy_id,
         },
         "strategy_register": parse_strategy_register(strategy_path),
         "readiness": {

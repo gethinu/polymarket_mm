@@ -114,6 +114,11 @@ Polymarket weather 24h completion alarm:
 - Postcheck report: `logs/weather24h_postcheck_latest.txt`
 - Postcheck summary: `logs/weather24h_postcheck_latest.json`
 
+Simmer hold-to-settlement followup (observe-only):
+- Waiter state: `logs/simmer_settlement_followup_waiter_state.json` (detached watcher process metadata)
+- Latest probe snapshot: `logs/simmer_settlement_followup_latest.json`
+- Run log: `logs/simmer_settlement_followup_<utc_tag>.log`
+
 Polymarket weather arb monthly-return window estimator (observe-only):
 - Observe log (runner default): `logs/clob-arb-weather-profit-observe.log`
 - Observe state (runner default): `logs/clob_arb_weather_profit_state.json`
@@ -160,6 +165,7 @@ Polymarket weather consensus watchlist builder (observe-only):
 - Watchlist CSV: `logs/<profile_name>_consensus_watchlist_latest.csv`
 - Watchlist JSON: `logs/<profile_name>_consensus_watchlist_latest.json`
 - Snapshot HTML: `logs/<profile_name>_consensus_snapshot_latest.html`
+- Cross-profile overview HTML: `logs/weather_consensus_overview_latest.html`
 
 Polymarket weather watchlist A/B dryrun comparator (observe-only):
 - Report JSON:
@@ -176,6 +182,10 @@ Polymarket weather Top30 readiness judge (observe-only):
 - Cross-profile readiness report JSON: `logs/weather_top30_readiness_report_latest.json`
 - Cross-profile readiness report TXT: `logs/weather_top30_readiness_report_latest.txt`
 - Daily runner log: `logs/weather_top30_readiness_daily_run.log`
+- Daily runner also refreshes `logs/strategy_realized_pnl_daily.jsonl` and `logs/strategy_realized_latest.json`.
+- Daily runner also refreshes `logs/strategy_gate_alarm.log` and `logs/strategy_gate_alarm_state.json`.
+- Daily runner also refreshes `logs/automation_health_latest.json` and `logs/automation_health_latest.txt`.
+- Daily runner also refreshes `logs/weather_consensus_overview_latest.html`.
 
 Polymarket weather mimic pipeline (observe-only):
 - Input snapshot: `logs/<profile_name>_inputs_<utc_tag>.txt`
@@ -189,19 +199,47 @@ Polymarket weather mimic pipeline daily runner (observe-only):
 - Runner log: `logs/weather_mimic_pipeline_daily_run.log`
 - Per-run artifacts are produced via `scripts/run_weather_mimic_pipeline.py` and follow the weather mimic pipeline section above.
 - Daily run also refreshes `logs/<profile_name>_consensus_snapshot_latest.html` when consensus JSON is available.
+- Daily run also refreshes `logs/weather_consensus_overview_latest.html`.
 - Daily run also refreshes `logs/<profile_name>_ab_vs_no_longshot_latest.json/.md` and `logs/<profile_name>_ab_vs_lateprob_latest.json/.md` when inputs are available.
 - Daily run also refreshes `logs/<profile_name>_top30_readiness_latest.json` (Top30 readiness gate snapshot).
+- Daily run also refreshes `logs/strategy_realized_pnl_daily.jsonl` and `logs/strategy_realized_latest.json`.
+- Daily run also refreshes `logs/strategy_gate_alarm.log` and `logs/strategy_gate_alarm_state.json`.
+- Daily run also refreshes `logs/automation_health_latest.json` and `logs/automation_health_latest.txt`.
+
+Morning status daily runner (observe-only):
+- Runner log: `logs/morning_status_daily_run.log`
+- 実行時に `scripts/check_morning_status.py` を呼び出し、必要に応じて以下既存 artifact を更新:
+  - `logs/strategy_register_latest.json`
+  - `logs/strategy_gate_alarm.log`, `logs/strategy_gate_alarm_state.json`
+  - `logs/automation_health_latest.json`, `logs/automation_health_latest.txt`
 
 Polymarket CLOB realized PnL daily capture (observe-only):
 - Daily series JSONL: `logs/clob_arb_realized_daily.jsonl`
 - Latest snapshot JSON: `logs/clob_arb_realized_latest.json`
 - `clob_arb_realized_daily.jsonl` は累積 realized snapshot 系列（Simmer SDK由来）。日次損益評価では day-over-day 差分を使う。
 
+Polymarket strategy-scoped realized PnL materializer (observe-only):
+- Daily series JSONL: `logs/strategy_realized_pnl_daily.jsonl`
+- Latest snapshot JSON: `logs/strategy_realized_latest.json`
+
 Polymarket strategy register snapshot (observe-only):
 - Snapshot JSON: `logs/strategy_register_latest.json`
 - Snapshot HTML: `logs/strategy_register_latest.html`
-- Snapshot JSON には `realized_30d_gate` と `realized_monthly_return` を含む。
-- `realized_monthly_return` は累積 snapshot の差分系列から計算される。
+- Snapshot JSON には `realized_30d_gate` と `realized_monthly_return` を含む（`realized_30d_gate.decision` は30日最終判定の互換フィールド）。
+- `realized_30d_gate` は `decision_3stage`（7日暫定 / 14日中間 / 30日確定）、`decision_3stage_label_ja`、`stage_label_ja`、`stages`（`label_ja` 含む）、`next_stage`（`label_ja` 含む）を含む。
+- `realized_monthly_return` は `strategy_realized_pnl_daily.jsonl` を優先し、未存在時は累積 snapshot の差分系列をフォールバック利用して計算される。
+
+Polymarket strategy gate stage alarm (observe-only):
+- Alarm log: `logs/strategy_gate_alarm.log`
+- Alarm state JSON: `logs/strategy_gate_alarm_state.json`
+
+Automation health report (observe-only):
+- Latest health JSON: `logs/automation_health_latest.json`
+- Latest health TXT: `logs/automation_health_latest.txt`
+- Freshness checks include runner logs such as:
+  - `logs/weather_top30_readiness_daily_run.log`
+  - `logs/weather_mimic_pipeline_daily_run.log`
+  - `logs/no_longshot_daily_run.log`
 
 ## Secrets
 

@@ -26,12 +26,14 @@ PowerShell task scripts (background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_wallet_autopsy_daily_report.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_mimic_pipeline_daily.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_simmer_ab_daily_report.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_clob_arb_monitor_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_wallet_autopsy_daily_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_mimic_pipeline_daily_task.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_pingpong_task.ps1`
     - If new task creation is denied, installer falls back to reusing `PolymarketClobMM`.
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup_clob_backend.ps1`
@@ -323,6 +325,16 @@ Polymarket weather consensus snapshot renderer (observe-only):
   - `--top-n`（可視化に表示する上位件数）
   - `--out-html`（出力HTML。simple filenameは `logs/` 配下）
 
+Polymarket weather consensus overview renderer (observe-only):
+- Render cross-profile comparison overview from multiple consensus watchlists:
+  - `python scripts/render_weather_consensus_overview.py`
+  - `python scripts/render_weather_consensus_overview.py --profile weather_7acct_auto --profile weather_visual_test --top-n 30`
+  - `python scripts/render_weather_consensus_overview.py --profile weather_focus_mimic --out-html logs/weather_focus_overview_latest.html`
+- Key flags:
+  - `--profile`（repeatable。比較対象 profile 名。未指定時は `weather_7acct_auto` と `weather_visual_test`）
+  - `--top-n`（profileごとに比較対象とする上位件数）
+  - `--out-html`（出力HTML。simple filenameは `logs/` 配下）
+
 Polymarket weather Top30 readiness judge (observe-only):
 - Judge practical deployment readiness from consensus watchlist:
   - `python scripts/judge_weather_top30_readiness.py --consensus-json logs/weather_7acct_auto_consensus_watchlist_latest.json --supervisor-config logs/bot_supervisor.weather_7acct_auto.observe.json --pretty`
@@ -358,10 +370,15 @@ Polymarket weather Top30 readiness daily runner (observe-only):
 - Key flags:
   - runner: `-Profiles`, `-FailOnNoGo`, `-Discord`, `-NoBackground`
   - runner は各 profile に対して strict/quality readiness を再計算し、最後に集計レポートを更新
+  - runner は実行後に `scripts/render_weather_consensus_overview.py` を呼び出し、`logs/weather_consensus_overview_latest.html` を更新
   - runner は実行後に `scripts/record_simmer_realized_daily.py` を呼び出し、`logs/clob_arb_realized_daily.jsonl` を更新
+  - runner は実行後に `scripts/materialize_strategy_realized_daily.py` を呼び出し、`logs/strategy_realized_pnl_daily.jsonl` を更新
   - runner は実行後に `scripts/render_strategy_register_snapshot.py` を呼び出し、`logs/strategy_register_latest.json/.html` を更新
+  - runner は実行後に `scripts/check_strategy_gate_alarm.py` を呼び出し、3段階ゲート遷移アラームを更新
+  - runner は実行後に `scripts/report_automation_health.py` を呼び出し、`logs/automation_health_latest.json/.txt` を更新
   - `WEATHER_TOP30_READINESS_DAILY_DISCORD=1` でも Discord 送信を有効化
   - installer: `-TaskName`, `-StartTime`, `-Profiles`, `-FailOnNoGo`, `-Discord`, `-RunNow`
+  - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
 
 Polymarket weather mimic pipeline (observe-only):
 - Run end-to-end intake->winner-selection->mimic build->scan in one command:
@@ -420,11 +437,16 @@ Polymarket weather mimic pipeline daily runner (observe-only):
   - `-ConsensusScoreMode`, `-ConsensusWeightOverlap`, `-ConsensusWeightNetYield`, `-ConsensusWeightMaxProfit`, `-ConsensusWeightLiquidity`, `-ConsensusWeightVolume`
   - `-NoRunScans`, `-LateprobDisableWeatherFilter`, `-Discord`, `-FailOnReadinessNoGo`
   - 実行後に `consensus_json` から `logs/<profile_name>_consensus_snapshot_latest.html` を自動生成
+  - 実行後に `scripts/render_weather_consensus_overview.py` を呼び出し、`logs/weather_consensus_overview_latest.html` を更新
   - 通常実行では `logs/<profile_name>_ab_vs_no_longshot_latest.json/.md` と `logs/<profile_name>_ab_vs_lateprob_latest.json/.md` も更新
   - 実行後に `scripts/judge_weather_top30_readiness.py` を呼び出し、`logs/<profile_name>_top30_readiness_latest.json` も更新（execution plan が未整備でも判定JSONは更新される）
   - 実行後に `scripts/record_simmer_realized_daily.py` を呼び出し、`logs/clob_arb_realized_daily.jsonl` を更新
+  - 実行後に `scripts/materialize_strategy_realized_daily.py` を呼び出し、`logs/strategy_realized_pnl_daily.jsonl` を更新
   - 実行後に `scripts/render_strategy_register_snapshot.py` を呼び出し、`logs/strategy_register_latest.json/.html` を更新
+  - 実行後に `scripts/check_strategy_gate_alarm.py` を呼び出し、3段階ゲート遷移アラームを更新
+  - 実行後に `scripts/report_automation_health.py` を呼び出し、`logs/automation_health_latest.json/.txt` を更新
   - `-FailOnReadinessNoGo` を指定すると readiness 判定が `GO` 以外（または判定不能）の場合に非0終了する
+  - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
 
 Polymarket CLOB realized PnL daily capture (observe-only):
 - Capture/update one daily realized-PnL row from Simmer SDK:
@@ -438,21 +460,109 @@ Polymarket CLOB realized PnL daily capture (observe-only):
   - `--out-latest-json`（最新スナップショットJSON。既定は `logs/clob_arb_realized_latest.json`）
   - `--api-timeout-sec`, `--pretty`
 
+Polymarket strategy-scoped realized PnL materializer (observe-only):
+- Convert account-level realized snapshots into strategy-scoped daily rows:
+  - `python scripts/materialize_strategy_realized_daily.py`
+  - `python scripts/materialize_strategy_realized_daily.py --strategy-id weather_clob_arb_buckets_observe --source-jsonl logs/clob_arb_realized_daily.jsonl --out-jsonl logs/strategy_realized_pnl_daily.jsonl --out-latest-json logs/strategy_realized_latest.json --pretty`
+- Key flags:
+  - `--strategy-id`（対象戦略ID。既定 `weather_clob_arb_buckets_observe`）
+  - `--source-jsonl`（入力系列。既定 `logs/clob_arb_realized_daily.jsonl`）
+  - `--allocation-ratio`（戦略配賦率 0..1。既定 `1.0`）
+  - `--source-series-mode`（`auto` / `cumulative_snapshot` / `daily_realized`）
+  - `--first-day-delta-zero` / `--no-first-day-delta-zero`（累積系列の初日差分扱い）
+  - `--out-jsonl`, `--out-latest-json`, `--pretty`
+
 Polymarket strategy register snapshot (observe-only):
 - Aggregate strategy canon + readiness + runtime hints into one JSON/HTML snapshot:
   - `python scripts/render_strategy_register_snapshot.py`
-  - `python scripts/render_strategy_register_snapshot.py --strategy-md docs/llm/STRATEGY.md --readiness-glob "logs/*_top30_readiness_*latest.json" --out-json logs/strategy_register_latest.json --out-html logs/strategy_register_latest.html --pretty`
+  - `python scripts/render_strategy_register_snapshot.py --strategy-md docs/llm/STRATEGY.md --readiness-glob "logs/*_top30_readiness_*latest.json" --realized-strategy-id weather_clob_arb_buckets_observe --out-json logs/strategy_register_latest.json --out-html logs/strategy_register_latest.html --pretty`
 - Snapshot payload includes:
-  - `realized_30d_gate`（realized 判定ゲート）
+  - `realized_30d_gate`（realized 判定ゲート。互換目的で `decision` は従来の 30日判定を維持）
+  - `realized_30d_gate.decision_3stage`（`7日暫定 / 14日中間 / 30日確定` の段階判定）
+  - `realized_30d_gate.decision_3stage_label_ja`（段階判定の日本語表示ラベル）
+  - `realized_30d_gate.stage_label_ja`（現在段階ラベルの日本語表示）
+  - `realized_30d_gate.stages`（段階ごとの `min_days` と到達フラグ）
+  - `realized_30d_gate.stages[*].label_ja`（段階ラベルの日本語表示）
+  - `realized_30d_gate.next_stage`（次段階と残り日数）
+  - `realized_30d_gate.next_stage.label_ja`（次段階ラベルの日本語表示）
+  - `realized_30d_gate.stage_thresholds_days`（段階閾値）
   - `realized_monthly_return`（projected monthly return / rolling_30d return / bankroll source）
-  - 上記は `clob_arb_realized_daily.jsonl` の累積 snapshot を差分化して計算される。
+  - `logs/strategy_realized_pnl_daily.jsonl` が存在する場合は優先利用し、未存在時は `clob_arb_realized_daily.jsonl` をフォールバック利用。
 - Key flags:
   - `--strategy-md`（戦略レジストリの入力Markdown。既定は `docs/llm/STRATEGY.md`）
   - `--readiness-glob`（readiness 判定JSONのglob。既定は `logs/*_top30_readiness_*latest.json`）
   - `--clob-state-file`（CLOB arb runtime state JSON。既定は `logs/clob_arb_state.json`）
-  - `--min-realized-days`（実現PnL判定に必要な最小日数。既定は `30`）
+  - `--min-realized-days`（実現PnL最終判定に必要な最小日数。既定は `30`。3段階の最終ゲートとして利用）
+  - `--realized-strategy-id`（実現PnL判定の対象戦略ID。既定 `weather_clob_arb_buckets_observe`）
   - `--out-json`, `--out-html`, `--pretty`
   - `--skip-process-scan`（実行中プロセス検出を省略）
+
+Polymarket strategy gate stage alarm (observe-only):
+- Detect 3-stage gate transitions from strategy snapshot and emit one alarm event:
+  - `python scripts/check_strategy_gate_alarm.py`
+  - `python scripts/check_strategy_gate_alarm.py --snapshot-json logs/strategy_register_latest.json --state-json logs/strategy_gate_alarm_state.json --log-file logs/strategy_gate_alarm.log --strategy-id weather_clob_arb_buckets_observe --discord`
+- Key flags:
+  - `--snapshot-json`（入力スナップショットJSON。既定は `logs/strategy_register_latest.json`）
+  - `--state-json`（前回判定保持の状態JSON。既定は `logs/strategy_gate_alarm_state.json`）
+  - `--log-file`（アラーム追記ログ。既定は `logs/strategy_gate_alarm.log`）
+  - `--strategy-id`（通知対象戦略ID。既定 `weather_clob_arb_buckets_observe`）
+  - `--discord`（Webhook設定時に遷移アラームをDiscord通知）
+  - `--pretty`
+
+Morning strategy gate check (observe-only):
+- Run one command to refresh and print concise gate status:
+  - `python scripts/check_morning_status.py`
+  - `python scripts/check_morning_status.py --no-refresh`
+  - `python scripts/check_morning_status.py --fail-on-gate-not-ready`
+  - `python scripts/check_morning_status.py --fail-on-stage-not-final`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_morning_status.ps1`
+- Key flags:
+  - `--no-refresh`（`record_simmer_realized_daily.py` / `materialize_strategy_realized_daily.py` / `render_strategy_register_snapshot.py` の更新を省略）
+  - `--skip-health`（`report_automation_health.py` の更新/判定を省略）
+  - `--skip-gate-alarm`（`check_strategy_gate_alarm.py` の更新/判定を省略）
+  - `--strategy-id`（gate判定対象。既定 `weather_clob_arb_buckets_observe`）
+  - `--min-realized-days`（最終判定日数。既定 `30`）
+  - `--snapshot-json`（読み取る strategy register JSON。既定 `logs/strategy_register_latest.json`）
+  - `--health-json`（読み取る automation health JSON。既定 `logs/automation_health_latest.json`）
+  - `--gate-alarm-state-json`（gateアラーム状態JSON。既定 `logs/strategy_gate_alarm_state.json`）
+  - `--gate-alarm-log-file`（gateアラーム追記ログ。既定 `logs/strategy_gate_alarm.log`）
+  - `--discord-gate-alarm`（gate遷移検知時にDiscord通知）
+  - `--fail-on-gate-not-ready`（`realized_30d_gate.decision != READY_FOR_JUDGMENT` で非0終了）
+  - `--fail-on-stage-not-final`（`realized_30d_gate.decision_3stage != READY_FINAL` で非0終了）
+  - `--fail-on-health-no-go`（`automation_health.decision != GO` で非0終了）
+  - `--skip-process-scan`（refresh時の process scan を省略）
+
+Morning status daily runner (observe-only):
+- PowerShell runner (background by default):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1 -NoBackground -SkipProcessScan`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1 -NoBackground -FailOnStageNotFinal -FailOnHealthNoGo`
+- Scheduled task installer:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -StartTime 08:05 -RunNow`
+- Key flags:
+  - runner: `-StrategyId`, `-MinRealizedDays`, `-SnapshotJson`, `-HealthJson`, `-GateAlarmStateJson`, `-GateAlarmLogFile`
+  - runner: `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipProcessScan`, `-DiscordGateAlarm`
+  - runner: `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-NoBackground`
+  - runner は `scripts/check_morning_status.py` を実行し、結果を `logs/morning_status_daily_run.log` に追記する
+  - installer: `-TaskName`, `-StartTime`, `-StrategyId`, `-MinRealizedDays`, `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipProcessScan`, `-DiscordGateAlarm`, `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-RunNow`
+  - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
+
+Automation health report (observe-only):
+- Validate scheduled task/runtime freshness:
+  - `python scripts/report_automation_health.py`
+  - `python scripts/report_automation_health.py --task WeatherTop30ReadinessDaily --task WeatherMimicPipelineDaily --artifact logs/strategy_register_latest.json:30 --artifact logs/strategy_realized_pnl_daily.jsonl:30 --pretty`
+- Key flags:
+  - `--task`（repeatable。監視対象Scheduled Task名）
+  - `--artifact`（repeatable。`PATH[:MAX_AGE_HOURS]` 形式）
+  - `--out-json`, `--out-txt`, `--pretty`
+- Default artifact checks include:
+  - `logs/strategy_register_latest.json`, `logs/clob_arb_realized_daily.jsonl`, `logs/strategy_realized_pnl_daily.jsonl`
+  - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`
+- Soft-fail behavior:
+  - `LastTaskResult=0xC000013A (3221225786)` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する。
+  - 再登録直後などの no-run sentinel 時刻（例: `0001` / `1601` / `1999-11-30`）は `NO_RUN_YET` として扱い、失敗扱いしない。
+  - `NoLongshotDailyReport` が `Disabled` でも、`configs/bot_supervisor.observe.json` で `no_longshot_daily_daemon.enabled=true` の場合は `SUPPRESSED_BY_SUPERVISOR` として `NO_GO` 判定から除外する。
 
 Polymarket BTC 5m LMSR/Bayes monitor (observe-only):
 - Observe:
@@ -629,7 +739,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - `install_no_longshot_daily_task.ps1` は登録タスクに `-NoBackground` を付与して起動（子プロセス多重化を回避）
   - installer は task principal を `S4U` -> `Interactive` -> default の順で登録を試行。
   - installer 実行後は `Enable-ScheduledTask` を呼び、無効化状態を自動解除。
-  - `-RunNow` は `Start-ScheduledTask` のみ実行。
+  - `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
   - All/Guarded の既定値は `-AllMinTrainN 20 -AllMinTestN 1 -GuardMinTrainN 20 -GuardMinTestN 20`（`span<90d` の過熱表示を抑えるため）
   - Guarded 側の同時保有制約既定値は `-GuardMaxOpenPositions 16 -GuardMaxOpenPerCategory 3`（Allfolds と役割分離）
   - Summary の `ann=` は `span<90d` のとき `[LOW_CONF ...]` 警告を付与。
@@ -682,6 +792,7 @@ Polymarket event-driven mispricing monitor (observe-only):
   - installer: `-TaskName`, `-StartTime`, `-MaxPages`, `-MinLiquidity`, `-MinVolume24h`, `-MinEdgeCents`, `-TopN`, `-ReportHours`, `-PrincipalMode`, `-ActionMode`, `-RunNow`
   - installer principal mode: `auto` / `default` / `s4u` / `interactive`（`s4u` は環境により権限不足で失敗する場合あり）
   - installer action mode 既定値は `powershell`（`cmd` wrapper 経由にも切替可）
+  - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
   - `EVENT_DRIVEN_DAILY_DISCORD=1` でも Discord 投稿を有効化可能（Webhook は `CLOBBOT_DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL`）
   - artifacts: `logs/event_driven_daily_summary.txt`, `logs/event_driven_daily_run.log`
 
