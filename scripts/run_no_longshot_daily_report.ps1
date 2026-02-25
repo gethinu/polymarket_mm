@@ -31,7 +31,12 @@ param(
   [double]$GapSummaryMinNetEdgeCents = 0.5,
   [ValidateSet("auto", "fixed")]
   [string]$GapSummaryMode = "auto",
+  [ValidateSet("fixed", "events_ratio")]
+  [string]$GapSummaryTargetMode = "events_ratio",
   [int]$GapSummaryTargetUniqueEvents = 3,
+  [double]$GapSummaryTargetEventsRatio = 0.2,
+  [int]$GapSummaryTargetUniqueEventsMin = 2,
+  [int]$GapSummaryTargetUniqueEventsMax = 6,
   [string]$GapSummaryThresholdGrid = "0.5,1.0,2.0",
   [double]$GapPerLegCost = 0.002,
   [double]$GapMaxDaysToEnd = 180.0,
@@ -279,7 +284,7 @@ if (-not $discordRequested) {
   }
 }
 
-Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target=$GapSummaryTargetUniqueEvents max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation discord_req=$discordRequested"
+Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation discord_req=$discordRequested"
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
@@ -521,11 +526,50 @@ foreach ($thr in $gapSummaryThresholds) {
   }
 }
 
+$gapSummaryTargetMin = [int]$GapSummaryTargetUniqueEventsMin
+$gapSummaryTargetMax = [int]$GapSummaryTargetUniqueEventsMax
+if ($gapSummaryTargetMin -lt 1) {
+  $gapSummaryTargetMin = 1
+}
+if ($gapSummaryTargetMax -lt 1) {
+  $gapSummaryTargetMax = 1
+}
+if ($gapSummaryTargetMax -lt $gapSummaryTargetMin) {
+  $tmp = $gapSummaryTargetMin
+  $gapSummaryTargetMin = $gapSummaryTargetMax
+  $gapSummaryTargetMax = $tmp
+}
+
+$gapSummaryAppliedTargetUniqueEvents = [int]$GapSummaryTargetUniqueEvents
+if ($gapSummaryAppliedTargetUniqueEvents -lt 1) {
+  $gapSummaryAppliedTargetUniqueEvents = 1
+}
+if ($GapSummaryMode -eq "auto" -and $GapSummaryTargetMode -eq "events_ratio") {
+  $eventRef = [int]$gapCounts.events_considered
+  if ($eventRef -gt 0) {
+    $ratioTarget = [int][math]::Round(
+      ([double]$eventRef * [double]$GapSummaryTargetEventsRatio),
+      0,
+      [System.MidpointRounding]::AwayFromZero
+    )
+    if ($ratioTarget -lt 1) {
+      $ratioTarget = 1
+    }
+    if ($ratioTarget -lt $gapSummaryTargetMin) {
+      $ratioTarget = $gapSummaryTargetMin
+    }
+    if ($ratioTarget -gt $gapSummaryTargetMax) {
+      $ratioTarget = $gapSummaryTargetMax
+    }
+    $gapSummaryAppliedTargetUniqueEvents = $ratioTarget
+  }
+}
+
 $gapSummarySelectedThreshold = [double]$GapSummaryMinNetEdgeCents
-if ($GapSummaryMode -eq "auto" -and $GapSummaryTargetUniqueEvents -gt 0 -and $gapSummaryStats.Count -gt 0) {
+if ($GapSummaryMode -eq "auto" -and $gapSummaryAppliedTargetUniqueEvents -gt 0 -and $gapSummaryStats.Count -gt 0) {
   $eligible = @(
     $gapSummaryStats |
-      Where-Object { [int]$_.unique_events -ge [int]$GapSummaryTargetUniqueEvents } |
+      Where-Object { [int]$_.unique_events -ge [int]$gapSummaryAppliedTargetUniqueEvents } |
       Sort-Object threshold
   )
   if ($eligible.Count -gt 0) {
@@ -769,7 +813,11 @@ $lines = @(
   ("- gap fallback max days: {0}" -f [double]$GapFallbackMaxDaysToEnd)
   ("- gap summary base min net edge (cents): {0}" -f [double]$GapSummaryMinNetEdgeCents)
   ("- gap summary mode: {0}" -f [string]$GapSummaryMode)
-  ("- gap summary target unique events: {0}" -f [int]$GapSummaryTargetUniqueEvents)
+  ("- gap summary target mode: {0}" -f [string]$GapSummaryTargetMode)
+  ("- gap summary target unique events (base): {0}" -f [int]$GapSummaryTargetUniqueEvents)
+  ("- gap summary target events ratio: {0}" -f [double]$GapSummaryTargetEventsRatio)
+  ("- gap summary target unique events min/max: {0}/{1}" -f [int]$gapSummaryTargetMin, [int]$gapSummaryTargetMax)
+  ("- gap summary target unique events (applied): {0}" -f [int]$gapSummaryAppliedTargetUniqueEvents)
   ("- gap summary threshold grid: {0}" -f [string]$GapSummaryThresholdGrid)
   ("- gap summary selected net edge (cents): {0}" -f [double]$gapSummarySelectedThreshold)
   ("- gap scan stage: {0}" -f $gapScanStage)
@@ -813,6 +861,7 @@ foreach ($r in ($screenRows | Select-Object -First 10)) {
 $lines += ""
 $lines += ("Logical gaps now: raw={0} filtered={1} unique_events={2} (net>={3:0.00}c)" -f $gapRows.Count, $gapRowsSummaryFiltered.Count, $gapRowsBestPerEvent.Count, [double]$gapSummarySelectedThreshold)
 $lines += "Logical gaps threshold stats:"
+$lines += ("- target_unique_events(applied)={0}" -f [int]$gapSummaryAppliedTargetUniqueEvents)
 $lines += $gapSummaryThresholdLines
 foreach ($r in ($gapRowsBestPerEvent | Select-Object -First 10)) {
   $qa = [string]$r.market_a_question

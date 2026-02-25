@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `17`
-- worktree_changes: `13`
+- commits_scanned: `18`
+- worktree_changes: `1`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,20 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 5 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
+| `docs_llm` | 6 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
-| `no_longshot` | 4 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
-| `security_or_ops` | 4 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
+| `no_longshot` | 5 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
+| `security_or_ops` | 5 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
 | `simmer_clob` | 13 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
-| `strategy_register` | 4 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
-| `task_automation` | 6 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
-| `weather_pipeline` | 3 | `2026-02-25 21:11` | `36ebdddf` | feat: add morning status automation and strategy health reporting |
+| `strategy_register` | 5 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
+| `task_automation` | 7 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
+| `weather_pipeline` | 4 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-25 21:48` | `6866105c` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation,weather_pipeline` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation for a... | `README.md`, `docs/README.md`, `docs/llm/ARCHITECTURE.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, +9 |
 | `2026-02-25 21:11` | `36ebdddf` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation,weather_pipeline` | feat: add morning status automation and strategy health reporting | `AGENTS.md`, `configs/bot_supervisor.observe.json`, `docs/IMPLEMENTATION_LEDGER.md`, `docs/README.md`, +25 |
 | `2026-02-25 21:03` | `0abb067c` | `docs_llm,no_longshot,strategy_register,task_automation` | Add no-longshot monthly tracking and strategy-register visibility | `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, `scripts/render_strategy_register_snapshot.py`, +1 |
 | `2026-02-25 17:04` | `faaa2948` | `docs_llm,strategy_register` | feat: improve realized pnl handling in strategy register snapshot | `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `scripts/render_strategy_register_snapshot.py` |
@@ -54,19 +55,7 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `README.md` |
-| `M` | `docs/README.md` |
-| `M` | `docs/llm/ARCHITECTURE.md` |
-| `MM` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `MM` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/STATE.md` |
-| `M` | `scripts/check_morning_status.py` |
-| `M` | `scripts/install_wallet_autopsy_daily_task.ps1` |
-| `M` | `scripts/no_longshot_daily_daemon.py` |
-| `M` | `scripts/render_implementation_ledger.py` |
-| `MM` | `scripts/report_automation_health.py` |
-| `??` | `docs/memo0225_1.txt` |
-| `??` | `scripts/weather_daily_daemon.py` |
+| `M` | `scripts/run_no_longshot_daily_report.ps1` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

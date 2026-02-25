@@ -754,6 +754,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapMaxDaysToEnd 180 -GapFallbackMaxDaysToEnd 180 -GapMaxHoursToEnd 6 -GapFallbackMaxHoursToEnd 48 -GapMinLiquidity 1000 -GapMinVolume24h 0 -GapMinGrossEdgeCents 0.3 -GapPerLegCost 0.002`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapSummaryMinNetEdgeCents 0.5`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapSummaryMode auto -GapSummaryTargetUniqueEvents 3 -GapSummaryThresholdGrid "0.5,1.0,2.0"`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapSummaryMode auto -GapSummaryTargetMode events_ratio -GapSummaryTargetEventsRatio 0.2 -GapSummaryTargetUniqueEventsMin 2 -GapSummaryTargetUniqueEventsMax 6 -GapSummaryThresholdGrid "0.5,1.0,2.0"`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapSummaryMode fixed -GapSummaryMinNetEdgeCents 1.0`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -ScreenMaxPages 12 -GapMaxPages 12 -GapFallbackMaxPages 30`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapMaxHoursToEnd 6 -GapFallbackMaxHoursToEnd 48 -GapMinGrossEdgeCents 0.3 -GapPerLegCost 0.002`
@@ -780,12 +781,13 @@ Polymarket NO-longshot toolkit (observe-only):
   - gap流動性フィルタ既定値は `-GapMinLiquidity 1000 -GapMinVolume24h 0`（薄板ノイズ抑制）。
   - Summary表示フィルタの基準値は `-GapSummaryMinNetEdgeCents 0.5`。
   - Summary表示の `net` しきい値は既定で自動調整（`-GapSummaryMode auto`）し、`-GapSummaryTargetUniqueEvents`（既定3）を満たす最大しきい値を `-GapSummaryThresholdGrid`（既定 `0.5,1.0,2.0`）から選択。
+  - `-GapSummaryTargetMode events_ratio` を使うと、`events_considered * GapSummaryTargetEventsRatio` を `GapSummaryTargetUniqueEventsMin/Max` でクランプした値を `target_unique_events(applied)` に採用。
   - 自動調整を固定値にしたい場合は `-GapSummaryMode fixed` を指定。
   - gap候補が0件なら `GapFallbackMaxHoursToEnd` と `GapFallbackMaxPages` に自動拡張して再スキャン。
   - それでも `interval_markets=0` の場合は、`max-hours-to-end` 制約なしの再スキャンを自動実行（`gap scan stage: fallback_no_hour_cap_auto`）。
   - `-GapFallbackNoHourCap` を付けると、`interval_markets` の値に関係なく、候補0件時に `max-hours-to-end` 制約なし再スキャンを強制追加。
   - Summaryの `Logical gaps now` は `raw` / `filtered` / `unique_events` を併記し、表示上位はイベント単位で最良1件に圧縮。
-  - Summaryの `Logical gaps threshold stats` で `net>=0.50c/1.00c/2.00c` ごとの件数を併記し、しきい値調整の判断材料を可視化。
+  - Summaryの `Logical gaps threshold stats` で `target_unique_events(applied)` と `net>=0.50c/1.00c/2.00c` ごとの件数を併記し、しきい値調整の判断材料を可視化。
   - gap artifacts: `logs/no_longshot_daily_gap.csv`, `logs/no_longshot_daily_gap.json`
 - Daily daemon (supervisor-managed):
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh`
