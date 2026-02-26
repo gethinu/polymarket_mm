@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import math
 import re
 import sys
 from pathlib import Path
@@ -63,10 +62,6 @@ from lib.runtime_common import (
     iso_now,
     maybe_notify_discord as _maybe_notify_discord,
     now_ts,
-)
-
-from polymarket_clob_arb_scanner import (
-    as_float,
 )
 
 WS_MARKET_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
@@ -339,62 +334,20 @@ async def run(args) -> int:
                 if (stats.best_window is None) or (c.net_edge > stats.best_window.net_edge):
                     stats.best_window = c
 
-                metrics_row: Optional[dict] = None
-                if metrics_file or observe_exec_edge_filter:
-                    metrics_row = compute_candidate_metrics_row(
-                        candidate=c,
-                        basket=basket,
-                        books=books,
-                        args=args,
-                    )
-
-                observe_exec_filtered = False
-                if observe_exec_edge_filter and (
-                    not observe_exec_edge_filter_strategies
-                    or str(getattr(basket, "strategy", "") or "").strip().lower() in observe_exec_edge_filter_strategies
-                ):
-                    now_eval = now_ts()
-                    if float(getattr(basket, "exec_edge_filter_until_ts", 0.0) or 0.0) > now_eval:
-                        observe_exec_filtered = True
-                    else:
-                        exec_edge_est = math.nan
-                        if isinstance(metrics_row, dict):
-                            exec_edge_est = as_float(metrics_row.get("net_edge_exec_est"), math.nan)
-
-                        if math.isfinite(exec_edge_est):
-                            if exec_edge_est <= observe_exec_edge_min_usd:
-                                basket.exec_edge_neg_streak = int(getattr(basket, "exec_edge_neg_streak", 0) or 0) + 1
-                            else:
-                                basket.exec_edge_neg_streak = 0
-
-                            if basket.exec_edge_neg_streak >= observe_exec_edge_strike_limit:
-                                basket.exec_edge_filter_until_ts = now_eval + observe_exec_edge_cooldown_sec
-                                basket.exec_edge_neg_streak = 0
-                                observe_exec_filtered = True
-                                logger.info(
-                                    f"[{iso_now()}] observe exec-edge filter: muted event={basket.key} "
-                                    f"strategy={basket.strategy} exec_edge={exec_edge_est:.4f} <= "
-                                    f"{observe_exec_edge_min_usd:.4f} cooldown={observe_exec_edge_cooldown_sec:.0f}s"
-                                )
-                        else:
-                            basket.exec_edge_neg_streak = 0
-
-                if isinstance(metrics_row, dict):
-                    if observe_exec_filtered:
-                        metrics_row["observe_exec_filter_blocked"] = True
-                        metrics_row["observe_exec_filter_until_ms"] = int(
-                            float(getattr(basket, "exec_edge_filter_until_ts", 0.0) or 0.0) * 1000.0
-                        )
-                        metrics_row["observe_exec_filter_min_usd"] = float(observe_exec_edge_min_usd)
-                    if metrics_file and (
-                        bool(getattr(args, "metrics_log_all_candidates", False))
-                        or metrics_row.get("passes_raw_threshold", False)
-                    ):
-                        reason = "threshold" if metrics_row.get("passes_raw_threshold", False) else "candidate"
-                        if observe_exec_filtered:
-                            reason = "observe_exec_filter_blocked"
-                        metrics_row["reason"] = reason
-                        append_jsonl(metrics_file, metrics_row)
+                _metrics_row, observe_exec_filtered = apply_observe_exec_edge_and_log_metrics(
+                    candidate=c,
+                    basket=basket,
+                    books=books,
+                    args=args,
+                    metrics_file=metrics_file,
+                    observe_exec_edge_filter=observe_exec_edge_filter,
+                    observe_exec_edge_min_usd=observe_exec_edge_min_usd,
+                    observe_exec_edge_strike_limit=observe_exec_edge_strike_limit,
+                    observe_exec_edge_cooldown_sec=observe_exec_edge_cooldown_sec,
+                    observe_exec_edge_filter_strategies=observe_exec_edge_filter_strategies,
+                    append_jsonl_func=append_jsonl,
+                    logger=logger,
+                )
 
                 if c.net_edge < (args.min_edge_cents / 100.0):
                     continue
