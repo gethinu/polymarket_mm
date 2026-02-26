@@ -4,6 +4,10 @@ param(
   [string]$RepoRoot = "C:\Repos\polymarket_mm",
   [string]$StartTime = "00:05",
   [string]$PowerShellExe = "powershell.exe",
+  [double]$RealizedFastYesMin,
+  [double]$RealizedFastYesMax,
+  [double]$RealizedFastMaxHoursToEnd,
+  [int]$RealizedFastMaxPages,
   [switch]$SkipRefresh,
   [switch]$Discord,
   [switch]$RunNow,
@@ -15,7 +19,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-SkipRefresh] [-Discord] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-RealizedFastYesMin 0.16] [-RealizedFastYesMax 0.20] [-RealizedFastMaxHoursToEnd 72] [-RealizedFastMaxPages 120] [-SkipRefresh] [-Discord] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?"
 }
 
@@ -105,6 +109,22 @@ $argList = @(
 if ($SkipRefresh.IsPresent) {
   $argList += "-SkipRefresh"
 }
+if ($PSBoundParameters.ContainsKey("RealizedFastYesMin")) {
+  $argList += "-RealizedFastYesMin"
+  $argList += [string]$RealizedFastYesMin
+}
+if ($PSBoundParameters.ContainsKey("RealizedFastYesMax")) {
+  $argList += "-RealizedFastYesMax"
+  $argList += [string]$RealizedFastYesMax
+}
+if ($PSBoundParameters.ContainsKey("RealizedFastMaxHoursToEnd")) {
+  $argList += "-RealizedFastMaxHoursToEnd"
+  $argList += [string]$RealizedFastMaxHoursToEnd
+}
+if ($PSBoundParameters.ContainsKey("RealizedFastMaxPages")) {
+  $argList += "-RealizedFastMaxPages"
+  $argList += [string]$RealizedFastMaxPages
+}
 if ($Discord.IsPresent) {
   $argList += "-Discord"
 }
@@ -158,6 +178,22 @@ if ($RunNow.IsPresent) {
   )
   if ($SkipRefresh.IsPresent) {
     $runArgs += "-SkipRefresh"
+  }
+  if ($PSBoundParameters.ContainsKey("RealizedFastYesMin")) {
+    $runArgs += "-RealizedFastYesMin"
+    $runArgs += [string]$RealizedFastYesMin
+  }
+  if ($PSBoundParameters.ContainsKey("RealizedFastYesMax")) {
+    $runArgs += "-RealizedFastYesMax"
+    $runArgs += [string]$RealizedFastYesMax
+  }
+  if ($PSBoundParameters.ContainsKey("RealizedFastMaxHoursToEnd")) {
+    $runArgs += "-RealizedFastMaxHoursToEnd"
+    $runArgs += [string]$RealizedFastMaxHoursToEnd
+  }
+  if ($PSBoundParameters.ContainsKey("RealizedFastMaxPages")) {
+    $runArgs += "-RealizedFastMaxPages"
+    $runArgs += [string]$RealizedFastMaxPages
   }
   if ($Discord.IsPresent) {
     $runArgs += "-Discord"

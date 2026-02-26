@@ -461,6 +461,69 @@ def save_state(path: Path, state: RuntimeState) -> None:
     path.write_text(json.dumps(raw, indent=2), encoding="utf-8")
 
 
+def _apply_selected_universe(state: RuntimeState, selected: list[tuple[str, str]]) -> dict:
+    selected_map: Dict[str, str] = {}
+    selected_ids: list[str] = []
+    for mid, label in selected:
+        key = str(mid or "").strip()
+        if not key or key in selected_map:
+            continue
+        selected_map[key] = str(label or "")
+        selected_ids.append(key)
+    selected_set = set(selected_ids)
+
+    changed = False
+    retained_open = 0
+
+    # Update existing states first; keep open-inventory markets active even if not re-selected.
+    for mid, s in state.market_states.items():
+        keep_open = float(s.inventory_yes_shares or 0.0) > 1e-9
+        should_active = (mid in selected_set) or keep_open
+        if s.active != should_active:
+            s.active = should_active
+            changed = True
+        if mid in selected_map:
+            next_label = selected_map[mid]
+            if s.label != next_label:
+                s.label = next_label
+                changed = True
+        if keep_open and mid not in selected_set:
+            retained_open += 1
+
+    # Add newly-selected markets.
+    for mid in selected_ids:
+        label = selected_map[mid]
+        if mid not in state.market_states:
+            state.market_states[mid] = MarketState(market_id=mid, label=label, active=True)
+            changed = True
+            continue
+        s = state.market_states[mid]
+        if not s.active:
+            s.active = True
+            changed = True
+        if s.label != label:
+            s.label = label
+            changed = True
+
+    active_ids = list(selected_ids)
+    for mid, s in state.market_states.items():
+        if mid in selected_set:
+            continue
+        if s.active and float(s.inventory_yes_shares or 0.0) > 1e-9:
+            active_ids.append(mid)
+    if state.active_market_ids != active_ids:
+        state.active_market_ids = active_ids
+        changed = True
+
+    return {
+        "changed": bool(changed),
+        "selected_count": int(len(selected_ids)),
+        "active_count": int(len(active_ids)),
+        "retained_open_count": int(retained_open),
+        "selected_ids": list(selected_ids),
+    }
+
+
 def _update_inventory_buy(s: MarketState, shares_bought: float, cost_spent: float) -> None:
     if shares_bought <= 0 or cost_spent <= 0:
         return

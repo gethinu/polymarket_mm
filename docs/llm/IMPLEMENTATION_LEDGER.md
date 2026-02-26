@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `21`
-- worktree_changes: `34`
+- commits_scanned: `23`
+- worktree_changes: `3`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,21 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 9 | `2026-02-26 20:38` | `0f9516ef` | docs: sync no-longshot interface notes and implementation ledger |
+| `docs_llm` | 10 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
-| `no_longshot` | 7 | `2026-02-25 22:19` | `602612dc` | fix: keep no-longshot daily runner resilient on gap scan errors |
-| `security_or_ops` | 5 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
-| `simmer_clob` | 13 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
-| `strategy_register` | 5 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
-| `task_automation` | 9 | `2026-02-25 22:19` | `602612dc` | fix: keep no-longshot daily runner resilient on gap scan errors |
-| `weather_pipeline` | 4 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
+| `no_longshot` | 8 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `security_or_ops` | 6 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `simmer_clob` | 15 | `2026-02-26 20:53` | `81473683` | refactor: reuse shared observe-exec-edge metrics helper |
+| `strategy_register` | 6 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `task_automation` | 10 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `weather_pipeline` | 5 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-26 20:53` | `81473683` | `simmer_clob` | refactor: reuse shared observe-exec-edge metrics helper | `scripts/polymarket_clob_arb_realtime.py` |
+| `2026-02-26 20:52` | `b16994b7` | `docs_llm,no_longshot,security_or_ops,simmer_clob,strategy_register,task_automation,weather_pipeline` | feat: add simmer ops automation and modular CLOB arb runtime | `AGENTS.md`, `configs/bot_supervisor.observe.json`, `configs/bot_supervisor.simmer_canary.observe.json`, `configs/bot_supervisor.simmer_main.observe.json`, +46 |
 | `2026-02-26 20:38` | `0f9516ef` | `docs_llm` | docs: sync no-longshot interface notes and implementation ledger | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md` |
 | `2026-02-25 22:19` | `602612dc` | `docs_llm,no_longshot,task_automation` | fix: keep no-longshot daily runner resilient on gap scan errors | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/run_no_longshot_daily_report.ps1` |
 | `2026-02-25 21:59` | `f4f884b5` | `docs_llm,no_longshot,task_automation` | feat: add ratio-based gap summary target selection | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/run_no_longshot_daily_report.ps1` |
@@ -58,40 +60,9 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `AGENTS.md` |
-| `M` | `configs/bot_supervisor.observe.json` |
-| `M` | `docs/README.md` |
-| `M` | `docs/llm/CANON.md` |
-| `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/SPEC.md` |
-| `M` | `docs/llm/STATE.md` |
-| `M` | `docs/llm/STRATEGY.md` |
-| `M` | `scripts/check_morning_status.ps1` |
-| `M` | `scripts/check_morning_status.py` |
-| `M` | `scripts/check_strategy_gate_alarm.py` |
-| `M` | `scripts/install_morning_status_daily_task.ps1` |
-| `M` | `scripts/no_longshot_daily_daemon.py` |
-| `M` | `scripts/polymarket_clob_arb_realtime.py` |
-| `M` | `scripts/polymarket_clob_mm.py` |
-| `M` | `scripts/polymarket_event_driven_observe.py` |
-| `M` | `scripts/render_strategy_register_snapshot.py` |
-| `M` | `scripts/run_morning_status_daily.ps1` |
-| `M` | `scripts/run_no_longshot_daily_report.ps1` |
-| `M` | `scripts/run_simmer_ab_daily_report.ps1` |
-| `M` | `scripts/run_weather_24h_postcheck.ps1` |
-| `M` | `scripts/run_weather_arb_observe.ps1` |
-| `M` | `scripts/run_weather_arb_profit_window.ps1` |
+| `M` | `scripts/install_no_longshot_daily_task.ps1` |
 | `M` | `scripts/simmer_pingpong_mm.py` |
-| `??` | `configs/bot_supervisor.simmer_canary.observe.json` |
-| `??` | `configs/bot_supervisor.simmer_main.observe.json` |
-| `??` | `docs/memo_uncorrelated_portfolio_20260225.txt` |
-| `??` | `docs/memo_uncorrelated_portfolio_20260226.txt` |
-| `??` | `scripts/install_simmer_ab_daily_task.ps1` |
-| `??` | `scripts/install_weather_profit_window_weekly_task.ps1` |
-| `??` | `scripts/judge_simmer_ab_decision.py` |
-| `??` | `scripts/lib/` |
-| `??` | `tests/` |
+| `M` | `tests/test_clob_arb_eval.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

@@ -800,8 +800,9 @@ Polymarket NO-longshot toolkit (observe-only):
   - 実測アーティファクト: `logs/no_longshot_forward_positions.json`, `logs/no_longshot_realized_daily.jsonl`, `logs/no_longshot_realized_latest.json`, `logs/no_longshot_monthly_return_latest.txt`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -RunNow`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -Discord`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedFastMaxPages 120 -RunNow`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?`
-  - installer key flags: `-TaskName`, `-RepoRoot`, `-StartTime`, `-SkipRefresh`, `-Discord`, `-RunNow`, `-PowerShellExe`, `-NoBackground`
+  - installer key flags: `-TaskName`, `-RepoRoot`, `-StartTime`, `-SkipRefresh`, `-Discord`, `-RunNow`, `-PowerShellExe`, `-NoBackground`, `-RealizedFastYesMin`, `-RealizedFastYesMax`, `-RealizedFastMaxHoursToEnd`, `-RealizedFastMaxPages`
   - `install_no_longshot_daily_task.ps1` は登録タスクに `-NoBackground` を付与して起動（子プロセス多重化を回避）
   - installer は task principal を `S4U` -> `Interactive` -> default の順で登録を試行。
   - installer 実行後は `Enable-ScheduledTask` を呼び、無効化状態を自動解除。
