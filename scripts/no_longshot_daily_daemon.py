@@ -301,6 +301,8 @@ def run_daily_once(args, logger: Logger) -> Tuple[int, str]:
         cmd.append("-SkipRefresh")
     if args.discord:
         cmd.append("-Discord")
+    if args.runner_fail_on_gap_scan_error:
+        cmd.append("-FailOnGapScanError")
     if args.runner_fail_on_gap_error_rate_high:
         cmd.append("-FailOnGapErrorRateHigh")
 
@@ -472,6 +474,11 @@ def parse_args():
         help="Pass -GapErrorAlertMinRuns7d to run_no_longshot_daily_report.ps1.",
     )
     p.add_argument(
+        "--runner-fail-on-gap-scan-error",
+        action="store_true",
+        help="Pass -FailOnGapScanError to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
         "--runner-fail-on-gap-error-rate-high",
         action="store_true",
         help="Pass -FailOnGapErrorRateHigh to run_no_longshot_daily_report.ps1.",
@@ -627,6 +634,7 @@ def main() -> int:
         f"runner_fast_pages={int(args.runner_realized_fast_max_pages)} "
         f"runner_gap_tag={str(args.runner_gap_outcome_tag).strip()} "
         f"runner_gap_alert_7d={float(args.runner_gap_error_alert_rate_7d):.4f}/{int(args.runner_gap_error_alert_min_runs_7d)} "
+        f"runner_fail_on_gap_scan={bool(args.runner_fail_on_gap_scan_error)} "
         f"runner_fail_on_gap_rate={bool(args.runner_fail_on_gap_error_rate_high)}"
     )
     logger.info(f"[{iso_now()}] log={args.log_file}")

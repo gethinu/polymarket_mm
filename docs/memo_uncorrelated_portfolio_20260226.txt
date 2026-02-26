@@ -2,136 +2,132 @@ memo_uncorrelated_portfolio_20260226
 
 Date: 2026-02-26
 Scope: ADOPTED observe-only strategies
-Canonical references used: docs/llm/SPEC.md, docs/llm/STRATEGY.md, docs/llm/STATE.md, docs/llm/CANON.md
+References: docs/llm/SPEC.md, docs/llm/STRATEGY.md, docs/llm/STATE.md
+Method: realized daily series preferred; observe proxy fallback when realized series are insufficient
 
-Refresh sequence executed before KPI read:
-- powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -SkipRefresh
-- python scripts/render_strategy_register_snapshot.py --pretty
-
-Primary analysis artifact:
-- logs/uncorrelated_portfolio_proxy_analysis_20260226.json
-
-Objective
-- Evaluate cross-strategy correlation and estimate expected return / risk impact for concurrent operation of 5 ADOPTED observe-only strategies.
-
-Strategies
+Analyzed strategies:
 - weather_clob_arb_buckets_observe
 - no_longshot_daily_observe
 - link_intake_walletseed_cohort_observe
 - gamma_eventpair_exec_edge_filter_observe
 - hourly_updown_highprob_calibration_observe
 
-1) Extracted realized/observe metrics and daily series availability
+1) Strategy metrics and daily series
 
-A. weather_clob_arb_buckets_observe
-- Canonical realized daily series: logs/strategy_realized_pnl_daily.jsonl
-- Realized daily return metric: realized_pnl_usd / bankroll_usd
-- Realized days: 3 (2026-02-24 .. 2026-02-26), all zero -> zero variance
-- Observe proxy series used for correlation fallback:
-  - source: logs/clob-arb-weather-observe-24h.log
-  - metric: daily median EDGE pct from summary lines
-  - days: 3 (2026-02-22, 2026-02-25, 2026-02-26)
+weather_clob_arb_buckets_observe
+- realized_daily.available: True
+- realized_daily.metric: realized_pnl_usd / bankroll_usd
+- realized_daily.days: 3
+- realized_daily.source: C:\Repos\polymarket_mm\logs\strategy_realized_pnl_daily.jsonl
+- observe_proxy_daily.available: True
+- observe_proxy_daily.metric: daily_median_edge_pct_from_summary_lines
+- observe_proxy_daily.days: 3
+- observe_proxy_daily.source: C:\Repos\polymarket_mm\logs\clob-arb-weather-observe-24h.log
+- correlation_series_mode: observe_proxy_daily
+- correlation_series_days: 3
+- monthly_return_proxy: +0.0000%
+- monthly_return_proxy_source: logs/strategy_register_latest.json:realized_monthly_return.projected_monthly_return_ratio
 
-B. no_longshot_daily_observe
-- Canonical realized daily series: logs/no_longshot_realized_daily.jsonl
-- Realized daily return metric: realized_return_pct
-- Realized days: 2 (2026-02-25, 2026-02-26)
-- Canonical monthly KPI authority:
-  - logs/strategy_register_latest.json -> no_longshot_status.monthly_return_now_text = -18.96%
-- Observe proxy series used for correlation robustness:
-  - source: logs/no_longshot_daily_samples.csv
-  - metric: daily cost-weighted pnl_per_no_share / entry_yes_price
-  - days: 76
+no_longshot_daily_observe
+- realized_daily.available: True
+- realized_daily.metric: realized_return_pct
+- realized_daily.days: 2
+- realized_daily.source: C:\Repos\polymarket_mm\logs\no_longshot_realized_daily.jsonl
+- observe_proxy_daily.available: True
+- observe_proxy_daily.metric: daily_cost_weighted_pnl_per_no_share_over_entry_yes_price
+- observe_proxy_daily.days: 76
+- observe_proxy_daily.source: C:\Repos\polymarket_mm\logs\no_longshot_daily_samples.csv
+- correlation_series_mode: observe_proxy_daily
+- correlation_series_days: 76
+- monthly_return_proxy: -18.9600%
+- monthly_return_proxy_source: logs/strategy_register_latest.json:no_longshot_status.monthly_return_now_ratio
 
-C. link_intake_walletseed_cohort_observe
-- Strategy-level daily return/PnL series: not found
-- Available observe metric snapshots:
-  - logs/linkseed_7links_link_intake_summary_*.json
-  - metric used: daily mean cohort_ok score (1/0)
-  - days: 1 (2026-02-25)
+link_intake_walletseed_cohort_observe
+- realized_daily.available: False
+- realized_daily.metric: n/a
+- realized_daily.days: 0
+- observe_proxy_daily.available: True
+- observe_proxy_daily.metric: daily_mean_cohort_ok_score_1_or_0
+- observe_proxy_daily.days: 1
+- observe_proxy_daily.source_files: 4 files
+- correlation_series_mode: none
+- correlation_series_days: 0
+- monthly_return_proxy: n/a
+- monthly_return_proxy_source: not_available_in_logs
 
-D. gamma_eventpair_exec_edge_filter_observe
-- Strategy-level realized daily return/PnL series: not found
-- Available observe metrics:
-  - logs/clob-arb-monitor-metrics-eventpair*.jsonl
-  - proxy metric: daily mean edge_pct_exec_est for strategy=event-yes and passes_exec_threshold=true
-  - days: 4 (2026-02-22 .. 2026-02-26)
-- Monthly proxy used for expected return estimate:
-  - logs/clob-arb-eventpair-monthly-estimate-adopt-extended2ab-20260225.json
-  - recommended_monthly_return = +2.8736%
+gamma_eventpair_exec_edge_filter_observe
+- realized_daily.available: False
+- realized_daily.metric: n/a
+- realized_daily.days: 0
+- observe_proxy_daily.available: True
+- observe_proxy_daily.metric: daily_mean_edge_pct_exec_est_for_event_yes_passes_exec_threshold
+- observe_proxy_daily.days: 4
+- observe_proxy_daily.source_files: 18 files
+- correlation_series_mode: observe_proxy_daily
+- correlation_series_days: 4
+- monthly_return_proxy: +5.6242%
+- monthly_return_proxy_source: C:\Repos\polymarket_mm\logs\clob-arb-eventpair-monthly-estimate-tuned-20260226_204500.json
 
-E. hourly_updown_highprob_calibration_observe
-- Strategy-level realized daily return/PnL series: not found
-- Available observe metric:
-  - logs/hourly_updown_highprob_calibration_168h_tte45_70_95_btc_eth_sol_xrp.json
-  - proxy metric: daily cost-weighted realized return from qualified samples
-  - days: 8 (2026-02-18 .. 2026-02-25)
-- Monthly return mapping for deployed bankroll: not available in logs
+hourly_updown_highprob_calibration_observe
+- realized_daily.available: False
+- realized_daily.metric: n/a
+- realized_daily.days: 0
+- observe_proxy_daily.available: True
+- observe_proxy_daily.metric: daily_cost_weighted_realized_return_from_qualified_samples
+- observe_proxy_daily.days: 8
+- observe_proxy_daily.source: C:\Repos\polymarket_mm\logs\hourly_updown_highprob_calibration_168h_tte45_70_95_btc_eth_sol_xrp.json
+- correlation_series_mode: observe_proxy_daily
+- correlation_series_days: 8
+- monthly_return_proxy: n/a
+- monthly_return_proxy_source: not_available_in_logs
 
-2) Pairwise correlation estimation (daily proxy series)
+2) Pairwise correlations
 
-Computed pairs (corr, overlap days):
-- weather vs no_longshot: +0.7566 (3d)
-- weather vs gamma_eventpair: -0.6516 (3d)
-- weather vs hourly_updown: -1.0000 (2d; unstable)
-- no_longshot vs gamma_eventpair: +0.0030 (3d)
-- no_longshot vs hourly_updown: -0.3773 (5d)
-- gamma_eventpair vs hourly_updown: +0.4054 (3d)
-- Any pair with link_intake: insufficient (overlap_days < 2)
+- weather_clob_arb_buckets_observe vs no_longshot_daily_observe: corr=+0.8103, overlap_days=3
+- weather_clob_arb_buckets_observe vs link_intake_walletseed_cohort_observe: insufficient (overlap_days=0, reason=overlap_days<2)
+- weather_clob_arb_buckets_observe vs gamma_eventpair_exec_edge_filter_observe: corr=-0.5050, overlap_days=3
+- weather_clob_arb_buckets_observe vs hourly_updown_highprob_calibration_observe: corr=-1.0000, overlap_days=2
+- no_longshot_daily_observe vs link_intake_walletseed_cohort_observe: insufficient (overlap_days=0, reason=overlap_days<2)
+- no_longshot_daily_observe vs gamma_eventpair_exec_edge_filter_observe: corr=+0.0966, overlap_days=3
+- no_longshot_daily_observe vs hourly_updown_highprob_calibration_observe: corr=-0.3773, overlap_days=5
+- link_intake_walletseed_cohort_observe vs gamma_eventpair_exec_edge_filter_observe: insufficient (overlap_days=0, reason=overlap_days<2)
+- link_intake_walletseed_cohort_observe vs hourly_updown_highprob_calibration_observe: insufficient (overlap_days=0, reason=overlap_days<2)
+- gamma_eventpair_exec_edge_filter_observe vs hourly_updown_highprob_calibration_observe: corr=+0.4054, overlap_days=3
 
-Low-correlation threshold used: |corr| <= 0.30
-- Qualified low-correlation pair: no_longshot_daily_observe vs gamma_eventpair_exec_edge_filter_observe (corr=+0.0030)
+3) Low-correlation recommendation
 
-3) Minimal uncorrelated set recommendation
+- threshold |corr| <= 0.30
+- recommended_min_set: no_longshot_daily_observe, gamma_eventpair_exec_edge_filter_observe
+- best_pair_with_monthly_proxy: ['no_longshot_daily_observe', 'gamma_eventpair_exec_edge_filter_observe'] corr=+0.0966 avg_monthly=-6.6679%
 
-Recommended minimal set (provisional):
-- { no_longshot_daily_observe, gamma_eventpair_exec_edge_filter_observe }
+4) Expected return and risk estimate (proxy)
 
-Reason:
-- It is the only pair that simultaneously satisfies:
-  - low observed correlation under threshold (|corr| <= 0.30)
-  - monthly return proxies available for both members
+- pair: ['no_longshot_daily_observe', 'gamma_eventpair_exec_edge_filter_observe']
+- monthly_return_proxy_equal_weight: -6.6679%
+- improvement_vs_no_longshot_monthly_proxy: +12.2921%
+- delta_vs_best_single_in_pair: -12.2921%
+- risk overlap_days: 3
+- std_a: 0.0819656927955058
+- std_b: 0.14446160652137074
+- std_equal_weight_portfolio: 0.08642066204701875
+- risk_reduction_vs_avg_std: +23.6659%
 
-4) Expected return improvement and risk reduction estimate
+5) Missing metrics
 
-Assumptions:
-- Equal weight (50/50)
-- Monthly proxy for no_longshot from canonical key in strategy_register_latest.json
-- Monthly proxy for gamma_eventpair from adopted extended2ab estimate file
-- Correlation and risk computed from proxy daily series (not pure realized PnL series)
+- gamma_eventpair_exec_edge_filter_observe:
+  - no strategy-level realized daily return/PnL series; observe proxy used
+- hourly_updown_highprob_calibration_observe:
+  - no strategy-level realized daily return/PnL series; observe proxy used
+  - missing bankroll-normalized monthly return proxy in logs
+- link_intake_walletseed_cohort_observe:
+  - missing strategy-level daily return/PnL series
+  - only cohort quality proxy exists; return correlation is not estimable
+  - missing monthly return proxy in logs
+- no_longshot_daily_observe:
+  - realized daily return series is short/low-variance; proxy used for correlation
+- weather_clob_arb_buckets_observe:
+  - realized daily return has zero variance or insufficient length; proxy used for correlation
 
-Estimated monthly return (proxy):
-- no_longshot: -18.96%
-- gamma_eventpair: +2.8736%
-- equal-weight portfolio: (-18.96% + 2.8736%) / 2 = -8.0432%
-
-Interpretation:
-- Improvement vs no_longshot solo: +10.9168 percentage points (less negative)
-- Decrease vs gamma_eventpair solo: -10.9168 percentage points
-
-Estimated risk reduction (proxy volatility):
-- overlap days for risk calc: 3 (2026-02-22, 2026-02-25, 2026-02-26)
-- std(no_longshot proxy): 0.08197
-- std(gamma proxy): 0.14829
-- std(equal-weight portfolio proxy): 0.08483
-- reduction vs average standalone std: about 26.32%
-
-Confidence:
-- LOW (very short overlap window, proxy metrics mixed in definition)
-
-5) Explicit missing metrics by strategy
-
-- weather_clob_arb_buckets_observe
-  - Missing: non-zero-variance realized daily return history (>=30 days preferred)
-- no_longshot_daily_observe
-  - Missing: longer canonical realized daily history and overlap with other strategy realized series
-- link_intake_walletseed_cohort_observe
-  - Missing: strategy-level daily return/PnL series (currently only cohort quality snapshots)
-- gamma_eventpair_exec_edge_filter_observe
-  - Missing: strategy-level realized daily return/PnL series (currently edge proxy and monthly estimate)
-- hourly_updown_highprob_calibration_observe
-  - Missing: strategy-level realized daily return/PnL series and bankroll-normalized monthly return mapping
-
-Operational note:
-- This memo uses observe proxies where realized daily returns are absent.
-- For investment-grade covariance and portfolio optimization, standardize all 5 strategies to one daily return definition and accumulate at least 30 overlapping days.
+Notes:
+- Low overlap day counts imply low-confidence correlation estimates.
+- For robust covariance, align all strategies to the same realized daily return definition with >=30 overlapping days.

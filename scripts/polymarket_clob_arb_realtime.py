@@ -20,6 +20,7 @@ import asyncio
 import json
 import re
 import sys
+import traceback
 from pathlib import Path
 from typing import Dict, Optional, Set
 
@@ -423,4 +424,14 @@ if __name__ == "__main__":
         raise SystemExit(asyncio.run(run(args)))
     except KeyboardInterrupt:
         print("\nStopped by user.")
+    except Exception as e:
+        # Ensure fatal errors are visible in the same runtime log file used by operators.
+        try:
+            logger = Logger(getattr(args, "log_file", None))
+            logger.info(f"[{iso_now()}] fatal: {type(e).__name__}: {e}")
+            for line in traceback.format_exc().rstrip().splitlines():
+                logger.info(line)
+        except Exception:
+            pass
+        raise SystemExit(1)
 

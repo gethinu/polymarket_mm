@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `26`
-- worktree_changes: `4`
+- commits_scanned: `27`
+- worktree_changes: `12`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,7 +20,7 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 13 | `2026-02-26 20:55` | `3b228bc5` | docs: document no-longshot gap error alert flags |
+| `docs_llm` | 14 | `2026-02-26 20:55` | `643c290c` | feat: extend docs canon and event-driven classification coverage |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
 | `no_longshot` | 10 | `2026-02-26 20:54` | `5f1523aa` | feat: update ops health checks and no-longshot/simmer tooling |
@@ -33,6 +33,7 @@
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-26 20:55` | `643c290c` | `docs_llm` | feat: extend docs canon and event-driven classification coverage | `configs/bot_supervisor.observe.json`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `scripts/polymarket_event_driven_observe.py`, +1 |
 | `2026-02-26 20:55` | `3b228bc5` | `docs_llm` | docs: document no-longshot gap error alert flags | `docs/llm/INTERFACES.md` |
 | `2026-02-26 20:54` | `5f1523aa` | `docs_llm,no_longshot,security_or_ops,simmer_clob,task_automation` | feat: update ops health checks and no-longshot/simmer tooling | `configs/bot_supervisor.simmer_canary.observe.json`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/install_no_longshot_daily_task.ps1`, +4 |
 | `2026-02-26 20:53` | `57efbcf6` | `docs_llm,no_longshot,simmer_clob,task_automation` | feat: expand simmer/no-longshot ops and exec-edge coverage | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/install_no_longshot_daily_task.ps1`, `scripts/simmer_pingpong_mm.py`, +1 |
@@ -63,10 +64,18 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `scripts/polymarket_event_driven_observe.py` |
+| `M` | `docs/llm/INTERFACES.md` |
+| `M` | `docs/llm/STATE.md` |
+| `M` | `docs/llm/STRATEGY.md` |
+| `M` | `docs/memo_uncorrelated_portfolio_20260226.txt` |
+| `M` | `scripts/install_no_longshot_daily_task.ps1` |
+| `M` | `scripts/no_longshot_daily_daemon.py` |
+| `M` | `scripts/polymarket_clob_arb_realtime.py` |
 | `M` | `scripts/report_uncorrelated_portfolio.py` |
+| `M` | `scripts/run_event_driven_daily_report.ps1` |
+| `M` | `scripts/run_no_longshot_daily_report.ps1` |
+| `??` | `scripts/report_event_driven_profit_window.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

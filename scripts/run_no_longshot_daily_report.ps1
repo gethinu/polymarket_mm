@@ -19,7 +19,7 @@ param(
   [int]$GuardMinTestN = 20,
   [int]$ScreenMaxPages = 6,
   [int]$RealizedFastMaxPages = 120,
-  [double]$RealizedFastYesMin = 0.01,
+  [double]$RealizedFastYesMin = 0.16,
   [double]$RealizedFastYesMax = 0.20,
   [double]$RealizedFastMaxHoursToEnd = 72.0,
   [double]$ScreenMinLiquidity = 50000,
@@ -52,6 +52,7 @@ param(
   [string]$GapOutcomeTag = "prod",
   [int]$GapErrorAlertMinRuns7d = 5,
   [double]$GapErrorAlertRate7d = 0.2,
+  [switch]$FailOnGapScanError,
   [switch]$FailOnGapErrorRateHigh,
   [int]$GapMaxPairsPerEvent = 20,
   [int]$GapTopN = 30,
@@ -380,7 +381,7 @@ if (-not $discordRequested) {
   }
 }
 
-Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested"
+Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_scan=$($FailOnGapScanError.IsPresent) fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested"
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
@@ -982,6 +983,7 @@ $lines = @(
   ("- gap fallback used: {0}" -f $gapFallbackUsed)
   ("- gap error stats tag: {0}" -f $gapErrorStatsTag)
   ("- gap error alert 7d threshold/min_runs: {0:0.0%}/{1}" -f [double]$gapErrorAlertRate7dApplied, [int]$gapErrorAlertMinRuns7dApplied)
+  ("- fail_on_gap_scan_error: {0}" -f [bool]$FailOnGapScanError.IsPresent)
   ("- fail_on_gap_error_rate_high: {0}" -f [bool]$FailOnGapErrorRateHigh.IsPresent)
   ("- gap error runs 7d: {0}" -f $gapErrorRuns7dText)
   ("- gap error runs 30d: {0}" -f $gapErrorRuns30dText)
@@ -1053,6 +1055,11 @@ $lines | Out-File -FilePath $summaryTxt -Encoding utf8
 Log "done summary=$summaryTxt"
 if ($discordRequested) {
   Send-DiscordSummary -summaryPath $summaryTxt
+}
+
+if ($FailOnGapScanError.IsPresent -and $gapScanHadError) {
+  Log ("fail: gap scan had errors stage={0}" -f $gapScanStage)
+  exit 3
 }
 
 if ($FailOnGapErrorRateHigh.IsPresent -and $gapErrorRateAlert7d) {

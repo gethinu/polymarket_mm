@@ -58,6 +58,7 @@ Bot supervisor (parallel manager for multiple bots):
 - Default `configs/bot_supervisor.observe.json` jobs:
   - enabled: `event_driven`
   - disabled by default: `btc5m_lag`, `btc5m_panic`, `no_longshot_daily_daemon`, `fade_both`, `fade_long_canary`, `fade_short_canary`, `fade_router`, `clob_fade`
+  - default `event_driven` command tuning: `--max-pages 12`, `--max-days-to-end 180`, `--signal-cooldown-sec 7200`, `--signal-state-file logs/event-driven-observe-signal-state.json`
   - `no_longshot_daily_daemon` を有効化する場合、重複実行防止のため Scheduled Task `NoLongshotDailyReport` は停止/無効化して運用する
   - `weather_daily_daemon` を使う場合は、`WeatherMimicPipelineDaily` / `WeatherTop30ReadinessDaily` Scheduled Task を停止/無効化して重複実行を避ける
 
@@ -697,6 +698,23 @@ Polymarket social profit-claim validator (observe-only):
   - `--hourly-usd`, `--active-hours-per-day` (hourly claim conversion; default `25` and `8`)
   - `--out-json`, `--out-md`, `--pretty`
 
+Polymarket strategy uncorrelated-portfolio reporter (observe-only):
+- Estimate cross-strategy correlation and provisional uncorrelated portfolio set from available logs:
+  - `python scripts/report_uncorrelated_portfolio.py`
+  - `python scripts/report_uncorrelated_portfolio.py --corr-threshold-abs 0.30 --min-overlap-days 2 --pretty`
+  - `python scripts/report_uncorrelated_portfolio.py --strategy-ids weather_clob_arb_buckets_observe,no_longshot_daily_observe,gamma_eventpair_exec_edge_filter_observe --memo-out docs/memo_uncorrelated_portfolio_custom.txt`
+- Key flags:
+  - `--strategy-ids` (comma-separated target strategies; default is `ADOPTED` from `logs/strategy_register_latest.json`)
+  - `--corr-threshold-abs` (absolute correlation threshold for low-correlation recommendation)
+  - `--min-overlap-days` (minimum overlap days required for pairwise correlation estimation)
+  - `--min-realized-days-for-correlation`（realized系列を相関計算に採用する最小日数。満たない場合はobserve proxyへフォールバック）
+  - `--date-yyyymmdd` (output date tag for default filenames)
+  - `--out-json` (analysis JSON output; default `logs/uncorrelated_portfolio_proxy_analysis_<date>.json`)
+  - `--memo-out` (memo output; default `docs/memo_uncorrelated_portfolio_<date>.txt`)
+  - `--no-memo`, `--pretty`
+  - Correlation uses realized daily series when available; otherwise observe proxy series are used and marked as low confidence.
+  - Monthly return estimates are sourced from canonical/no-longshot keys and strategy evidence logs where available.
+
 Polymarket hourly up/down high-probability calibration (observe-only):
 - Validate high-probability near-expiry pricing claims from closed hourly crypto up/down markets:
   - `python scripts/report_hourly_updown_highprob_calibration.py`
@@ -790,11 +808,12 @@ Polymarket NO-longshot toolkit (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapMaxHoursToEnd 6 -GapFallbackMaxHoursToEnd 48 -GapMinGrossEdgeCents 0.3 -GapPerLegCost 0.002`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapFallbackNoHourCap`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -FailOnGapScanError`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -Discord`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GuardMaxOpenPositions 16 -GuardMaxOpenPerCategory 3`
   - `NO_LONGSHOT_DAILY_DISCORD=1` でも通知有効（Webhookは `CLOBBOT_DISCORD_WEBHOOK_URL` または `DISCORD_WEBHOOK_URL`）
   - 日次実行時に `record_no_longshot_realized_daily.py` を呼び、`rolling_30d_monthly_return`（実測）を summary に追記
-  - 実測エントリー入力は `logs/no_longshot_daily_screen.csv` を基本にしつつ、`logs/no_longshot_fast_screen_lowyes_latest.csv`（YES 0.01-0.20 / 残り72h以内）に候補があれば自動で fast 側を優先
+  - 実測エントリー入力は `logs/no_longshot_daily_screen.csv` を基本にしつつ、`logs/no_longshot_fast_screen_lowyes_latest.csv`（YES 0.16-0.20 / 残り72h以内）に候補があれば自動で fast 側を優先
   - `-RealizedFastYesMin` / `-RealizedFastYesMax` / `-RealizedFastMaxHoursToEnd` / `-RealizedFastMaxPages` で fast 実測候補スクリーンの範囲を明示調整できる（例: `-RealizedFastYesMin 0.16` は概ね `entry_no_price <= 0.84` 相当）。
   - fast screen 取得失敗時は runner 全体を継続し、`primary_screen` へ自動フォールバック（Summaryの `fast screen status` に `failed` を記録）
   - Summary に `monthly_return_now` を追記（実測が未確定の間は Guarded OOS の `annualized_return` を月次換算したフォールバック値を表示）
@@ -802,9 +821,9 @@ Polymarket NO-longshot toolkit (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -RunNow`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -Discord`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedFastMaxPages 120 -RunNow`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -GapOutcomeTag prod -GapErrorAlertRate7d 0.2 -GapErrorAlertMinRuns7d 5 -FailOnGapErrorRateHigh`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -GapOutcomeTag prod -GapErrorAlertRate7d 0.2 -GapErrorAlertMinRuns7d 5 -FailOnGapScanError -FailOnGapErrorRateHigh`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?`
-  - installer key flags: `-TaskName`, `-RepoRoot`, `-StartTime`, `-SkipRefresh`, `-Discord`, `-RunNow`, `-PowerShellExe`, `-NoBackground`, `-RealizedFastYesMin`, `-RealizedFastYesMax`, `-RealizedFastMaxHoursToEnd`, `-RealizedFastMaxPages`, `-GapOutcomeTag`, `-GapErrorAlertRate7d`, `-GapErrorAlertMinRuns7d`, `-FailOnGapErrorRateHigh`
+  - installer key flags: `-TaskName`, `-RepoRoot`, `-StartTime`, `-SkipRefresh`, `-Discord`, `-RunNow`, `-PowerShellExe`, `-NoBackground`, `-RealizedFastYesMin`, `-RealizedFastYesMax`, `-RealizedFastMaxHoursToEnd`, `-RealizedFastMaxPages`, `-GapOutcomeTag`, `-GapErrorAlertRate7d`, `-GapErrorAlertMinRuns7d`, `-FailOnGapScanError`, `-FailOnGapErrorRateHigh`
   - `install_no_longshot_daily_task.ps1` は登録タスクに `-NoBackground` を付与して起動（子プロセス多重化を回避）
   - installer は task principal を `S4U` -> `Interactive` -> default の順で登録を試行。
   - installer 実行後は `Enable-ScheduledTask` を呼び、無効化状態を自動解除。
@@ -826,6 +845,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - runner は `logs/no_longshot_daily_run.log` に `gap scan outcome: stage=... had_error=true/false tag=...` を追記し、Summary Settings に `gap error runs 7d/30d`（既定 `tag=prod` の直近窓 error_runs/runs）を表示。
   - `-GapOutcomeTag`（既定 `prod`）で `gap scan outcome` の分類タグを設定可能。失敗注入や検証runは `-GapOutcomeTag test` を使うと本番集計（`prod`）を汚さない。
   - `-GapErrorAlertRate7d`（既定 `0.2`）と `-GapErrorAlertMinRuns7d`（既定 `5`）で、`tag=prod` の7日エラー率アラート条件を設定。条件成立時は Summary 本文に `WARNING: gap scan error rate high ...` を追記。
+  - `-FailOnGapScanError` を付けると、当日 run で `gap scan stage` が `*_error` の場合に runner が非0終了（Summary/Discord生成後に失敗扱い）。
   - `-FailOnGapErrorRateHigh` を付けると、上記アラート条件成立時に runner が非0終了（既定は継続実行で `0`）。
   - Summaryの `Logical gaps now` は `raw` / `filtered` / `unique_events` を併記し、表示上位はイベント単位で最良1件に圧縮。
   - Summaryの `Logical gaps threshold stats` で `target_unique_events(applied)` と `net>=0.50c/1.00c/2.00c` ごとの件数を併記し、しきい値調整の判断材料を可視化。
@@ -835,9 +855,9 @@ Polymarket NO-longshot toolkit (observe-only):
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --poll-sec 15 --retry-delay-sec 900 --max-run-seconds 1800 --run-on-start`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
-  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-gap-outcome-tag prod --runner-gap-error-alert-rate-7d 0.2 --runner-gap-error-alert-min-runs-7d 5 --runner-fail-on-gap-error-rate-high --skip-refresh`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-gap-outcome-tag prod --runner-gap-error-alert-rate-7d 0.2 --runner-gap-error-alert-min-runs-7d 5 --runner-fail-on-gap-scan-error --runner-fail-on-gap-error-rate-high --skip-refresh`
   - key flags: `--run-at-hhmm`, `--poll-sec`, `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`, `--run-on-start`, `--skip-refresh/--no-skip-refresh`, `--discord`, `--log-file`, `--state-file`, `--lock-file`, `--allow-realized-entry-ingest`
-  - runner passthrough flags: `--runner-realized-fast-yes-min`, `--runner-realized-fast-yes-max`, `--runner-realized-fast-max-hours-to-end`, `--runner-realized-fast-max-pages`, `--runner-gap-outcome-tag`, `--runner-gap-error-alert-rate-7d`, `--runner-gap-error-alert-min-runs-7d`, `--runner-fail-on-gap-error-rate-high`
+  - runner passthrough flags: `--runner-realized-fast-yes-min`, `--runner-realized-fast-yes-max`, `--runner-realized-fast-max-hours-to-end`, `--runner-realized-fast-max-pages`, `--runner-gap-outcome-tag`, `--runner-gap-error-alert-rate-7d`, `--runner-gap-error-alert-min-runs-7d`, `--runner-fail-on-gap-scan-error`, `--runner-fail-on-gap-error-rate-high`
   - realized refresh key flags: `--python-exe`, `--realized-refresh-sec`, `--realized-timeout-sec`, `--realized-tool-path`, `--realized-screen-csv`, `--realized-positions-json`, `--realized-out-daily-jsonl`, `--realized-out-latest-json`, `--realized-out-monthly-txt`, `--realized-entry-top-n`, `--realized-per-trade-cost`, `--realized-api-timeout-sec`
   - `--realized-refresh-sec > 0` で daemon が `record_no_longshot_realized_daily.py` を定期実行し、`--realized-entry-top-n 0` なら resolve-only（新規エントリー追加なし）で rolling-30d 実測を同日更新できる
   - 安全策として、`--realized-refresh-sec > 0` かつ `--realized-entry-top-n > 0` で起動する場合は `--allow-realized-entry-ingest` が必須（指定なしは非0終了）
@@ -861,10 +881,14 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Observation report:
   - `python scripts/report_event_driven_observation.py --hours 24`
   - `python scripts/report_event_driven_observation.py --hours 24 --discord`
+- Profit-window report (observe-only):
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --pretty`
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --thresholds-cents "0.8,1,2,3,5" --capture-ratios "0.25,0.35,0.50" --target-monthly-return-pct 12 --assumed-bankroll-usd 100 --pretty`
 - Daily runner (PowerShell, background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -MaxPages 12 -MinEdgeCents 0.8 -TopN 20`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -IncludeRegex "acquire|approve|court|lawsuit" -Discord`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitTargetMonthlyReturnPct 12 -FailOnNoGo`
 - Daily task installer (PowerShell):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground -StartTime 00:15 -RunNow`
@@ -872,12 +896,14 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Key flags (runner / installer):
   - runner: `-MaxPages`, `-PageSize`, `-MinLiquidity`, `-MinVolume24h`, `-MinEdgeCents`, `-TopN`, `-ReportHours`
   - runner: `-IncludeRegex`, `-ExcludeRegex`, `-IncludeNonEvent`, `-ThresholdsCents`, `-Discord`
+  - runner profit-window: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-SkipProfitWindow`, `-FailOnNoGo`
+  - profit-window CLI: `--episode-merge-gap-sec`, `--thresholds-cents`, `--capture-ratios`, `--target-monthly-return-pct`, `--assumed-bankroll-usd`, `--max-ev-multiple-of-stake`, `--fail-on-no-go`, `--out-json`, `--out-txt`
   - installer: `-TaskName`, `-StartTime`, `-MaxPages`, `-MinLiquidity`, `-MinVolume24h`, `-MinEdgeCents`, `-TopN`, `-ReportHours`, `-PrincipalMode`, `-ActionMode`, `-RunNow`
   - installer principal mode: `auto` / `default` / `s4u` / `interactive`（`s4u` は環境により権限不足で失敗する場合あり）
   - installer action mode 既定値は `powershell`（`cmd` wrapper 経由にも切替可）
   - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
   - `EVENT_DRIVEN_DAILY_DISCORD=1` でも Discord 投稿を有効化可能（Webhook は `CLOBBOT_DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL`）
-  - artifacts: `logs/event_driven_daily_summary.txt`, `logs/event_driven_daily_run.log`
+  - artifacts: `logs/event_driven_daily_summary.txt`, `logs/event_driven_daily_run.log`, `logs/event_driven_profit_window_latest.json`, `logs/event_driven_profit_window_latest.txt`
 
 Polymarket late-resolution high-probability validator (observe-only):
 - Active screener:

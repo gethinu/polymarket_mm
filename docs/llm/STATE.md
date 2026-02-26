@@ -33,6 +33,8 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Signals JSONL: `logs/event-driven-observe-signals.jsonl`
 - Metrics JSONL: `logs/event-driven-observe-metrics.jsonl`
 - Optional signal dedupe state JSON: `logs/event-driven-observe-signal-state.json`
+- Profit-window summary JSON: `logs/event_driven_profit_window_latest.json`
+- Profit-window summary TXT: `logs/event_driven_profit_window_latest.txt`
 
 Polymarket CLOB MM:
 - Log: `logs/clob-mm.log`
@@ -269,6 +271,12 @@ Polymarket strategy register snapshot (observe-only):
 - `bankroll_policy` は `docs/llm/STRATEGY.md` の `## Bankroll Policy` から抽出され、`initial_bankroll_usd`、`allocation_mode`、`live_max_daily_risk_ratio`、`live_max_daily_risk_usd`、`default_adopted_allocations` を保持する。
 - `realized_30d_gate` は `decision_3stage`（7日暫定 / 14日中間 / 30日確定）、`decision_3stage_label_ja`、`stage_label_ja`、`stages`（`label_ja` 含む）、`next_stage`（`label_ja` 含む）を含む。
 - `realized_monthly_return` は `strategy_realized_pnl_daily.jsonl` を優先し、未存在時は累積 snapshot の差分系列をフォールバック利用して計算される。
+
+Polymarket strategy uncorrelated-portfolio reporter (observe-only):
+- Analysis snapshot JSON: `logs/uncorrelated_portfolio_proxy_analysis_<yyyymmdd>.json`
+- Output memo (docs artifact): `docs/memo_uncorrelated_portfolio_<yyyymmdd>.txt`
+- 相関は strategy-level realized daily return を優先し、未整備戦略は observe proxy 日次系列をフォールバック利用する。
+- 戦略ごとの不足メトリクス（missing daily return / overlap不足 / proxy依存）を JSON/memo に明記する。
 
 Polymarket strategy gate stage alarm (observe-only):
 - Alarm log: `logs/strategy_gate_alarm.log`

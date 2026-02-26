@@ -142,6 +142,23 @@ Primary keys:
   - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-tuned-20260226-20260226_204500.jsonl` (`rows=1461`, `threshold=86`, `blocked=1375`)
   - Tuning comparisons: `logs/clob-arb-eventpair-threshold-tuning-coverage-refresh-20260226.json`, `logs/clob-arb-eventpair-execgate-tuning-extended2ab-20260226.json`
   - Strict profile estimate: `logs/clob-arb-eventpair-monthly-estimate-tuned-20260226_204500.json` (`weighted_monthly_trim_edgepct_le_25=+5.62%`, `sample_count=21`, `distinct_events=3`)
+- Evidence snapshot (current status + parameter check 2026-02-26, observe-only):
+  - Source metrics (current 30m strict run): `logs/clob-arb-monitor-metrics-eventpair-tuned30m-20260226-20260226_205340.jsonl`
+  - Current snapshot (`event_id` distinct): `distinct_events_all=20`, `distinct_events_threshold_raw=3`（threshold event: `116025`, `110017`, `153526`）
+  - Source metrics (`max_subscribe_tokens` A/B): `logs/clob-arb-monitor-metrics-eventpair-tuned-maxsub400-probe-20260226.jsonl`, `logs/clob-arb-monitor-metrics-eventpair-tuned-maxsub1200-probe-20260226.jsonl`
+  - A/B result: both runs stayed at `Loaded baskets=40` / `Subscribed token IDs=80` and `distinct_events_all=20`, `distinct_events_threshold_raw=3`（`max_subscribe_tokens` increase alone did not expand coverage）
+  - Interface check: `--gamma-pages` / `--gamma-page-size` are rejected as unrecognized arguments in `polymarket_clob_arb_realtime.py`; use `--gamma-limit` + `--gamma-scan-max-markets` for scan depth control.
+  - Aggregated snapshot: `logs/clob-arb-eventpair-distinct-events-current-latest.json`
+- Evidence snapshot (strict exec-gate extended refresh 2026-02-26, observe-only):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-tuned30m-20260226-20260226_205340.jsonl` (`rows_total=10549`, `reason_threshold=751`, `reason_observe_exec_filter_blocked=9798`)
+  - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-tuned30m-20260226_205340-gap5s.json`, `logs/clob-arb-kelly-replay-eventpair-tuned35m-20260226-gap5s.json`
+  - Monthly estimate (30m strict): `logs/clob-arb-eventpair-monthly-estimate-tuned30m-20260226_205340.json` (`weighted_monthly_trim_edgepct_le_25=+5.64%`, `sample_count=117`, `event_count=3`)
+  - Monthly estimate (35m combined strict): `logs/clob-arb-eventpair-monthly-estimate-tuned35m-20260226.json` (`weighted_monthly_trim_edgepct_le_25=+5.63%`, `sample_count=136`, `event_count=3`)
+  - Concentration note: outlier-trim set is still dominated by one event (`event_id=116025`); keep low-confidence labeling until multi-event trim coverage expands.
+- Adjustment proposal (strategy #4, coverage objective):
+  - Keep strict profile (`min-edge-cents=10`, `gamma-max-days-to-end=60`) for quality/regime checks only; do not use it as coverage gate source.
+  - For coverage gate (`distinct_events_threshold >= 20`), use relaxed coverage profile (observe-only): `--gamma-limit 1500 --gamma-min-liquidity 0 --gamma-min-volume24hr 0 --gamma-scan-max-markets 40000 --gamma-max-days-to-end 0 --max-markets-per-event 5 --max-subscribe-tokens 400 --metrics-log-all-candidates --min-edge-cents 3`.
+  - Keep `max_subscribe_tokens=400` as default operational cap; raise only when coverage profile itself has >400 subscribed tokens.
 - Decision note: promoted to active observe operations by operator decision on 2026-02-25; keep claims low-confidence and regime-aware until event coverage and signal quality stabilize.
 - Operational gate: keep this strategy observe-only and mark `REVIEW` when (`distinct_events_threshold < 20` and `observed_realized_days < 30`) or when latest `3c` threshold check yields `sample_count=0`; monitor `distinct_events_all` with `--metrics-log-all-candidates` as secondary coverage signal.
 

@@ -24,6 +24,13 @@ param(
   [switch]$IncludeNonEvent,
   [double]$ReportHours = 24,
   [string]$ThresholdsCents = "1,2,3,5,8,10",
+  [string]$ProfitThresholdsCents = "0.8,1,2,3,5",
+  [string]$ProfitCaptureRatios = "0.25,0.35,0.50",
+  [double]$ProfitTargetMonthlyReturnPct = 12,
+  [double]$ProfitAssumedBankrollUsd = 100,
+  [double]$ProfitMaxEvMultipleOfStake = 0.35,
+  [switch]$SkipProfitWindow,
+  [switch]$FailOnNoGo,
   [switch]$Discord
 )
 
@@ -119,12 +126,15 @@ function Run-Python([string[]]$CmdArgs) {
 
 $observeScript = Join-Path $RepoRoot "scripts\polymarket_event_driven_observe.py"
 $reportScript = Join-Path $RepoRoot "scripts\report_event_driven_observation.py"
+$profitReportScript = Join-Path $RepoRoot "scripts\report_event_driven_profit_window.py"
 $logDir = Join-Path $RepoRoot "logs"
 $runLog = Join-Path $logDir "event_driven_daily_run.log"
 $summaryTxt = Join-Path $logDir "event_driven_daily_summary.txt"
 $observeLogFile = Join-Path $logDir "event-driven-observe.log"
 $signalsFile = Join-Path $logDir "event-driven-observe-signals.jsonl"
 $metricsFile = Join-Path $logDir "event-driven-observe-metrics.jsonl"
+$profitJson = Join-Path $logDir "event_driven_profit_window_latest.json"
+$profitTxt = Join-Path $logDir "event_driven_profit_window_latest.txt"
 
 if (-not (Test-Path $logDir)) {
   New-Item -Path $logDir -ItemType Directory -Force | Out-Null
@@ -134,6 +144,9 @@ if (-not (Test-Path $observeScript)) {
 }
 if (-not (Test-Path $reportScript)) {
   throw "report script not found: $reportScript"
+}
+if (-not $SkipProfitWindow.IsPresent -and -not (Test-Path $profitReportScript)) {
+  throw "profit report script not found: $profitReportScript"
 }
 
 $discordRequested = $Discord.IsPresent
@@ -193,10 +206,66 @@ if ($LASTEXITCODE -ne 0) {
   throw "report failed with code ${LASTEXITCODE}"
 }
 $reportText = ($reportOutput -join [Environment]::NewLine)
-$reportText | Out-File -FilePath $summaryTxt -Encoding utf8
-$reportText | Out-File -FilePath $runLog -Append -Encoding utf8
+$summaryParts = @(
+  "=== Observation Summary ===",
+  ($reportText.TrimEnd())
+)
 Write-Host $reportText
-Log "report build done -> $summaryTxt"
+Log "report build done"
+
+if (-not $SkipProfitWindow.IsPresent) {
+  $profitArgs = @(
+    $profitReportScript,
+    "--hours", "$ReportHours",
+    "--signals-file", $signalsFile,
+    "--metrics-file", $metricsFile,
+    "--thresholds-cents", $ProfitThresholdsCents,
+    "--capture-ratios", $ProfitCaptureRatios,
+    "--target-monthly-return-pct", "$ProfitTargetMonthlyReturnPct",
+    "--assumed-bankroll-usd", "$ProfitAssumedBankrollUsd",
+    "--max-ev-multiple-of-stake", "$ProfitMaxEvMultipleOfStake",
+    "--out-json", $profitJson,
+    "--out-txt", $profitTxt,
+    "--pretty"
+  )
+  Log "profit-window build start"
+  $profitOutput = & $PythonExe @profitArgs 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "profit-window report failed with code ${LASTEXITCODE}"
+  }
+  $profitOutputText = ($profitOutput -join [Environment]::NewLine)
+  Write-Host $profitOutputText
+  Log "profit-window build done"
+
+  if (Test-Path $profitTxt) {
+    $profitText = Get-Content -Path $profitTxt -Raw -ErrorAction SilentlyContinue
+    if (-not [string]::IsNullOrWhiteSpace($profitText)) {
+      $summaryParts += ""
+      $summaryParts += "=== Profit Window Summary ==="
+      $summaryParts += ($profitText.TrimEnd())
+    }
+  }
+
+  if ($FailOnNoGo.IsPresent) {
+    if (-not (Test-Path $profitJson)) {
+      throw "profit-window json missing: $profitJson"
+    }
+    $profitObj = Get-Content -Path $profitJson -Raw | ConvertFrom-Json
+    $profitDecision = [string]$profitObj.decision.decision
+    if ([string]::IsNullOrWhiteSpace($profitDecision)) {
+      throw "profit-window decision missing in $profitJson"
+    }
+    if ($profitDecision -ne "GO") {
+      throw "profit-window decision=$profitDecision (FailOnNoGo)"
+    }
+    Log "profit-window decision GO"
+  }
+}
+
+$summaryText = ($summaryParts -join [Environment]::NewLine)
+$summaryText | Out-File -FilePath $summaryTxt -Encoding utf8
+$summaryText | Out-File -FilePath $runLog -Append -Encoding utf8
+Log "summary write done -> $summaryTxt"
 
 if ($discordRequested) {
   $webhook = Get-DiscordWebhookUrl

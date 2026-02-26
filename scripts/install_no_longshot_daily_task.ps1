@@ -11,6 +11,7 @@ param(
   [string]$GapOutcomeTag = "prod",
   [double]$GapErrorAlertRate7d = 0.2,
   [int]$GapErrorAlertMinRuns7d = 5,
+  [switch]$FailOnGapScanError,
   [switch]$FailOnGapErrorRateHigh,
   [switch]$SkipRefresh,
   [switch]$Discord,
@@ -23,7 +24,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-RealizedFastYesMin 0.16] [-RealizedFastYesMax 0.20] [-RealizedFastMaxHoursToEnd 72] [-RealizedFastMaxPages 120] [-GapOutcomeTag prod] [-GapErrorAlertRate7d 0.2] [-GapErrorAlertMinRuns7d 5] [-FailOnGapErrorRateHigh] [-SkipRefresh] [-Discord] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-RealizedFastYesMin 0.16] [-RealizedFastYesMax 0.20] [-RealizedFastMaxHoursToEnd 72] [-RealizedFastMaxPages 120] [-GapOutcomeTag prod] [-GapErrorAlertRate7d 0.2] [-GapErrorAlertMinRuns7d 5] [-FailOnGapScanError] [-FailOnGapErrorRateHigh] [-SkipRefresh] [-Discord] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?"
 }
 
@@ -153,6 +154,9 @@ if ($Discord.IsPresent) {
 if ($FailOnGapErrorRateHigh.IsPresent) {
   $argList += "-FailOnGapErrorRateHigh"
 }
+if ($FailOnGapScanError.IsPresent) {
+  $argList += "-FailOnGapScanError"
+}
 $actionArgs = ($argList -join " ")
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
@@ -228,6 +232,9 @@ if ($RunNow.IsPresent) {
   }
   if ($FailOnGapErrorRateHigh.IsPresent) {
     $runArgs += "-FailOnGapErrorRateHigh"
+  }
+  if ($FailOnGapScanError.IsPresent) {
+    $runArgs += "-FailOnGapScanError"
   }
   Write-Host "RunNow: executing runner directly (observe-only) ..."
   & $PowerShellExe @runArgs
