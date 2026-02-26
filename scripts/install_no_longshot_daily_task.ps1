@@ -8,6 +8,10 @@ param(
   [double]$RealizedFastYesMax,
   [double]$RealizedFastMaxHoursToEnd,
   [int]$RealizedFastMaxPages,
+  [string]$GapOutcomeTag = "prod",
+  [double]$GapErrorAlertRate7d = 0.2,
+  [int]$GapErrorAlertMinRuns7d = 5,
+  [switch]$FailOnGapErrorRateHigh,
   [switch]$SkipRefresh,
   [switch]$Discord,
   [switch]$RunNow,
@@ -19,7 +23,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-RealizedFastYesMin 0.16] [-RealizedFastYesMax 0.20] [-RealizedFastMaxHoursToEnd 72] [-RealizedFastMaxPages 120] [-SkipRefresh] [-Discord] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-RealizedFastYesMin 0.16] [-RealizedFastYesMax 0.20] [-RealizedFastMaxHoursToEnd 72] [-RealizedFastMaxPages 120] [-GapOutcomeTag prod] [-GapErrorAlertRate7d 0.2] [-GapErrorAlertMinRuns7d 5] [-FailOnGapErrorRateHigh] [-SkipRefresh] [-Discord] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?"
 }
 
@@ -81,6 +85,21 @@ if (-not (Test-Path $runnerPath)) {
   throw "Runner not found: $runnerPath"
 }
 
+$gapOutcomeTagNorm = [string]$GapOutcomeTag
+if ([string]::IsNullOrWhiteSpace($gapOutcomeTagNorm)) {
+  throw "GapOutcomeTag must not be empty"
+}
+$gapOutcomeTagNorm = $gapOutcomeTagNorm.Trim()
+if ($gapOutcomeTagNorm -notmatch "^[A-Za-z0-9_.-]+$") {
+  throw "GapOutcomeTag must match ^[A-Za-z0-9_.-]+$"
+}
+if ($GapErrorAlertRate7d -lt 0.0 -or $GapErrorAlertRate7d -gt 1.0) {
+  throw "GapErrorAlertRate7d must be within [0,1]"
+}
+if ($GapErrorAlertMinRuns7d -lt 1) {
+  throw "GapErrorAlertMinRuns7d must be >= 1"
+}
+
 $parsed = $null
 try {
   $parsed = [datetime]::ParseExact($StartTime, "HH:mm", [System.Globalization.CultureInfo]::InvariantCulture)
@@ -104,7 +123,10 @@ $argList = @(
   "-NonInteractive",
   "-ExecutionPolicy", "Bypass",
   "-File", ('"{0}"' -f $runnerPath),
-  "-NoBackground"
+  "-NoBackground",
+  "-GapOutcomeTag", $gapOutcomeTagNorm,
+  "-GapErrorAlertRate7d", [string]$GapErrorAlertRate7d,
+  "-GapErrorAlertMinRuns7d", [string]$GapErrorAlertMinRuns7d
 )
 if ($SkipRefresh.IsPresent) {
   $argList += "-SkipRefresh"
@@ -127,6 +149,9 @@ if ($PSBoundParameters.ContainsKey("RealizedFastMaxPages")) {
 }
 if ($Discord.IsPresent) {
   $argList += "-Discord"
+}
+if ($FailOnGapErrorRateHigh.IsPresent) {
+  $argList += "-FailOnGapErrorRateHigh"
 }
 $actionArgs = ($argList -join " ")
 
@@ -174,7 +199,10 @@ if ($RunNow.IsPresent) {
     "-NonInteractive",
     "-ExecutionPolicy", "Bypass",
     "-File", $runnerPath,
-    "-NoBackground"
+    "-NoBackground",
+    "-GapOutcomeTag", $gapOutcomeTagNorm,
+    "-GapErrorAlertRate7d", [string]$GapErrorAlertRate7d,
+    "-GapErrorAlertMinRuns7d", [string]$GapErrorAlertMinRuns7d
   )
   if ($SkipRefresh.IsPresent) {
     $runArgs += "-SkipRefresh"
@@ -197,6 +225,9 @@ if ($RunNow.IsPresent) {
   }
   if ($Discord.IsPresent) {
     $runArgs += "-Discord"
+  }
+  if ($FailOnGapErrorRateHigh.IsPresent) {
+    $runArgs += "-FailOnGapErrorRateHigh"
   }
   Write-Host "RunNow: executing runner directly (observe-only) ..."
   & $PowerShellExe @runArgs

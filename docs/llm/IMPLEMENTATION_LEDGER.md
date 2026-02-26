@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `23`
-- worktree_changes: `3`
+- commits_scanned: `24`
+- worktree_changes: `7`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,20 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 10 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `docs_llm` | 11 | `2026-02-26 20:53` | `57efbcf6` | feat: expand simmer/no-longshot ops and exec-edge coverage |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
-| `no_longshot` | 8 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `no_longshot` | 9 | `2026-02-26 20:53` | `57efbcf6` | feat: expand simmer/no-longshot ops and exec-edge coverage |
 | `security_or_ops` | 6 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
-| `simmer_clob` | 15 | `2026-02-26 20:53` | `81473683` | refactor: reuse shared observe-exec-edge metrics helper |
+| `simmer_clob` | 16 | `2026-02-26 20:53` | `57efbcf6` | feat: expand simmer/no-longshot ops and exec-edge coverage |
 | `strategy_register` | 6 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
-| `task_automation` | 10 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `task_automation` | 11 | `2026-02-26 20:53` | `57efbcf6` | feat: expand simmer/no-longshot ops and exec-edge coverage |
 | `weather_pipeline` | 5 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-26 20:53` | `57efbcf6` | `docs_llm,no_longshot,simmer_clob,task_automation` | feat: expand simmer/no-longshot ops and exec-edge coverage | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/install_no_longshot_daily_task.ps1`, `scripts/simmer_pingpong_mm.py`, +1 |
 | `2026-02-26 20:53` | `81473683` | `simmer_clob` | refactor: reuse shared observe-exec-edge metrics helper | `scripts/polymarket_clob_arb_realtime.py` |
 | `2026-02-26 20:52` | `b16994b7` | `docs_llm,no_longshot,security_or_ops,simmer_clob,strategy_register,task_automation,weather_pipeline` | feat: add simmer ops automation and modular CLOB arb runtime | `AGENTS.md`, `configs/bot_supervisor.observe.json`, `configs/bot_supervisor.simmer_canary.observe.json`, `configs/bot_supervisor.simmer_main.observe.json`, +46 |
 | `2026-02-26 20:38` | `0f9516ef` | `docs_llm` | docs: sync no-longshot interface notes and implementation ledger | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md` |
@@ -60,9 +61,13 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
+| `M` | `configs/bot_supervisor.simmer_canary.observe.json` |
+| `M` | `docs/llm/INTERFACES.md` |
 | `M` | `scripts/install_no_longshot_daily_task.ps1` |
+| `M` | `scripts/no_longshot_daily_daemon.py` |
+| `M` | `scripts/report_automation_health.py` |
 | `M` | `scripts/simmer_pingpong_mm.py` |
-| `M` | `tests/test_clob_arb_eval.py` |
+| `??` | `scripts/report_uncorrelated_portfolio.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

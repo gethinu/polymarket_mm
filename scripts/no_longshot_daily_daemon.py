@@ -12,6 +12,7 @@ import atexit
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -270,6 +271,7 @@ def run_daily_once(args, logger: Logger) -> Tuple[int, str]:
     if not script_path.exists():
         return 2, f"runner script not found: {script_path}"
 
+    runner_gap_tag = str(args.runner_gap_outcome_tag).strip()
     cmd = [
         str(args.powershell_exe),
         "-NoLogo",
@@ -288,11 +290,19 @@ def run_daily_once(args, logger: Logger) -> Tuple[int, str]:
         str(float(args.runner_realized_fast_yes_max)),
         "-RealizedFastMaxHoursToEnd",
         str(float(args.runner_realized_fast_max_hours_to_end)),
+        "-GapOutcomeTag",
+        runner_gap_tag,
+        "-GapErrorAlertRate7d",
+        str(float(args.runner_gap_error_alert_rate_7d)),
+        "-GapErrorAlertMinRuns7d",
+        str(int(args.runner_gap_error_alert_min_runs_7d)),
     ]
     if args.skip_refresh:
         cmd.append("-SkipRefresh")
     if args.discord:
         cmd.append("-Discord")
+    if args.runner_fail_on_gap_error_rate_high:
+        cmd.append("-FailOnGapErrorRateHigh")
 
     logger.info(
         f"[{iso_now()}] no_longshot run start "
@@ -444,6 +454,28 @@ def parse_args():
         default=72.0,
         help="Pass -RealizedFastMaxHoursToEnd to run_no_longshot_daily_report.ps1.",
     )
+    p.add_argument(
+        "--runner-gap-outcome-tag",
+        default="prod",
+        help="Pass -GapOutcomeTag to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-gap-error-alert-rate-7d",
+        type=float,
+        default=0.2,
+        help="Pass -GapErrorAlertRate7d to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-gap-error-alert-min-runs-7d",
+        type=int,
+        default=5,
+        help="Pass -GapErrorAlertMinRuns7d to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-fail-on-gap-error-rate-high",
+        action="store_true",
+        help="Pass -FailOnGapErrorRateHigh to run_no_longshot_daily_report.ps1.",
+    )
     p.add_argument("--python-exe", default="python", help="Python executable for realized-refresh runner")
     p.add_argument(
         "--realized-refresh-sec",
@@ -543,6 +575,27 @@ def main() -> int:
             f"{float(args.runner_realized_fast_max_hours_to_end)} must be > 0"
         )
         return 2
+    if not str(args.runner_gap_outcome_tag).strip():
+        logger.info(f"[{iso_now()}] refused: runner gap outcome tag must not be empty")
+        return 2
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", str(args.runner_gap_outcome_tag).strip()):
+        logger.info(
+            f"[{iso_now()}] refused: runner gap outcome tag "
+            f"{args.runner_gap_outcome_tag!r} must match [A-Za-z0-9_.-]+"
+        )
+        return 2
+    if float(args.runner_gap_error_alert_rate_7d) < 0.0 or float(args.runner_gap_error_alert_rate_7d) > 1.0:
+        logger.info(
+            f"[{iso_now()}] refused: runner gap error alert rate 7d "
+            f"{float(args.runner_gap_error_alert_rate_7d)} must be within [0,1]"
+        )
+        return 2
+    if int(args.runner_gap_error_alert_min_runs_7d) < 1:
+        logger.info(
+            f"[{iso_now()}] refused: runner gap error alert min runs 7d "
+            f"{int(args.runner_gap_error_alert_min_runs_7d)} must be >= 1"
+        )
+        return 2
     if (
         float(args.realized_refresh_sec) > 0.0
         and int(args.realized_entry_top_n) > 0
@@ -571,7 +624,10 @@ def main() -> int:
         f"realized_refresh_sec={args.realized_refresh_sec:.1f} realized_entry_top_n={int(args.realized_entry_top_n)} "
         f"runner_fast_yes=[{args.runner_realized_fast_yes_min},{args.runner_realized_fast_yes_max}] "
         f"runner_fast_max_h={args.runner_realized_fast_max_hours_to_end} "
-        f"runner_fast_pages={int(args.runner_realized_fast_max_pages)}"
+        f"runner_fast_pages={int(args.runner_realized_fast_max_pages)} "
+        f"runner_gap_tag={str(args.runner_gap_outcome_tag).strip()} "
+        f"runner_gap_alert_7d={float(args.runner_gap_error_alert_rate_7d):.4f}/{int(args.runner_gap_error_alert_min_runs_7d)} "
+        f"runner_fail_on_gap_rate={bool(args.runner_fail_on_gap_error_rate_high)}"
     )
     logger.info(f"[{iso_now()}] log={args.log_file}")
     logger.info(f"[{iso_now()}] state={args.state_file}")

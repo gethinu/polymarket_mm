@@ -39,6 +39,7 @@ DEFAULT_ARTIFACT_SPECS = [
     "logs/weather_mimic_pipeline_daily_run.log:30",
     "logs/no_longshot_daily_run.log:30",
     "logs/morning_status_daily_run.log:30",
+    "?logs/simmer-ab-decision-latest.json:30",
 ]
 
 
@@ -88,10 +89,16 @@ def _normalize_ps_time(raw: str) -> str:
     return s
 
 
-def _parse_artifact_specs(specs: List[str]) -> List[Tuple[str, float]]:
-    out: List[Tuple[str, float]] = []
+def _parse_artifact_specs(specs: List[str]) -> List[Tuple[str, float, bool]]:
+    out: List[Tuple[str, float, bool]] = []
     for raw in specs:
         s = str(raw or "").strip()
+        if not s:
+            continue
+        optional = False
+        if s.startswith("?"):
+            optional = True
+            s = s[1:].strip()
         if not s:
             continue
         if ":" in s:
@@ -100,9 +107,9 @@ def _parse_artifact_specs(specs: List[str]) -> List[Tuple[str, float]]:
                 max_h = float(h)
             except Exception:
                 max_h = 30.0
-            out.append((p.strip(), max(0.1, max_h)))
+            out.append((p.strip(), max(0.1, max_h), optional))
         else:
-            out.append((s, 30.0))
+            out.append((s, 30.0, optional))
     return out
 
 
@@ -326,15 +333,16 @@ def _apply_supervisor_overrides(task_rows: List[dict]) -> None:
             row["status_note"] = f"{task_name} disabled while weather_daily_daemon is enabled"
 
 
-def _artifact_rows(specs: List[Tuple[str, float]]) -> List[dict]:
+def _artifact_rows(specs: List[Tuple[str, float, bool]]) -> List[dict]:
     now = now_utc()
     out: List[dict] = []
-    for rel_path, max_age_h in specs:
+    for rel_path, max_age_h, optional in specs:
         p = resolve_path(rel_path, Path(rel_path).name or "artifact")
         exists = p.exists()
         row: Dict[str, object] = {
             "path": str(p),
             "exists": exists,
+            "required": not bool(optional),
             "max_age_hours": float(max_age_h),
             "status": "MISSING",
             "age_hours": None,
@@ -346,6 +354,8 @@ def _artifact_rows(specs: List[Tuple[str, float]]) -> List[dict]:
             row["age_hours"] = float(age_h)
             row["modified_utc"] = mt.isoformat()
             row["status"] = "FRESH" if age_h <= float(max_age_h) else "STALE"
+        elif optional:
+            row["status"] = "OPTIONAL_MISSING"
         out.append(row)
     return out
 
@@ -390,12 +400,14 @@ def _render_txt(payload: dict) -> str:
                 age_txt = f"{float(a.get('age_hours')):.2f}h"
             except Exception:
                 age_txt = str(a.get("age_hours"))
+        req_txt = "required" if bool(a.get("required", True)) else "optional"
         lines.append(
-            "  {0}: {1} age={2} max={3}h".format(
+            "  {0}: {1} age={2} max={3}h ({4})".format(
                 str(a.get("path") or "-"),
                 str(a.get("status") or "-"),
                 age_txt,
                 str(a.get("max_age_hours") if a.get("max_age_hours") is not None else "-"),
+                req_txt,
             )
         )
     return "\n".join(lines).strip() + "\n"
@@ -408,7 +420,7 @@ def main() -> int:
         "--artifact",
         action="append",
         default=[],
-        help="Repeatable artifact spec PATH[:MAX_AGE_HOURS], e.g. logs/strategy_register_latest.json:30",
+        help="Repeatable artifact spec PATH[:MAX_AGE_HOURS] or ?PATH[:MAX_AGE_HOURS] for optional artifacts",
     )
     p.add_argument("--out-json", default="", help="Output JSON path (default logs/automation_health_latest.json)")
     p.add_argument("--out-txt", default="", help="Output TXT path (default logs/automation_health_latest.txt)")

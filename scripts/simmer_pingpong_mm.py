@@ -699,9 +699,15 @@ async def run(args) -> int:
     asset_quotas = _parse_asset_quotas(str(args.asset_quotas or ""))
     if asset_quotas:
         logger.info("Asset quotas: " + ", ".join([f"{k}:{v}" for k, v in asset_quotas.items()]))
+    auto_universe = not bool(args.market_ids)
+    universe_refresh_sec = max(0.0, float(args.universe_refresh_sec or 0.0))
+    if auto_universe:
+        logger.info(f"Universe refresh: every {universe_refresh_sec:.0f}s (0=disabled)")
+    elif universe_refresh_sec > 0:
+        logger.info("[{}] note: --universe-refresh-sec is ignored in manual universe mode.".format(iso_now()))
 
     selected: list[tuple[str, str]] = []
-    if args.market_ids:
+    if not auto_universe:
         for mid in [x.strip() for x in args.market_ids.split(",") if x.strip()]:
             selected.append((mid, f"market:{mid}"))
     else:
@@ -722,29 +728,20 @@ async def run(args) -> int:
         maybe_notify_discord(logger, "SIMMER_PONG HALT: no markets selected.")
         return 2
 
-    active_ids = [mid for mid, _ in selected]
-    active_set = set(active_ids)
-    state.active_market_ids = list(active_ids)
-    # Keep stale markets as inactive to preserve PnL continuity across universe changes.
-    for mid in list(state.market_states.keys()):
-        if mid not in active_set:
-            state.market_states[mid].active = False
+    apply_meta = _apply_selected_universe(state, selected)
 
     logger.info("Selected markets:")
     for mid, label in selected:
         logger.info(f"  - {mid} | {label[:120]}")
-
-    # Initialize market state.
-    for mid, label in selected:
-        if mid not in state.market_states:
-            state.market_states[mid] = MarketState(market_id=mid, label=label)
-        else:
-            state.market_states[mid].label = label
-        state.market_states[mid].active = True
+    retained_open = int(apply_meta.get("retained_open_count") or 0)
+    if retained_open > 0:
+        logger.info(f"[{iso_now()}] universe retained {retained_open} open-inventory market(s) outside selected list")
 
     save_state(state_file, state)
 
     start_ts = now_ts()
+    last_universe_refresh = start_ts
+    last_universe_empty_warn = 0.0
     last_summary = 0.0
     last_metrics = 0.0
     trade_cooldowns: Dict[Tuple[str, str], float] = {}
@@ -770,6 +767,45 @@ async def run(args) -> int:
                 state.day_pnl_anchor = _compute_total_pnl(state)
 
             now = now_ts()
+            if auto_universe and universe_refresh_sec > 0 and (now - last_universe_refresh) >= universe_refresh_sec:
+                last_universe_refresh = now
+                refreshed: list[tuple[str, str]] = []
+                try:
+                    markets = fetch_public_markets(status="active", limit=int(args.public_limit), tag=str(args.public_tag or "").strip())
+                    refreshed = _choose_markets_auto(
+                        markets=markets,
+                        count=int(args.auto_select_count or 0),
+                        min_to_resolve_min=float(args.min_time_to_resolve_min or 0.0),
+                        max_to_resolve_min=float(args.max_time_to_resolve_min or 0.0),
+                        min_divergence=float(args.min_divergence or 0.0),
+                        prob_min=float(args.prob_min),
+                        prob_max=float(args.prob_max),
+                        asset_quotas=asset_quotas,
+                    )
+                except Exception as e:
+                    logger.info(f"[{iso_now()}] universe refresh failed: {type(e).__name__}")
+
+                if refreshed:
+                    refresh_meta = _apply_selected_universe(state, refreshed)
+                    if bool(refresh_meta.get("changed")):
+                        logger.info(
+                            f"[{iso_now()}] universe refresh applied "
+                            f"selected={int(refresh_meta.get('selected_count') or 0)} "
+                            f"active={int(refresh_meta.get('active_count') or 0)} "
+                            f"retained_open={int(refresh_meta.get('retained_open_count') or 0)}"
+                        )
+                        for mid, label in refreshed:
+                            logger.info(f"  - {mid} | {label[:120]}")
+                        save_state(state_file, state)
+                else:
+                    warn_gap = max(60.0, universe_refresh_sec)
+                    if (now - last_universe_empty_warn) >= warn_gap:
+                        last_universe_empty_warn = now
+                        logger.info(
+                            f"[{iso_now()}] universe refresh skipped: no markets matched filters; "
+                            f"keeping active universe ({len(state.active_market_ids)})"
+                        )
+
             half = float(args.spread_cents or 2.0) / 200.0
 
             for mid in list(state.market_states.keys()):
@@ -1084,6 +1120,7 @@ def parse_args():
     p.add_argument("--auto-select-count", type=int, default=3, help="Auto-select N markets from public list")
     p.add_argument("--public-limit", type=int, default=200, help="Public markets fetch limit")
     p.add_argument("--public-tag", default="crypto", help="Public markets filter tag (empty=all)")
+    p.add_argument("--universe-refresh-sec", type=float, default=0.0, help="Auto-universe: refresh selected markets every N sec (0=disabled)")
     p.add_argument(
         "--asset-quotas",
         default="",

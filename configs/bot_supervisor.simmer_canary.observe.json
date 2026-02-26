@@ -15,6 +15,8 @@
         "5",
         "--public-limit",
         "250",
+        "--universe-refresh-sec",
+        "60",
         "--min-time-to-resolve-min",
         "1",
         "--max-time-to-resolve-min",

@@ -611,13 +611,14 @@ Automation health report (observe-only):
   - `python scripts/report_automation_health.py --task WeatherTop30ReadinessDaily --task WeatherMimicPipelineDaily --artifact logs/strategy_register_latest.json:30 --artifact logs/strategy_realized_pnl_daily.jsonl:30 --pretty`
 - Key flags:
   - `--task`（repeatable。監視対象Scheduled Task名）
-  - `--artifact`（repeatable。`PATH[:MAX_AGE_HOURS]` 形式）
+  - `--artifact`（repeatable。`PATH[:MAX_AGE_HOURS]`。`?PATH[:MAX_AGE_HOURS]` で optional artifact 指定）
   - `--out-json`, `--out-txt`, `--pretty`
 - Default task checks include:
   - `WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `MorningStrategyStatusDaily`
 - Default artifact checks include:
   - `logs/strategy_register_latest.json`, `logs/clob_arb_realized_daily.jsonl`, `logs/strategy_realized_pnl_daily.jsonl`
   - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`, `logs/morning_status_daily_run.log`
+  - optional: `logs/simmer-ab-decision-latest.json`（存在すれば鮮度判定、未作成なら `OPTIONAL_MISSING` で NO_GO にはしない）
 - Soft-fail behavior:
   - `LastTaskResult=0xC000013A (3221225786)` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する。
   - `MorningStrategyStatusDaily` は `LastTaskResult=267014 (0x41306)` でも `logs/morning_status_daily_run.log` が fresh なら `SOFT_FAIL_INTERRUPTED` として扱う。
@@ -902,7 +903,7 @@ Simmer ($SIM) ping-pong demo:
   - `--paper-seed-every-sec` (observe-onlyで一定間隔ごとに擬似エントリーを作る)
   - `--asset-quotas` (auto universe minimum mix, e.g. `bitcoin:2,ethereum:1,solana:1`)
   - `--max-hold-sec`, `--sell-target-decay-cents-per-min` (inventory回転・出口制御)
-  - `--prob-min`, `--prob-max`, `--min-time-to-resolve-min`, `--max-time-to-resolve-min`, `--min-divergence` (極端確率/満期ウィンドウ/乖離閾値の除外)
+  - `--prob-min`, `--prob-max`, `--min-time-to-resolve-min`, `--max-time-to-resolve-min`, `--min-divergence`, `--universe-refresh-sec` (極端確率/満期ウィンドウ/乖離閾値の除外 + auto-universe再選定)
   - Safety: `SIMMER_PONG_EXECUTE=1` だけではLIVE化されない。LIVEは必ず CLI の `--execute --confirm-live YES` が必要。
 - Observation report:
   - `python scripts/report_simmer_observation.py --hours 24`
