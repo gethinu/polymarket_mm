@@ -309,6 +309,8 @@ def _choose_markets_auto(
     markets: list[dict],
     count: int,
     min_to_resolve_min: float,
+    max_to_resolve_min: float,
+    min_divergence: float,
     prob_min: float,
     prob_max: float,
     asset_quotas: Optional[Dict[str, int]] = None,
@@ -333,14 +335,19 @@ def _choose_markets_auto(
             mins = (resolves_at - now).total_seconds() / 60.0
             if mins < float(min_to_resolve_min or 0.0):
                 continue
+            if float(max_to_resolve_min or 0.0) > 0.0 and mins > float(max_to_resolve_min):
+                continue
+        elif float(max_to_resolve_min or 0.0) > 0.0:
+            continue
 
         # Basic score: prefer probabilities near 0.5 (more room to move in both directions).
         score = 1.0 - abs(p - 0.5)
 
         # If divergence exists, prefer larger magnitude (might correlate with activity/mispricing).
-        div = m.get("divergence")
-        if div is not None:
-            score += min(0.5, abs(_as_float(div, 0.0)))
+        div_abs = abs(_as_float(m.get("divergence"), 0.0))
+        if div_abs < float(min_divergence or 0.0):
+            continue
+        score += min(0.5, div_abs)
 
         scored.append((score, mid, q, _asset_bucket_from_label(q)))
 
@@ -612,6 +619,13 @@ async def run(args) -> int:
         f"max_hold_sec={float(args.max_hold_sec or 0.0):.0f} "
         f"sell_decay={float(args.sell_target_decay_cents_per_min or 0.0):.3f}c/min"
     )
+    logger.info(
+        "Universe filters: "
+        f"resolve_min={float(args.min_time_to_resolve_min or 0.0):.0f}m "
+        f"resolve_max={float(args.max_time_to_resolve_min or 0.0):.0f}m(0=disabled) "
+        f"divergence_min={float(args.min_divergence or 0.0):.4f} "
+        f"prob=[{float(args.prob_min):.2f},{float(args.prob_max):.2f}]"
+    )
     logger.info(f"Loss guard: daily_limit=${args.daily_loss_limit_usd:.2f} (0=disabled)")
     logger.info(f"Log: {log_file}")
     logger.info(f"State: {state_file}")
@@ -633,6 +647,8 @@ async def run(args) -> int:
             markets=markets,
             count=int(args.auto_select_count or 0),
             min_to_resolve_min=float(args.min_time_to_resolve_min or 0.0),
+            max_to_resolve_min=float(args.max_time_to_resolve_min or 0.0),
+            min_divergence=float(args.min_divergence or 0.0),
             prob_min=float(args.prob_min),
             prob_max=float(args.prob_max),
             asset_quotas=asset_quotas,
@@ -1011,6 +1027,8 @@ def parse_args():
         help="Optional minimum asset quotas for auto-universe (e.g. bitcoin:2,ethereum:1,solana:1)",
     )
     p.add_argument("--min-time-to-resolve-min", type=float, default=30.0, help="Filter: minimum minutes until resolves_at")
+    p.add_argument("--max-time-to-resolve-min", type=float, default=0.0, help="Filter: maximum minutes until resolves_at (0=disabled)")
+    p.add_argument("--min-divergence", type=float, default=0.0, help="Filter: minimum abs(divergence) for auto-selected markets")
     p.add_argument("--prob-min", type=float, default=0.05, help="Filter: min probability")
     p.add_argument("--prob-max", type=float, default=0.95, help="Filter: max probability")
 

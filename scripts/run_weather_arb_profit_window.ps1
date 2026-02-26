@@ -30,7 +30,10 @@ param(
   [double]$MinRowsHitPct = 5.0,
   [string]$ReportJson = "logs/weather_arb_profit_window_latest.json",
   [string]$ReportTxt = "logs/weather_arb_profit_window_latest.txt",
-  [switch]$FailOnNoGo
+  [switch]$FailOnNoGo,
+  [switch]$Discord,
+  [string]$TransitionStateJson = "logs/weather_arb_profit_window_transition_state.json",
+  [string]$TransitionLogFile = "logs/weather_arb_profit_window_transition.log"
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,6 +82,94 @@ function Resolve-RepoPath {
   return (Join-Path $BaseDir $PathText)
 }
 
+function Get-EnvAny([string]$name) {
+  $pv = [Environment]::GetEnvironmentVariable($name, "Process")
+  if (-not [string]::IsNullOrWhiteSpace($pv)) { return $pv }
+  $uv = [Environment]::GetEnvironmentVariable($name, "User")
+  if (-not [string]::IsNullOrWhiteSpace($uv)) { return $uv }
+  $mv = [Environment]::GetEnvironmentVariable($name, "Machine")
+  if (-not [string]::IsNullOrWhiteSpace($mv)) { return $mv }
+  return ""
+}
+
+function Get-DiscordWebhookUrl {
+  $url = Get-EnvAny "CLOBBOT_DISCORD_WEBHOOK_URL"
+  if (-not [string]::IsNullOrWhiteSpace($url)) { return $url }
+  return (Get-EnvAny "DISCORD_WEBHOOK_URL")
+}
+
+function Write-JsonFile {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][object]$Payload
+  )
+  $json = $Payload | ConvertTo-Json -Depth 8
+  Set-Content -Path $Path -Value ($json + [Environment]::NewLine) -Encoding utf8
+}
+
+function Append-JsonLine {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][object]$Payload
+  )
+  $line = $Payload | ConvertTo-Json -Depth 8 -Compress
+  Add-Content -Path $Path -Value $line -Encoding utf8
+}
+
+function Send-DiscordTransitionAlert {
+  param(
+    [Parameter(Mandatory = $true)][string]$PreviousDecision,
+    [Parameter(Mandatory = $true)][string]$CurrentDecision,
+    [Parameter(Mandatory = $true)][double]$TargetMonthlyReturnPct,
+    [Parameter(Mandatory = $true)][string]$ReportTxtPath,
+    [Nullable[Double]]$ProjectedMonthlyPct = $null
+  )
+
+  $webhook = Get-DiscordWebhookUrl
+  if ([string]::IsNullOrWhiteSpace($webhook)) {
+    return "webhook_missing"
+  }
+
+  $inv = [System.Globalization.CultureInfo]::InvariantCulture
+  $projectedText = "n/a"
+  if ($ProjectedMonthlyPct.HasValue) {
+    $projectedText = $ProjectedMonthlyPct.Value.ToString("0.00", $inv) + "%"
+  }
+  $targetText = $TargetMonthlyReturnPct.ToString("0.00", $inv) + "%"
+
+  $content = @(
+    "[Weather Profit Window Transition]"
+    "$PreviousDecision -> $CurrentDecision"
+    "projected_monthly=$projectedText target=$targetText"
+  ) -join "`n"
+
+  if (Test-Path $ReportTxtPath) {
+    try {
+      $bodyText = [string](Get-Content -Path $ReportTxtPath -Raw)
+      if ($bodyText.Length -gt 1200) {
+        $bodyText = $bodyText.Substring(0, 1200) + "`n...(truncated)"
+      }
+      $content = $content + [Environment]::NewLine + '```text' + [Environment]::NewLine + $bodyText + [Environment]::NewLine + '```'
+    }
+    catch {
+    }
+  }
+
+  $mention = Get-EnvAny "CLOBBOT_DISCORD_MENTION"
+  if (-not [string]::IsNullOrWhiteSpace($mention)) {
+    $content = "$mention $content"
+  }
+  $payload = @{ content = $content } | ConvertTo-Json -Depth 4
+
+  try {
+    Invoke-RestMethod -Method Post -Uri $webhook -Body $payload -ContentType "application/json" -TimeoutSec 15 | Out-Null
+    return "sent"
+  }
+  catch {
+    return ("failed:{0}" -f $_.Exception.GetType().Name)
+  }
+}
+
 if (-not $Background -and -not $NoBackground) {
   Start-BackgroundSelf -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
 }
@@ -99,6 +190,8 @@ $obsLogPath = Resolve-RepoPath -PathText $ObserveLogFile -BaseDir $baseDir
 $obsStatePath = Resolve-RepoPath -PathText $ObserveStateFile -BaseDir $baseDir
 $reportJsonPath = Resolve-RepoPath -PathText $ReportJson -BaseDir $baseDir
 $reportTxtPath = Resolve-RepoPath -PathText $ReportTxt -BaseDir $baseDir
+$transitionStatePath = Resolve-RepoPath -PathText $TransitionStateJson -BaseDir $baseDir
+$transitionLogPath = Resolve-RepoPath -PathText $TransitionLogFile -BaseDir $baseDir
 
 $obsLogDir = Split-Path -Parent $obsLogPath
 if (-not (Test-Path $obsLogDir)) { New-Item -ItemType Directory -Path $obsLogDir -Force | Out-Null }
@@ -108,6 +201,10 @@ $reportJsonDir = Split-Path -Parent $reportJsonPath
 if (-not (Test-Path $reportJsonDir)) { New-Item -ItemType Directory -Path $reportJsonDir -Force | Out-Null }
 $reportTxtDir = Split-Path -Parent $reportTxtPath
 if (-not (Test-Path $reportTxtDir)) { New-Item -ItemType Directory -Path $reportTxtDir -Force | Out-Null }
+$transitionStateDir = Split-Path -Parent $transitionStatePath
+if (-not (Test-Path $transitionStateDir)) { New-Item -ItemType Directory -Path $transitionStateDir -Force | Out-Null }
+$transitionLogDir = Split-Path -Parent $transitionLogPath
+if (-not (Test-Path $transitionLogDir)) { New-Item -ItemType Directory -Path $transitionLogDir -Force | Out-Null }
 
 if (-not $SkipObserve.IsPresent) {
   Write-Host ("[weather-profit] observe start strategy={0} run_seconds={1} min_edge_cents={2}" -f $ObserveStrategy, $ObserveRunSeconds, (To-Arg $ObserveMinEdgeCents))
@@ -180,6 +277,68 @@ if (Test-Path $reportJsonPath) {
   catch {
     $decision = "PARSE_ERROR"
   }
+}
+$decision = ([string]$decision).Trim().ToUpperInvariant()
+if ([string]::IsNullOrWhiteSpace($decision)) {
+  $decision = "UNKNOWN"
+}
+
+$previousDecision = ""
+if (Test-Path $transitionStatePath) {
+  try {
+    $prevState = Get-Content -Path $transitionStatePath -Raw | ConvertFrom-Json
+    if ($prevState -and $prevState.last_decision) {
+      $previousDecision = ([string]$prevState.last_decision).Trim().ToUpperInvariant()
+    }
+  }
+  catch {
+    $previousDecision = ""
+  }
+}
+$goTransition = ($previousDecision -eq "NO_GO" -and $decision -eq "GO")
+
+$nowUtc = [DateTime]::UtcNow.ToString("o")
+$statePayload = [ordered]@{
+  updated_utc = $nowUtc
+  last_decision = $decision
+  previous_decision = $(if ([string]::IsNullOrWhiteSpace($previousDecision)) { $null } else { $previousDecision })
+  last_projected_monthly_pct = $(if ($null -ne $projectedMonthlyPct) { [double]$projectedMonthlyPct } else { $null })
+  target_monthly_return_pct = [double]$TargetMonthlyReturnPct
+  report_json = $reportJsonPath
+  report_txt = $reportTxtPath
+  go_transition = [bool]$goTransition
+}
+Write-JsonFile -Path $transitionStatePath -Payload $statePayload
+
+if ($goTransition) {
+  Write-Host ("[weather-profit] transition detected: {0} -> {1}" -f $previousDecision, $decision)
+  $eventPayload = [ordered]@{
+    ts_utc = $nowUtc
+    event = "weather_profit_window_go_transition"
+    previous_decision = $previousDecision
+    current_decision = $decision
+    projected_monthly_pct = $(if ($null -ne $projectedMonthlyPct) { [double]$projectedMonthlyPct } else { $null })
+    target_monthly_return_pct = [double]$TargetMonthlyReturnPct
+    report_json = $reportJsonPath
+    report_txt = $reportTxtPath
+  }
+  Append-JsonLine -Path $transitionLogPath -Payload $eventPayload
+
+  if ($Discord.IsPresent) {
+    $discordStatus = Send-DiscordTransitionAlert `
+      -PreviousDecision $previousDecision `
+      -CurrentDecision $decision `
+      -TargetMonthlyReturnPct $TargetMonthlyReturnPct `
+      -ReportTxtPath $reportTxtPath `
+      -ProjectedMonthlyPct $projectedMonthlyPct
+    Write-Host ("[weather-profit] transition discord={0}" -f $discordStatus)
+  }
+  else {
+    Write-Host "[weather-profit] transition discord skipped (flag not set)"
+  }
+}
+elseif ($Discord.IsPresent) {
+  Write-Host "[weather-profit] discord armed: no NO_GO->GO transition"
 }
 
 if ($null -ne $projectedMonthlyPct) {

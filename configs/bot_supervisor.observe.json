@@ -1,6 +1,6 @@
 {
   "name": "observe-suite-default",
-  "description": "Observe-only unified multi-bot profile (btc panic + event + no_longshot + fade suite).",
+  "description": "Observe-only lean profile (event_driven only).",
   "log_file": "logs/bot-supervisor.log",
   "state_file": "logs/bot_supervisor_state.json",
   "jobs": [
@@ -23,7 +23,7 @@
     },
     {
       "name": "btc5m_panic",
-      "enabled": true,
+      "enabled": false,
       "command": [
         "python",
         "scripts/polymarket_btc5m_panic_observe.py",
@@ -49,7 +49,11 @@
         "--min-edge-cents",
         "0.8",
         "--top-n",
-        "20"
+        "20",
+        "--signal-cooldown-sec",
+        "7200",
+        "--signal-state-file",
+        "logs/event-driven-observe-signal-state.json"
       ],
       "restart": "on-failure",
       "restart_delay_sec": 8,
@@ -57,7 +61,7 @@
     },
     {
       "name": "no_longshot_daily_daemon",
-      "enabled": true,
+      "enabled": false,
       "command": [
         "python",
         "scripts/no_longshot_daily_daemon.py",
@@ -81,7 +85,7 @@
     },
     {
       "name": "fade_both",
-      "enabled": true,
+      "enabled": false,
       "command": [
         "C:\\Users\\stair\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
         "scripts/polymarket_clob_fade_observe.py",
@@ -123,7 +127,7 @@
     },
     {
       "name": "fade_long_canary",
-      "enabled": true,
+      "enabled": false,
       "command": [
         "C:\\Users\\stair\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
         "scripts/polymarket_clob_fade_observe.py",
@@ -163,7 +167,7 @@
     },
     {
       "name": "fade_short_canary",
-      "enabled": true,
+      "enabled": false,
       "command": [
         "C:\\Users\\stair\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
         "scripts/polymarket_clob_fade_observe.py",
@@ -203,7 +207,7 @@
     },
     {
       "name": "fade_router",
-      "enabled": true,
+      "enabled": false,
       "command": [
         "C:\\Users\\stair\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
         "scripts/fade_side_router.py",

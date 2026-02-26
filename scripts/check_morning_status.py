@@ -10,6 +10,7 @@ Default behavior:
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import subprocess
 from pathlib import Path
@@ -105,11 +106,37 @@ def real_capital_gate_decision(
     return ("HOLD", reasons) if reasons else ("ELIGIBLE_REVIEW", [])
 
 
+def _count_condition_passes(conditions: dict[str, Any]) -> tuple[int, int]:
+    total = 0
+    passed = 0
+    for v in conditions.values():
+        if not isinstance(v, dict):
+            continue
+        total += 1
+        if bool(v.get("pass")):
+            passed += 1
+    return passed, total
+
+
+def _file_age_hours(path: Path) -> Optional[float]:
+    try:
+        mtime = dt.datetime.fromtimestamp(path.stat().st_mtime)
+    except Exception:
+        return None
+    now = dt.datetime.now()
+    return max(0.0, float((now - mtime).total_seconds() / 3600.0))
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Morning strategy gate check (observe-only).")
     p.add_argument("--no-refresh", action="store_true", help="Skip refresh commands and only read existing snapshot.")
     p.add_argument("--skip-health", action="store_true", help="Skip automation health refresh/check.")
     p.add_argument("--skip-gate-alarm", action="store_true", help="Skip strategy gate alarm refresh/check.")
+    p.add_argument(
+        "--skip-implementation-ledger",
+        action="store_true",
+        help="Skip implementation ledger refresh (render_implementation_ledger.py).",
+    )
     p.add_argument("--strategy-id", default="weather_clob_arb_buckets_observe", help="Target strategy id for gate eval.")
     p.add_argument("--min-realized-days", type=int, default=30, help="Required realized days for gate.")
     p.add_argument("--skip-process-scan", action="store_true", help="Pass --skip-process-scan to strategy snapshot render.")
@@ -144,6 +171,11 @@ def main() -> int:
         help="Pass --discord to check_strategy_gate_alarm.py (transition notification).",
     )
     p.add_argument(
+        "--discord-webhook-env",
+        default="",
+        help="Pass --discord-webhook-env to check_strategy_gate_alarm.py.",
+    )
+    p.add_argument(
         "--fail-on-health-no-go",
         action="store_true",
         help="Exit non-zero when automation health decision is not GO.",
@@ -152,6 +184,27 @@ def main() -> int:
         "--fail-on-stage-not-final",
         action="store_true",
         help="Exit non-zero when realized_30d_gate.decision_3stage is not READY_FINAL.",
+    )
+    p.add_argument(
+        "--skip-simmer-ab",
+        action="store_true",
+        help="Skip Simmer A/B decision summary readout.",
+    )
+    p.add_argument(
+        "--simmer-ab-decision-json",
+        default="logs/simmer-ab-decision-latest.json",
+        help="Simmer A/B decision JSON path.",
+    )
+    p.add_argument(
+        "--fail-on-simmer-ab-final-no-go",
+        action="store_true",
+        help="Exit non-zero when Simmer A/B decision is FINAL and not GO (or decision JSON is missing/invalid).",
+    )
+    p.add_argument(
+        "--simmer-ab-max-stale-hours",
+        type=float,
+        default=30.0,
+        help="Maximum allowed age for Simmer A/B decision JSON when fail-on-simmer gate is enabled.",
     )
     args = p.parse_args()
 
@@ -203,7 +256,14 @@ def main() -> int:
             ]
             if args.discord_gate_alarm:
                 alarm_cmd.append("--discord")
+                discord_webhook_env = str(args.discord_webhook_env or "").strip()
+                if discord_webhook_env:
+                    alarm_cmd.extend(["--discord-webhook-env", discord_webhook_env])
             rc = run_cmd(alarm_cmd)
+            if rc != 0:
+                return rc
+        if not args.skip_implementation_ledger:
+            rc = run_cmd(["python", "scripts/render_implementation_ledger.py"])
             if rc != 0:
                 return rc
 
@@ -296,6 +356,82 @@ def main() -> int:
     print(f"readiness_strict=GO {strict_go}/{strict_cnt} readiness_quality=GO {quality_go}/{quality_cnt}")
     print(f"snapshot={snapshot_path}")
 
+    simmer_decision_available = False
+    simmer_decision_value = "UNKNOWN"
+    simmer_decision_stage = "UNKNOWN"
+    simmer_final_ready = False
+    simmer_file_age_hours: Optional[float] = None
+
+    if not args.skip_simmer_ab:
+        simmer_decision_path = resolve_repo_path(
+            str(args.simmer_ab_decision_json),
+            "logs/simmer-ab-decision-latest.json",
+        )
+        if simmer_decision_path.exists():
+            try:
+                simmer_file_age_hours = _file_age_hours(simmer_decision_path)
+                simmer_payload = load_json(simmer_decision_path)
+                simmer_decision_available = True
+                simmer_decision = str(simmer_payload.get("decision") or "UNKNOWN")
+                simmer_decision_value = simmer_decision
+                simmer_summary = (
+                    simmer_payload.get("summary")
+                    if isinstance(simmer_payload.get("summary"), dict)
+                    else {}
+                )
+                simmer_conditions = (
+                    simmer_payload.get("conditions")
+                    if isinstance(simmer_payload.get("conditions"), dict)
+                    else {}
+                )
+                simmer_cov = (
+                    simmer_summary.get("coverage_data_sufficient")
+                    if isinstance(simmer_summary.get("coverage_data_sufficient"), dict)
+                    else {}
+                )
+                simmer_days = _as_int(simmer_summary.get("data_sufficient_days"), 0)
+                simmer_min_days = _as_int(simmer_summary.get("min_days_required"), 0)
+                simmer_timing = str(simmer_summary.get("decision_timing_status") or "UNKNOWN")
+                simmer_decision_date = str(simmer_summary.get("decision_date") or "N/A")
+                simmer_today = str(simmer_summary.get("today_local") or "N/A")
+                simmer_days_until = _as_int(simmer_summary.get("days_until_decision"), 0)
+                simmer_stage = str(simmer_summary.get("decision_stage") or "UNKNOWN")
+                simmer_decision_stage = simmer_stage
+                simmer_final_ready = bool(simmer_summary.get("final_decision_ready"))
+                simmer_passed, simmer_total = _count_condition_passes(simmer_conditions)
+                simmer_action = str(simmer_payload.get("recommended_action") or "-")
+                print(
+                    "simmer_ab_decision="
+                    f"{simmer_decision} "
+                    f"data_sufficient_days={simmer_days}/{simmer_min_days} "
+                    f"conditions_pass={simmer_passed}/{simmer_total}"
+                )
+                print(
+                    "simmer_ab_coverage_data_sufficient="
+                    f"{str(simmer_cov.get('since') or 'N/A')} -> "
+                    f"{str(simmer_cov.get('until') or 'N/A')}"
+                )
+                print(
+                    "simmer_ab_timing="
+                    f"{simmer_timing} "
+                    f"today={simmer_today} decision_date={simmer_decision_date} "
+                    f"days_until={simmer_days_until:+d} "
+                    f"final_ready={'yes' if simmer_final_ready else 'no'} stage={simmer_stage}"
+                )
+                print(
+                    "simmer_ab_freshness_hours="
+                    f"{(simmer_file_age_hours if simmer_file_age_hours is not None else -1.0):.2f} "
+                    f"max_allowed={float(args.simmer_ab_max_stale_hours):.2f}"
+                )
+                print(f"simmer_ab_action={simmer_action}")
+            except Exception as exc:
+                print(
+                    "simmer_ab_decision=UNKNOWN "
+                    f"reason=parse_error:{type(exc).__name__} path={simmer_decision_path}"
+                )
+        else:
+            print(f"simmer_ab_decision=MISSING path={simmer_decision_path}")
+
     health_decision = "SKIPPED"
     if health_payload:
         health_decision = str(health_payload.get("decision") or "UNKNOWN")
@@ -312,6 +448,34 @@ def main() -> int:
     )
     reason_txt = "; ".join(capital_reasons) if capital_reasons else "all checks passed"
     print(f"real_capital_gate={capital_gate} reasons={reason_txt}")
+
+    if args.fail_on_simmer_ab_final_no_go:
+        if args.skip_simmer_ab:
+            print("simmer_ab_final_gate=SKIPPED_BY_FLAG")
+        elif not simmer_decision_available:
+            print("simmer_ab_final_gate=FAIL reason=decision_missing_or_invalid")
+            return 6
+        elif simmer_file_age_hours is None or simmer_file_age_hours > float(args.simmer_ab_max_stale_hours):
+            stale_text = "unknown" if simmer_file_age_hours is None else f"{simmer_file_age_hours:.2f}"
+            print(
+                "simmer_ab_final_gate=FAIL "
+                f"reason=decision_stale age_hours={stale_text} "
+                f"max_allowed={float(args.simmer_ab_max_stale_hours):.2f}"
+            )
+            return 6
+        elif simmer_decision_stage == "FINAL" and simmer_decision_value != "GO":
+            print(
+                "simmer_ab_final_gate=FAIL "
+                f"decision={simmer_decision_value} stage={simmer_decision_stage} final_ready={'yes' if simmer_final_ready else 'no'}"
+            )
+            return 6
+        elif simmer_decision_stage == "FINAL" and simmer_decision_value == "GO":
+            print("simmer_ab_final_gate=PASS decision=GO stage=FINAL")
+        else:
+            print(
+                "simmer_ab_final_gate=WAIT "
+                f"decision={simmer_decision_value} stage={simmer_decision_stage}"
+            )
 
     if args.fail_on_gate_not_ready and gate_decision != "READY_FOR_JUDGMENT":
         return 3

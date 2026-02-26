@@ -11,4 +11,5 @@
   - refresh with `python scripts/render_implementation_ledger.py`
 - Canonical multi-chat operations document:
   - `docs/llm/CANON.md`
+- For KPI/status reporting or no-longshot operations, call `$polymarket-canon-first` first.
 - Do not add new files under `doc/` (legacy path).

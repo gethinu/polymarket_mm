@@ -1,31 +1,16 @@
 [CmdletBinding()]
 param(
-  [string]$TaskName = "MorningStrategyStatusDaily",
+  [string]$TaskName = "SimmerABDailyReport",
   [string]$RepoRoot = "C:\Repos\polymarket_mm",
-  [string]$StartTime = "08:05",
+  [string]$StartTime = "00:05",
   [string]$PowerShellExe = "powershell.exe",
-  [string]$StrategyId = "weather_clob_arb_buckets_observe",
-  [int]$MinRealizedDays = 30,
-  [string]$SnapshotJson = "logs/strategy_register_latest.json",
-  [string]$HealthJson = "logs/automation_health_latest.json",
-  [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
-  [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
-  [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",
-  [double]$SimmerAbMaxStaleHours = 30.0,
-  [string]$DiscordWebhookEnv = "CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS",
+  [string]$PythonExe = "C:\Users\stair\AppData\Local\Programs\Python\Python311\python.exe",
+  [int]$JudgeMinDays = 25,
+  [double]$JudgeExpectancyRatioThreshold = 0.9,
+  [string]$JudgeDecisionDate = "2026-03-22",
   [Alias("h")]
   [switch]$Help,
-  [switch]$NoRefresh,
-  [switch]$SkipHealth,
-  [switch]$SkipGateAlarm,
-  [switch]$SkipImplementationLedger,
-  [switch]$SkipSimmerAb,
-  [switch]$SkipProcessScan,
-  [switch]$DiscordGateAlarm,
-  [switch]$FailOnGateNotReady,
-  [switch]$FailOnStageNotFinal,
-  [switch]$FailOnHealthNoGo,
-  [switch]$FailOnSimmerAbFinalNoGo,
+  [switch]$SkipJudge,
   [switch]$RunNow,
   [switch]$Background,
   [switch]$NoBackground
@@ -35,8 +20,8 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground [-TaskName MorningStrategyStatusDaily] [-StartTime 08:05] [-StrategyId weather_clob_arb_buckets_observe] [-FailOnStageNotFinal] [-FailOnSimmerAbFinalNoGo] [-SimmerAbMaxStaleHours 30] [-SkipImplementationLedger] [-DiscordWebhookEnv CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS] [-RunNow]"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -?"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground [-TaskName SimmerABDailyReport] [-StartTime 00:05] [-JudgeMinDays 25] [-JudgeExpectancyRatioThreshold 0.9] [-JudgeDecisionDate 2026-03-22] [-SkipJudge] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground -?"
 }
 
 $invLine = [string]$MyInvocation.Line
@@ -77,6 +62,14 @@ function Start-BackgroundSelf {
   exit 0
 }
 
+function Quote-Arg([string]$raw) {
+  $s = [string]$raw
+  if ($s -match '\s|["]') {
+    return ('"{0}"' -f ($s -replace '"', '""'))
+  }
+  return $s
+}
+
 if (-not $Background -and -not $NoBackground) {
   Start-BackgroundSelf -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
 }
@@ -91,7 +84,7 @@ if (-not (Test-Path $PowerShellExe)) {
   }
 }
 
-$runnerPath = Join-Path $RepoRoot "scripts\run_morning_status_daily.ps1"
+$runnerPath = Join-Path $RepoRoot "scripts\run_simmer_ab_daily_report.ps1"
 if (-not (Test-Path $runnerPath)) {
   throw "Runner not found: $runnerPath"
 }
@@ -118,45 +111,23 @@ $argList = @(
   "-NoProfile",
   "-NonInteractive",
   "-ExecutionPolicy", "Bypass",
-  "-File", ('"{0}"' -f $runnerPath),
+  "-File", (Quote-Arg $runnerPath),
   "-NoBackground",
-  "-StrategyId", $StrategyId,
-  "-MinRealizedDays", "$MinRealizedDays",
-  "-SnapshotJson", $SnapshotJson,
-  "-HealthJson", $HealthJson,
-  "-GateAlarmStateJson", $GateAlarmStateJson,
-  "-GateAlarmLogFile", $GateAlarmLogFile,
-  "-SimmerAbDecisionJson", $SimmerAbDecisionJson,
-  "-SimmerAbMaxStaleHours", "$SimmerAbMaxStaleHours"
+  "-RepoRoot", (Quote-Arg $RepoRoot),
+  "-PythonExe", (Quote-Arg $PythonExe),
+  "-JudgeMinDays", "$JudgeMinDays",
+  "-JudgeExpectancyRatioThreshold", "$JudgeExpectancyRatioThreshold",
+  "-JudgeDecisionDate", "$JudgeDecisionDate"
 )
-if ($NoRefresh.IsPresent) { $argList += "-NoRefresh" }
-if ($SkipHealth.IsPresent) { $argList += "-SkipHealth" }
-if ($SkipGateAlarm.IsPresent) { $argList += "-SkipGateAlarm" }
-if ($SkipImplementationLedger.IsPresent) { $argList += "-SkipImplementationLedger" }
-if ($SkipSimmerAb.IsPresent) { $argList += "-SkipSimmerAb" }
-if ($SkipProcessScan.IsPresent) { $argList += "-SkipProcessScan" }
-if ($DiscordGateAlarm.IsPresent) {
-  $argList += "-DiscordGateAlarm"
-  if (-not [string]::IsNullOrWhiteSpace($DiscordWebhookEnv)) {
-    $argList += "-DiscordWebhookEnv"
-    $argList += $DiscordWebhookEnv
-  }
+if ($SkipJudge.IsPresent) {
+  $argList += "-SkipJudge"
 }
-if ($FailOnGateNotReady.IsPresent) { $argList += "-FailOnGateNotReady" }
-if ($FailOnStageNotFinal.IsPresent) { $argList += "-FailOnStageNotFinal" }
-if ($FailOnHealthNoGo.IsPresent) { $argList += "-FailOnHealthNoGo" }
-if ($FailOnSimmerAbFinalNoGo.IsPresent) { $argList += "-FailOnSimmerAbFinalNoGo" }
 $actionArgs = ($argList -join " ")
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
 $trigger = New-ScheduledTaskTrigger -Daily -At $at
-$settings = New-ScheduledTaskSettingsSet `
-  -Hidden `
-  -MultipleInstances IgnoreNew `
-  -StartWhenAvailable `
-  -AllowStartIfOnBatteries `
-  -DontStopIfGoingOnBatteries
-$desc = "Run morning strategy status check (observe-only)"
+$settings = New-ScheduledTaskSettingsSet -Hidden -MultipleInstances IgnoreNew -StartWhenAvailable
+$desc = "Run Simmer A/B daily compare and decision judge (observe-only)"
 
 $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 if ([string]::IsNullOrWhiteSpace($currentUser)) {
@@ -198,33 +169,15 @@ if ($RunNow.IsPresent) {
     "-ExecutionPolicy", "Bypass",
     "-File", $runnerPath,
     "-NoBackground",
-    "-StrategyId", $StrategyId,
-    "-MinRealizedDays", "$MinRealizedDays",
-    "-SnapshotJson", $SnapshotJson,
-    "-HealthJson", $HealthJson,
-    "-GateAlarmStateJson", $GateAlarmStateJson,
-    "-GateAlarmLogFile", $GateAlarmLogFile,
-    "-SimmerAbDecisionJson", $SimmerAbDecisionJson,
-    "-SimmerAbMaxStaleHours", "$SimmerAbMaxStaleHours"
+    "-RepoRoot", $RepoRoot,
+    "-PythonExe", $PythonExe,
+    "-JudgeMinDays", "$JudgeMinDays",
+    "-JudgeExpectancyRatioThreshold", "$JudgeExpectancyRatioThreshold",
+    "-JudgeDecisionDate", "$JudgeDecisionDate"
   )
-  if ($NoRefresh.IsPresent) { $runArgs += "-NoRefresh" }
-  if ($SkipHealth.IsPresent) { $runArgs += "-SkipHealth" }
-  if ($SkipGateAlarm.IsPresent) { $runArgs += "-SkipGateAlarm" }
-  if ($SkipImplementationLedger.IsPresent) { $runArgs += "-SkipImplementationLedger" }
-  if ($SkipSimmerAb.IsPresent) { $runArgs += "-SkipSimmerAb" }
-  if ($SkipProcessScan.IsPresent) { $runArgs += "-SkipProcessScan" }
-  if ($DiscordGateAlarm.IsPresent) {
-    $runArgs += "-DiscordGateAlarm"
-    if (-not [string]::IsNullOrWhiteSpace($DiscordWebhookEnv)) {
-      $runArgs += "-DiscordWebhookEnv"
-      $runArgs += $DiscordWebhookEnv
-    }
+  if ($SkipJudge.IsPresent) {
+    $runArgs += "-SkipJudge"
   }
-  if ($FailOnGateNotReady.IsPresent) { $runArgs += "-FailOnGateNotReady" }
-  if ($FailOnStageNotFinal.IsPresent) { $runArgs += "-FailOnStageNotFinal" }
-  if ($FailOnHealthNoGo.IsPresent) { $runArgs += "-FailOnHealthNoGo" }
-  if ($FailOnSimmerAbFinalNoGo.IsPresent) { $runArgs += "-FailOnSimmerAbFinalNoGo" }
-
   Write-Host "RunNow: executing runner directly (observe-only) ..."
   & $PowerShellExe @runArgs
   if ($LASTEXITCODE -ne 0) {

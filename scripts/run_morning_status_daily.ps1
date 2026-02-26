@@ -8,14 +8,20 @@ param(
   [string]$HealthJson = "logs/automation_health_latest.json",
   [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
   [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
+  [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",
+  [double]$SimmerAbMaxStaleHours = 30.0,
+  [string]$DiscordWebhookEnv = "CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS",
   [switch]$NoRefresh,
   [switch]$SkipHealth,
   [switch]$SkipGateAlarm,
+  [switch]$SkipImplementationLedger,
+  [switch]$SkipSimmerAb,
   [switch]$SkipProcessScan,
   [switch]$DiscordGateAlarm,
   [switch]$FailOnGateNotReady,
   [switch]$FailOnStageNotFinal,
   [switch]$FailOnHealthNoGo,
+  [switch]$FailOnSimmerAbFinalNoGo,
   [switch]$Background,
   [switch]$NoBackground
 )
@@ -92,20 +98,32 @@ $args = @(
   "--snapshot-json", $SnapshotJson,
   "--health-json", $HealthJson,
   "--gate-alarm-state-json", $GateAlarmStateJson,
-  "--gate-alarm-log-file", $GateAlarmLogFile
+  "--gate-alarm-log-file", $GateAlarmLogFile,
+  "--simmer-ab-decision-json", $SimmerAbDecisionJson,
+  "--simmer-ab-max-stale-hours", ([string]$SimmerAbMaxStaleHours)
 )
 
 if ($NoRefresh.IsPresent) { $args += "--no-refresh" }
 if ($SkipHealth.IsPresent) { $args += "--skip-health" }
 if ($SkipGateAlarm.IsPresent) { $args += "--skip-gate-alarm" }
+if ($SkipImplementationLedger.IsPresent) { $args += "--skip-implementation-ledger" }
+if ($SkipSimmerAb.IsPresent) { $args += "--skip-simmer-ab" }
 if ($SkipProcessScan.IsPresent) { $args += "--skip-process-scan" }
-if ($DiscordGateAlarm.IsPresent) { $args += "--discord-gate-alarm" }
+if ($DiscordGateAlarm.IsPresent) {
+  $args += "--discord-gate-alarm"
+  if (-not [string]::IsNullOrWhiteSpace($DiscordWebhookEnv)) {
+    $args += "--discord-webhook-env"
+    $args += $DiscordWebhookEnv
+  }
+}
 if ($FailOnGateNotReady.IsPresent) { $args += "--fail-on-gate-not-ready" }
 if ($FailOnStageNotFinal.IsPresent) { $args += "--fail-on-stage-not-final" }
 if ($FailOnHealthNoGo.IsPresent) { $args += "--fail-on-health-no-go" }
+if ($FailOnSimmerAbFinalNoGo.IsPresent) { $args += "--fail-on-simmer-ab-final-no-go" }
 
-Log ("start strategy_id={0} min_days={1} no_refresh={2} skip_health={3} skip_gate_alarm={4} skip_process_scan={5}" -f `
-  $StrategyId, $MinRealizedDays, $NoRefresh.IsPresent, $SkipHealth.IsPresent, $SkipGateAlarm.IsPresent, $SkipProcessScan.IsPresent)
+$discordWebhookEnvLog = if ($DiscordGateAlarm.IsPresent -and -not [string]::IsNullOrWhiteSpace($DiscordWebhookEnv)) { $DiscordWebhookEnv } else { "-" }
+Log ("start strategy_id={0} min_days={1} no_refresh={2} skip_health={3} skip_gate_alarm={4} skip_implementation_ledger={5} skip_simmer_ab={6} skip_process_scan={7} fail_simmer_final_no_go={8} simmer_max_stale_h={9} discord_webhook_env={10}" -f `
+  $StrategyId, $MinRealizedDays, $NoRefresh.IsPresent, $SkipHealth.IsPresent, $SkipGateAlarm.IsPresent, $SkipImplementationLedger.IsPresent, $SkipSimmerAb.IsPresent, $SkipProcessScan.IsPresent, $FailOnSimmerAbFinalNoGo.IsPresent, $SimmerAbMaxStaleHours, $discordWebhookEnvLog)
 
 $prevPyUtf8 = [Environment]::GetEnvironmentVariable("PYTHONUTF8", "Process")
 $prevPyIoEncoding = [Environment]::GetEnvironmentVariable("PYTHONIOENCODING", "Process")

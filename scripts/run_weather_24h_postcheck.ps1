@@ -5,7 +5,9 @@ param(
   [string]$ObserveLogFile = "logs/clob-arb-weather-observe-24h.log",
   [double]$Hours = 24.0,
   [string]$ThresholdsCents = "0,1,2,3,5,10",
-  [double]$MinUsefulPct = 20.0,
+  [double]$MinUsefulPct = 30.0,
+  [double]$MinUseful5cPct = 10.0,
+  [int]$MinSamples = 300,
   [string]$ReportFile = "logs/weather24h_postcheck_latest.txt",
   [string]$SummaryFile = "logs/weather24h_postcheck_latest.json",
   [string]$AlarmLogFile = "logs/alarm_weather24h.log",
@@ -119,6 +121,7 @@ Set-Content -Path $reportOutPath -Value $reportBody -Encoding UTF8
 
 $match0 = [regex]::Match($outputText, '>=\s+\$0\.0000\s*:\s*(?<hit>\d+)\s*/\s*(?<total>\d+)\s*\((?<pct>\d+(?:\.\d+)?)%\)')
 $match5 = [regex]::Match($outputText, '>=\s+\$0\.0500\s*:\s*(?<hit>\d+)\s*/\s*(?<total>\d+)\s*\((?<pct>\d+(?:\.\d+)?)%\)')
+$matchSamples = [regex]::Match($outputText, 'Samples:\s*(?<samples>\d+)')
 
 $pct0 = $null
 $hit0 = $null
@@ -138,12 +141,47 @@ if ($match5.Success) {
   $total5 = [int]$match5.Groups["total"].Value
 }
 
+$samples = $null
+if ($matchSamples.Success) {
+  $samples = [int]$matchSamples.Groups["samples"].Value
+}
+
 $decision = "REVIEW"
+if ($null -eq $samples -or $samples -lt $MinSamples) {
+  $decision = "REVIEW"
+}
 if ($exitCode -ne 0) {
   $decision = "ERROR"
 }
-elseif ($null -ne $pct0 -and $pct0 -ge $MinUsefulPct) {
+elseif (
+  $null -ne $samples -and $samples -ge $MinSamples -and
+  $null -ne $pct0 -and $pct0 -ge $MinUsefulPct -and
+  $null -ne $pct5 -and $pct5 -ge $MinUseful5cPct
+) {
   $decision = "ADOPT"
+}
+
+$gateReasons = @()
+if ($exitCode -ne 0) {
+  $gateReasons += "report_exit_nonzero"
+}
+if ($null -eq $samples) {
+  $gateReasons += "samples_unparsed"
+} elseif ($samples -lt $MinSamples) {
+  $gateReasons += "samples_below_min"
+}
+if ($null -eq $pct0) {
+  $gateReasons += "positive_0c_unparsed"
+} elseif ($pct0 -lt $MinUsefulPct) {
+  $gateReasons += "positive_0c_below_min"
+}
+if ($null -eq $pct5) {
+  $gateReasons += "positive_5c_unparsed"
+} elseif ($pct5 -lt $MinUseful5cPct) {
+  $gateReasons += "positive_5c_below_min"
+}
+if ($gateReasons.Count -eq 0) {
+  $gateReasons += "all_gates_passed"
 }
 
 $summary = [ordered]@{
@@ -151,7 +189,10 @@ $summary = [ordered]@{
   observe_log_file = $observeLogPath
   hours = $Hours
   thresholds_cents = $ThresholdsCents
+  samples = $samples
+  min_samples = $MinSamples
   min_useful_pct = $MinUsefulPct
+  min_useful_5c_pct = $MinUseful5cPct
   report_exit_code = $exitCode
   positive_0c_hits = $hit0
   positive_0c_total = $total0
@@ -160,6 +201,7 @@ $summary = [ordered]@{
   positive_5c_total = $total5
   positive_5c_pct = $pct5
   decision = $decision
+  gate_reasons = $gateReasons
   report_file = $reportOutPath
 }
 $summary | ConvertTo-Json -Depth 6 | Set-Content -Path $summaryPath -Encoding UTF8
@@ -167,6 +209,12 @@ $summary | ConvertTo-Json -Depth 6 | Set-Content -Path $summaryPath -Encoding UT
 $alarmLine = "[$ts] POSTCHECK decision=$decision exit=$exitCode"
 if ($null -ne $pct0) {
   $alarmLine += (" positive0c={0}% threshold={1}%" -f $pct0.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture), $MinUsefulPct.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture))
+}
+if ($null -ne $pct5) {
+  $alarmLine += (" positive5c={0}% threshold5c={1}%" -f $pct5.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture), $MinUseful5cPct.ToString("0.0", [System.Globalization.CultureInfo]::InvariantCulture))
+}
+if ($null -ne $samples) {
+  $alarmLine += (" samples={0} min_samples={1}" -f $samples, $MinSamples)
 }
 Add-Content -Path $alarmLogPath -Value $alarmLine
 

@@ -28,13 +28,21 @@ import json
 import math
 import os
 import sys
-import threading
-import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.request import Request, urlopen
+
+from lib.clob_auth import build_clob_client_from_env
+from lib.runtime_common import (
+    day_key_local,
+    env_bool as _env_bool,
+    env_float as _env_float,
+    env_int as _env_int,
+    env_str as _env_str,
+    iso_now,
+    maybe_notify_discord as _maybe_notify_discord,
+    now_ts,
+)
 
 
 # Local dependency (same folder)
@@ -47,107 +55,18 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_METRICS_FILE = str(_SCRIPT_DIR.parent / "logs" / "clob-mm-metrics.jsonl")
 
 
-def iso_now() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def now_ts() -> float:
-    return time.time()
-
-
 def local_day_key() -> str:
-    # Use local timezone on the machine (expected JST for the user).
-    return datetime.now().astimezone().strftime("%Y-%m-%d")
-
-
-def _env_str(name: str) -> str:
-    return str(os.environ.get(name, "") or "").strip()
-
-
-def _user_env_from_registry(name: str) -> str:
-    """Best-effort read of HKCU\\Environment for cases where process env isn't populated (Task Scheduler quirks)."""
-    if not sys.platform.startswith("win"):
-        return ""
-    try:
-        import winreg  # type: ignore
-
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as k:
-            v, _t = winreg.QueryValueEx(k, name)
-            return str(v or "").strip()
-    except Exception:
-        return ""
-
-
-def _env_int(name: str) -> Optional[int]:
-    v = _env_str(name)
-    if not v:
-        return None
-    try:
-        return int(float(v))
-    except Exception:
-        return None
-
-
-def _env_float(name: str) -> Optional[float]:
-    v = _env_str(name)
-    if not v:
-        return None
-    try:
-        return float(v)
-    except Exception:
-        return None
-
-
-def _env_bool(name: str) -> Optional[bool]:
-    v = _env_str(name).lower()
-    if not v:
-        return None
-    if v in {"1", "true", "yes", "y", "on"}:
-        return True
-    if v in {"0", "false", "no", "n", "off"}:
-        return False
-    return None
-
-
-def _post_json(url: str, payload: dict, timeout_sec: float = 7.0) -> None:
-    body = json.dumps(payload).encode("utf-8")
-    req = Request(
-        url,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "User-Agent": "clob-mm-bot/1.0",
-        },
-        method="POST",
-    )
-    with urlopen(req, timeout=timeout_sec) as _:
-        return
+    # Keep existing naming in this script.
+    return day_key_local()
 
 
 def maybe_notify_discord(logger: "Logger", message: str) -> None:
-    # Webhook URLs are secrets. Never print them (including indirectly via exception strings).
-    url = (
-        _env_str("CLOBBOT_DISCORD_WEBHOOK_URL")
-        or _user_env_from_registry("CLOBBOT_DISCORD_WEBHOOK_URL")
-        or _env_str("DISCORD_WEBHOOK_URL")
-        or _user_env_from_registry("DISCORD_WEBHOOK_URL")
+    _maybe_notify_discord(
+        logger,
+        message,
+        timeout_sec=7.0,
+        user_agent="clob-mm-bot/1.0",
     )
-    if not url:
-        return
-    mention = _env_str("CLOBBOT_DISCORD_MENTION")
-    content = f"{mention} {message}".strip() if mention else message
-
-    def _send():
-        try:
-            _post_json(url, {"content": content}, timeout_sec=7.0)
-        except Exception as e:
-            code = getattr(e, "code", None)
-            if isinstance(code, int):
-                logger.info(f"[{iso_now()}] notify(discord) failed: HTTP {code}")
-            else:
-                logger.info(f"[{iso_now()}] notify(discord) failed: {type(e).__name__}")
-
-    threading.Thread(target=_send, daemon=True).start()
 
 
 class Logger:
@@ -188,127 +107,13 @@ def _q_up(x: float, tick: float) -> float:
     return math.ceil(x / tick - 1e-12) * tick
 
 
-def _load_plaintext_secret_file(path: str) -> str:
-    p = Path(path or "")
-    if not path or not p.exists():
-        return ""
-    try:
-        return p.read_text(encoding="utf-8").strip()
-    except Exception:
-        return ""
-
-
-def _load_powershell_dpapi_securestring_file(path: str) -> str:
-    """
-    Decrypt a PowerShell `ConvertFrom-SecureString` output (DPAPI-backed) file.
-
-    ConvertFrom-SecureString (DPAPI) typically emits a hex string like:
-      01000000d08c9ddf... (UTF-16LE plaintext after DPAPI unprotect)
-    """
-    if not path:
-        return ""
-    p = Path(path)
-    if not p.exists():
-        return ""
-
-    try:
-        raw = p.read_text(encoding="ascii", errors="ignore").strip()
-    except Exception:
-        return ""
-
-    # Keep only hex chars (in case whitespace/newlines were introduced).
-    hex_only = "".join(ch for ch in raw if ch in "0123456789abcdefABCDEF")
-    if len(hex_only) < 8 or (len(hex_only) % 2) != 0:
-        return ""
-
-    if not sys.platform.startswith("win"):
-        raise RuntimeError("DPAPI decrypt is only supported on Windows.")
-
-    import ctypes
-
-    class _DATA_BLOB(ctypes.Structure):
-        _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_byte))]
-
-    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-    CryptUnprotectData = crypt32.CryptUnprotectData
-    CryptUnprotectData.argtypes = [
-        ctypes.POINTER(_DATA_BLOB),
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_void_p,
-        ctypes.c_uint32,
-        ctypes.POINTER(_DATA_BLOB),
-    ]
-    CryptUnprotectData.restype = ctypes.c_int
-
-    LocalFree = kernel32.LocalFree
-    LocalFree.argtypes = [ctypes.c_void_p]
-    LocalFree.restype = ctypes.c_void_p
-
-    ciphertext = bytes.fromhex(hex_only)
-    buf = ctypes.create_string_buffer(ciphertext, len(ciphertext))
-    in_blob = _DATA_BLOB(len(ciphertext), ctypes.cast(buf, ctypes.POINTER(ctypes.c_byte)))
-    out_blob = _DATA_BLOB()
-
-    ok = CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob))
-    if not ok:
-        return ""
-
-    try:
-        pt = ctypes.string_at(out_blob.pbData, out_blob.cbData)
-    finally:
-        if out_blob.pbData:
-            LocalFree(out_blob.pbData)
-
-    # PowerShell SecureString plaintext is UTF-16LE.
-    try:
-        return pt.decode("utf-16-le").rstrip("\x00").strip()
-    except Exception:
-        return pt.decode("utf-8", errors="ignore").strip()
-
-
 def build_clob_client(clob_host: str, chain_id: int):
-    try:
-        from py_clob_client.client import ClobClient
-        from py_clob_client.clob_types import ApiCreds
-    except ImportError as e:
-        raise RuntimeError("py-clob-client is not installed. Run: python -m pip install py-clob-client") from e
-
-    private_key = (_env_str("PM_PRIVATE_KEY") or "").strip()
-    if not private_key:
-        private_key = _load_plaintext_secret_file(_env_str("PM_PRIVATE_KEY_FILE"))
-    if not private_key:
-        private_key = _load_powershell_dpapi_securestring_file(_env_str("PM_PRIVATE_KEY_DPAPI_FILE"))
-    funder = _env_str("PM_FUNDER") or _env_str("PM_PROXY_ADDRESS")
-    signature_type = int(os.environ.get("PM_SIGNATURE_TYPE", "0"))
-
-    if private_key and not private_key.startswith("0x") and len(private_key) == 64:
-        private_key = "0x" + private_key
-
-    if not private_key or not funder:
-        raise RuntimeError("Missing env for CLOB auth. Need PM_PRIVATE_KEY(_FILE/_DPAPI_FILE) and PM_FUNDER.")
-
-    client = ClobClient(
-        host=clob_host,
+    return build_clob_client_from_env(
+        clob_host=clob_host,
         chain_id=int(chain_id),
-        key=private_key,
-        signature_type=signature_type,
-        funder=funder,
+        missing_env_message="Missing env for CLOB auth. Need PM_PRIVATE_KEY(_FILE/_DPAPI_FILE) and PM_FUNDER.",
+        invalid_key_message="Invalid PM_PRIVATE_KEY format. Expected 64 hex chars (optionally prefixed with 0x).",
     )
-
-    # Level-2 creds are required for orders/trades.
-    k = _env_str("PM_API_KEY")
-    s = _env_str("PM_API_SECRET") or _load_powershell_dpapi_securestring_file(_env_str("PM_API_SECRET_DPAPI_FILE"))
-    p = _env_str("PM_API_PASSPHRASE") or _load_powershell_dpapi_securestring_file(_env_str("PM_API_PASSPHRASE_DPAPI_FILE"))
-    if k and s and p:
-        client.set_api_creds(ApiCreds(api_key=k, api_secret=s, api_passphrase=p))
-    else:
-        creds = client.create_or_derive_api_creds()
-        client.set_api_creds(creds)
-    return client
 
 
 def _apply_env_overrides(args):

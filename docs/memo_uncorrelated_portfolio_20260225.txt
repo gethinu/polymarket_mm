@@ -1,0 +1,95 @@
+memo_uncorrelated_portfolio_20260225
+
+Date: 2026-02-25
+Scope: ADOPTED observe-only strategies
+Reference docs (as requested): docs/llm/SPEC.md, docs/llm/STRATEGY.md, docs/llm/STATE.md
+Canon check: docs/llm/CANON.md reviewed before KPI read
+
+Analyzed strategies:
+- weather_clob_arb_buckets_observe
+- no_longshot_daily_observe
+- link_intake_walletseed_cohort_observe
+- gamma_eventpair_exec_edge_filter_observe
+- hourly_updown_highprob_calibration_observe
+
+1) Extracted realized/observe metrics and daily return series availability
+
+A. weather_clob_arb_buckets_observe
+- Daily return series: available
+- Source: logs/strategy_realized_pnl_daily.jsonl
+- Return definition: realized_pnl_usd / bankroll_usd
+- Points: 2 days (2026-02-24, 2026-02-25)
+- Values: 0.000000, 0.000000
+- Related latest metric: logs/strategy_realized_latest.json (observed_days=2, projected_monthly_return_text=+0.00%)
+
+B. no_longshot_daily_observe
+- Daily return series: available
+- Source: logs/no_longshot_realized_daily.jsonl
+- Return definition: realized_return_pct
+- Points: 1 day (2026-02-25)
+- Value: 0.04316077715477897
+- Related canonical KPI: logs/strategy_register_latest.json -> no_longshot_status.monthly_return_now_text=+4.32%
+
+C. link_intake_walletseed_cohort_observe
+- Daily return series: not found
+- Available observe metrics:
+  - logs/linkseed_7links_link_intake_summary_latest.json
+  - stats.extracted_user_count=1
+  - stats.resolved_user_count=1
+  - stats.cohort_ok=true
+
+D. gamma_eventpair_exec_edge_filter_observe
+- Daily return series: not found
+- Available observe metrics:
+  - logs/clob-arb-eventpair-monthly-estimate-adopt-extended2ab-20260225.json
+  - recommended_monthly_return=0.028736405238915113
+  - event_count=4, sample_count=462
+  - logs/clob-arb-eventpair-metrics-coverage-latest.json -> distinct_events_all=4
+
+E. hourly_updown_highprob_calibration_observe
+- Daily return series: not found (canonical daily PnL/return file absent)
+- Available observe metrics:
+  - logs/hourly_updown_highprob_calibration_168h_tte45_70_95_btc_eth_sol_xrp.json
+  - summary.qualified_samples=221
+  - summary.edge_empirical_minus_price=0.04377629439660824
+
+2) Pairwise correlation coefficients
+
+Result: all 10 strategy pairs are insufficient for correlation estimation.
+Reason: overlap_days < 2 for every pair.
+
+Pair details:
+- weather_clob_arb_buckets_observe vs no_longshot_daily_observe: overlap_days=1 -> insufficient
+- All other pairs: overlap_days=0 -> insufficient
+
+3) Low-correlation combinations and minimal uncorrelated set recommendation
+
+Empirical conclusion:
+- No statistically defensible low-correlation pair/set can be identified from current logs.
+
+Provisional (assumption-based) recommendation for return portfolio tracking:
+- Minimal provisional set: {no_longshot_daily_observe, gamma_eventpair_exec_edge_filter_observe}
+- Rationale: both have positive return-like observe metrics and different mechanism domains (no-longshot scanner vs gamma event-pair execution-edge filter).
+- Important caveat: this is NOT an empirical uncorrelated claim (correlation unestimated).
+
+Proxy monthly return estimate under equal-weight and zero-correlation assumption:
+- no_longshot proxy monthly return: +4.32% (canonical key in strategy_register_latest.json)
+- gamma_eventpair proxy monthly return: +2.8736%
+- Portfolio proxy expected monthly return: (4.32% + 2.8736%) / 2 = 3.5968%
+- Risk reduction estimate: not quantifiable from current data (daily sigma/correlation not estimable)
+
+4) Explicit missing metrics (by strategy)
+
+- weather_clob_arb_buckets_observe:
+  - Missing: longer daily history (>=30 overlapping days preferred) and non-zero variance period.
+- no_longshot_daily_observe:
+  - Missing: >=2 days overlap with at least one other strategy (currently 1 day total).
+- link_intake_walletseed_cohort_observe:
+  - Missing: strategy-level daily return/PnL series (e.g., daily_return_ratio).
+- gamma_eventpair_exec_edge_filter_observe:
+  - Missing: strategy-level daily return/PnL series (currently only monthly estimate/coverage metrics).
+- hourly_updown_highprob_calibration_observe:
+  - Missing: strategy-level daily return/PnL series (currently calibration edge metrics only).
+
+Notes:
+- Return metric definitions are currently mixed across sources (bankroll-normalized vs resolved-cost-basis return), which also blocks strict cross-strategy covariance estimation.

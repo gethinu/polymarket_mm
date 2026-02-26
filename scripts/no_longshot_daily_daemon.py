@@ -280,6 +280,14 @@ def run_daily_once(args, logger: Logger) -> Tuple[int, str]:
         "-File",
         str(script_path),
         "-NoBackground",
+        "-RealizedFastMaxPages",
+        str(int(args.runner_realized_fast_max_pages)),
+        "-RealizedFastYesMin",
+        str(float(args.runner_realized_fast_yes_min)),
+        "-RealizedFastYesMax",
+        str(float(args.runner_realized_fast_yes_max)),
+        "-RealizedFastMaxHoursToEnd",
+        str(float(args.runner_realized_fast_max_hours_to_end)),
     ]
     if args.skip_refresh:
         cmd.append("-SkipRefresh")
@@ -412,6 +420,30 @@ def parse_args():
     )
     p.set_defaults(skip_refresh=True)
     p.add_argument("--discord", action="store_true", help="Pass -Discord to daily report script")
+    p.add_argument(
+        "--runner-realized-fast-max-pages",
+        type=int,
+        default=120,
+        help="Pass -RealizedFastMaxPages to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-realized-fast-yes-min",
+        type=float,
+        default=0.01,
+        help="Pass -RealizedFastYesMin to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-realized-fast-yes-max",
+        type=float,
+        default=0.20,
+        help="Pass -RealizedFastYesMax to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-realized-fast-max-hours-to-end",
+        type=float,
+        default=72.0,
+        help="Pass -RealizedFastMaxHoursToEnd to run_no_longshot_daily_report.ps1.",
+    )
     p.add_argument("--python-exe", default="python", help="Python executable for realized-refresh runner")
     p.add_argument(
         "--realized-refresh-sec",
@@ -487,6 +519,30 @@ def parse_args():
 def main() -> int:
     args = parse_args()
     logger = Logger(args.log_file)
+    if args.runner_realized_fast_yes_min < 0.0 or args.runner_realized_fast_yes_max > 1.0:
+        logger.info(
+            f"[{iso_now()}] refused: runner fast yes range "
+            f"[{args.runner_realized_fast_yes_min},{args.runner_realized_fast_yes_max}] must be within [0,1]"
+        )
+        return 2
+    if args.runner_realized_fast_yes_min > args.runner_realized_fast_yes_max:
+        logger.info(
+            f"[{iso_now()}] refused: runner fast yes min "
+            f"{args.runner_realized_fast_yes_min} > max {args.runner_realized_fast_yes_max}"
+        )
+        return 2
+    if int(args.runner_realized_fast_max_pages) < 1:
+        logger.info(
+            f"[{iso_now()}] refused: runner fast max pages "
+            f"{int(args.runner_realized_fast_max_pages)} must be >= 1"
+        )
+        return 2
+    if float(args.runner_realized_fast_max_hours_to_end) <= 0.0:
+        logger.info(
+            f"[{iso_now()}] refused: runner fast max hours "
+            f"{float(args.runner_realized_fast_max_hours_to_end)} must be > 0"
+        )
+        return 2
     if (
         float(args.realized_refresh_sec) > 0.0
         and int(args.realized_entry_top_n) > 0
@@ -512,7 +568,10 @@ def main() -> int:
         f"[{iso_now()}] cfg run_at={args.run_at_hhmm} poll={args.poll_sec:.1f}s "
         f"retry_delay={args.retry_delay_sec:.1f}s max_run={args.max_run_seconds}s "
         f"skip_refresh={args.skip_refresh} run_on_start={args.run_on_start} "
-        f"realized_refresh_sec={args.realized_refresh_sec:.1f} realized_entry_top_n={int(args.realized_entry_top_n)}"
+        f"realized_refresh_sec={args.realized_refresh_sec:.1f} realized_entry_top_n={int(args.realized_entry_top_n)} "
+        f"runner_fast_yes=[{args.runner_realized_fast_yes_min},{args.runner_realized_fast_yes_max}] "
+        f"runner_fast_max_h={args.runner_realized_fast_max_hours_to_end} "
+        f"runner_fast_pages={int(args.runner_realized_fast_max_pages)}"
     )
     logger.info(f"[{iso_now()}] log={args.log_file}")
     logger.info(f"[{iso_now()}] state={args.state_file}")

@@ -18,6 +18,10 @@ param(
   [int]$GuardMinTrainN = 20,
   [int]$GuardMinTestN = 20,
   [int]$ScreenMaxPages = 6,
+  [int]$RealizedFastMaxPages = 120,
+  [double]$RealizedFastYesMin = 0.01,
+  [double]$RealizedFastYesMax = 0.20,
+  [double]$RealizedFastMaxHoursToEnd = 72.0,
   [double]$ScreenMinLiquidity = 50000,
   [double]$ScreenMinVolume24h = 1000,
   [int]$GapMaxPages = 6,
@@ -45,6 +49,10 @@ param(
   [double]$GapFallbackMaxHoursToEnd = 48.0,
   [switch]$GapFallbackNoHourCap,
   [string]$GapRelation = "both",
+  [string]$GapOutcomeTag = "prod",
+  [int]$GapErrorAlertMinRuns7d = 5,
+  [double]$GapErrorAlertRate7d = 0.2,
+  [switch]$FailOnGapErrorRateHigh,
   [int]$GapMaxPairsPerEvent = 20,
   [int]$GapTopN = 30,
   [switch]$Discord
@@ -107,13 +115,19 @@ $realizedDailyJsonl = Join-Path $logDir "no_longshot_realized_daily.jsonl"
 $realizedLatestJson = Join-Path $logDir "no_longshot_realized_latest.json"
 $realizedMonthlyTxt = Join-Path $logDir "no_longshot_monthly_return_latest.txt"
 $realizedEntryTopN = 0
-$realizedFastMaxPages = 120
-$realizedFastYesMin = 0.01
-$realizedFastYesMax = 0.20
-$realizedFastMaxHoursToEnd = 72.0
 
 if (-not (Test-Path $logDir)) {
   New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+}
+
+if ($realizedFastYesMin -lt 0.0 -or $realizedFastYesMax -gt 1.0 -or $realizedFastYesMin -gt $realizedFastYesMax) {
+  throw "Invalid fast realized yes range: [$realizedFastYesMin,$realizedFastYesMax] (expected 0<=min<=max<=1)"
+}
+if ($realizedFastMaxPages -lt 1) {
+  throw "Invalid RealizedFastMaxPages: $realizedFastMaxPages (expected >=1)"
+}
+if ($realizedFastMaxHoursToEnd -le 0.0) {
+  throw "Invalid RealizedFastMaxHoursToEnd: $realizedFastMaxHoursToEnd (expected >0)"
 }
 
 $ExcludeKeywordsArg = ","
@@ -263,6 +277,64 @@ function Read-GapCounts([string]$SummaryPath) {
   return $ret
 }
 
+function Read-GapErrorStats([string]$LogPath, [int]$LookbackDays, [string]$IncludeTag = "prod") {
+  $ret = @{
+    runs = 0
+    error_runs = 0
+    error_rate = 0.0
+  }
+  if ($LookbackDays -lt 1) {
+    return $ret
+  }
+  if (-not (Test-Path $LogPath)) {
+    return $ret
+  }
+  $includeTagNorm = "prod"
+  if (-not [string]::IsNullOrWhiteSpace($IncludeTag)) {
+    $includeTagNorm = $IncludeTag.Trim().ToLowerInvariant()
+  }
+  $cutoff = (Get-Date).AddDays(-1.0 * [double]$LookbackDays)
+  $pattern = '^\[(?<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] gap scan outcome: stage=(?<stage>\S+) had_error=(?<had>true|false)(?: tag=(?<tag>\S+))?$'
+  try {
+    foreach ($line in (Get-Content -Path $LogPath)) {
+      $m = [regex]::Match($line, $pattern)
+      if (-not $m.Success) {
+        continue
+      }
+      $ts = $null
+      try {
+        $ts = [DateTime]::ParseExact(
+          $m.Groups["ts"].Value,
+          "yyyy-MM-dd HH:mm:ss",
+          [System.Globalization.CultureInfo]::InvariantCulture
+        )
+      } catch {
+        continue
+      }
+      if ($ts -lt $cutoff) {
+        continue
+      }
+      $tagNorm = "prod"
+      $tagRaw = [string]$m.Groups["tag"].Value
+      if (-not [string]::IsNullOrWhiteSpace($tagRaw)) {
+        $tagNorm = $tagRaw.Trim().ToLowerInvariant()
+      }
+      if ($tagNorm -ne $includeTagNorm) {
+        continue
+      }
+      $ret.runs = [int]$ret.runs + 1
+      if ($m.Groups["had"].Value -eq "true") {
+        $ret.error_runs = [int]$ret.error_runs + 1
+      }
+    }
+  } catch {
+  }
+  if ([int]$ret.runs -gt 0) {
+    $ret.error_rate = [double]$ret.error_runs / [double]$ret.runs
+  }
+  return $ret
+}
+
 function Select-BestGapRowsPerEvent([object[]]$Rows) {
   if ($null -eq $Rows -or $Rows.Count -eq 0) {
     return @()
@@ -308,7 +380,7 @@ if (-not $discordRequested) {
   }
 }
 
-Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation discord_req=$discordRequested"
+Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested"
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
@@ -546,6 +618,39 @@ if (($gapRows.Count -eq 0) -and $shouldRunNoHourFallback) {
   if (-not $gapNoHourOk) {
     $gapScanStage = ("{0}_error" -f $gapScanStage)
   }
+}
+$gapScanHadError = [bool]($gapScanStage -like "*_error")
+$gapScanHadErrorText = if ($gapScanHadError) { "true" } else { "false" }
+Log ("gap scan outcome: stage={0} had_error={1} tag={2}" -f $gapScanStage, $gapScanHadErrorText, $GapOutcomeTag)
+$gapErrorStatsTag = "prod"
+$gapErrorAlertMinRuns7dApplied = [int]$GapErrorAlertMinRuns7d
+if ($gapErrorAlertMinRuns7dApplied -lt 1) {
+  $gapErrorAlertMinRuns7dApplied = 1
+}
+$gapErrorAlertRate7dApplied = [double]$GapErrorAlertRate7d
+if ($gapErrorAlertRate7dApplied -lt 0.0) {
+  $gapErrorAlertRate7dApplied = 0.0
+}
+if ($gapErrorAlertRate7dApplied -gt 1.0) {
+  $gapErrorAlertRate7dApplied = 1.0
+}
+$gapErrorStats7d = Read-GapErrorStats -LogPath $runLog -LookbackDays 7 -IncludeTag $gapErrorStatsTag
+$gapErrorStats30d = Read-GapErrorStats -LogPath $runLog -LookbackDays 30 -IncludeTag $gapErrorStatsTag
+$gapErrorRuns7dText = "n/a (no samples)"
+$gapErrorRuns30dText = "n/a (no samples)"
+if ([int]$gapErrorStats7d.runs -gt 0) {
+  $gapErrorRuns7dText = ("{0}/{1} ({2:0.0%})" -f [int]$gapErrorStats7d.error_runs, [int]$gapErrorStats7d.runs, [double]$gapErrorStats7d.error_rate)
+}
+if ([int]$gapErrorStats30d.runs -gt 0) {
+  $gapErrorRuns30dText = ("{0}/{1} ({2:0.0%})" -f [int]$gapErrorStats30d.error_runs, [int]$gapErrorStats30d.runs, [double]$gapErrorStats30d.error_rate)
+}
+$gapErrorRateAlert7d = $false
+if (
+  ([int]$gapErrorStats7d.runs -ge $gapErrorAlertMinRuns7dApplied) -and
+  ([double]$gapErrorStats7d.error_rate -ge $gapErrorAlertRate7dApplied)
+) {
+  $gapErrorRateAlert7d = $true
+  Log ("warn: gap error rate high tag={0} 7d={1} threshold>={2:0.0%} min_runs={3}" -f $gapErrorStatsTag, $gapErrorRuns7dText, [double]$gapErrorAlertRate7dApplied, [int]$gapErrorAlertMinRuns7dApplied)
 }
 $gapSummaryThresholds = Parse-FloatList -raw $GapSummaryThresholdGrid
 if ($gapSummaryThresholds.Count -eq 0) {
@@ -875,6 +980,11 @@ $lines = @(
   ("- gap window days: {0}" -f $gapScanDaysUsed)
   ("- gap window hours: {0}" -f $gapScanHoursUsed)
   ("- gap fallback used: {0}" -f $gapFallbackUsed)
+  ("- gap error stats tag: {0}" -f $gapErrorStatsTag)
+  ("- gap error alert 7d threshold/min_runs: {0:0.0%}/{1}" -f [double]$gapErrorAlertRate7dApplied, [int]$gapErrorAlertMinRuns7dApplied)
+  ("- fail_on_gap_error_rate_high: {0}" -f [bool]$FailOnGapErrorRateHigh.IsPresent)
+  ("- gap error runs 7d: {0}" -f $gapErrorRuns7dText)
+  ("- gap error runs 30d: {0}" -f $gapErrorRuns30dText)
   ("- gap universe: markets={0} interval={1} events={2} pairs={3}" -f $gapMarketsTotal, $gapIntervalMarkets, $gapEvents, $gapPairs)
   ""
   "Backtest:"
@@ -910,6 +1020,12 @@ foreach ($r in ($screenRows | Select-Object -First 10)) {
 }
 
 $lines += ""
+if ($gapErrorRateAlert7d) {
+  $lines += ("WARNING: gap scan error rate high for tag={0} over 7d: {1} (threshold>={2:0.0%}, min_runs={3})." -f $gapErrorStatsTag, $gapErrorRuns7dText, [double]$gapErrorAlertRate7dApplied, [int]$gapErrorAlertMinRuns7dApplied)
+}
+if ($gapScanHadError) {
+  $lines += ("WARNING: gap scan had errors (stage={0}); gap candidates may be incomplete." -f $gapScanStage)
+}
 $lines += ("Logical gaps now: raw={0} filtered={1} unique_events={2} (net>={3:0.00}c)" -f $gapRows.Count, $gapRowsSummaryFiltered.Count, $gapRowsBestPerEvent.Count, [double]$gapSummarySelectedThreshold)
 $lines += "Logical gaps threshold stats:"
 $lines += ("- target_unique_events(applied)={0}" -f [int]$gapSummaryAppliedTargetUniqueEvents)
@@ -937,6 +1053,11 @@ $lines | Out-File -FilePath $summaryTxt -Encoding utf8
 Log "done summary=$summaryTxt"
 if ($discordRequested) {
   Send-DiscordSummary -summaryPath $summaryTxt
+}
+
+if ($FailOnGapErrorRateHigh.IsPresent -and $gapErrorRateAlert7d) {
+  Log ("fail: gap error rate high for tag={0} over 7d ({1})" -f $gapErrorStatsTag, $gapErrorRuns7dText)
+  exit 2
 }
 
 exit 0

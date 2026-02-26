@@ -113,6 +113,40 @@ def append_jsonl(path: Path, row: Dict[str, object]) -> None:
         f.write(json.dumps(row, ensure_ascii=True) + "\n")
 
 
+def load_signal_state(path: Path) -> Dict[str, float]:
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        obj = raw.get("last_emit_ts_by_key")
+        if not isinstance(obj, dict):
+            return {}
+        out: Dict[str, float] = {}
+        for k, v in obj.items():
+            key = str(k or "").strip()
+            if not key:
+                continue
+            ts = as_float(v, math.nan)
+            if math.isfinite(ts) and ts > 0.0:
+                out[key] = float(ts)
+        return out
+    except Exception:
+        return {}
+
+
+def save_signal_state(path: Path, state: Dict[str, float]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "updated_at_utc": now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "last_emit_ts_by_key": state,
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
 class Logger:
     def __init__(self, log_file: str):
         self.log_file = Path(log_file)
@@ -600,15 +634,37 @@ def run_once(args: argparse.Namespace, logger: Logger) -> int:
 
     opportunities.sort(key=lambda x: (x.edge_cents, x.confidence), reverse=True)
 
+    top_raw = opportunities[: max(0, int(args.top_n))]
+    top: List[Opportunity] = []
+    suppressed_count = 0
+    cooldown_sec = max(0.0, float(args.signal_cooldown_sec))
+    if cooldown_sec > 0.0:
+        state_path = Path(args.signal_state_file)
+        last_emit = load_signal_state(state_path)
+        now_ts = time.time()
+        for opp in top_raw:
+            key = f"{opp.market_id}:{opp.side}"
+            prev = float(last_emit.get(key) or 0.0)
+            if prev > 0.0 and (now_ts - prev) < cooldown_sec:
+                suppressed_count += 1
+                continue
+            last_emit[key] = now_ts
+            top.append(opp)
+        keep_after = now_ts - max(cooldown_sec * 6.0, 24.0 * 3600.0)
+        last_emit = {k: v for k, v in last_emit.items() if v >= keep_after}
+        save_signal_state(state_path, last_emit)
+    else:
+        top = top_raw
+
     logger.info(
         (
             f"[{now_iso()}] run={run_id} scanned={scanned} binary={binary_count} eligible={filtered_count} "
             f"event_matched={event_count} candidates={len(opportunities)} "
+            f"suppressed={suppressed_count} written={len(top)} "
             f"elapsed_sec={(time.time() - t0):.2f}"
         )
     )
 
-    top = opportunities[: max(0, int(args.top_n))]
     for idx, opp in enumerate(top, start=1):
         dte = "na" if opp.days_to_end is None else f"{opp.days_to_end:.1f}d"
         logger.info(
@@ -634,6 +690,7 @@ def run_once(args: argparse.Namespace, logger: Logger) -> int:
         "eligible_count": filtered_count,
         "event_count": event_count,
         "candidate_count": len(opportunities),
+        "suppressed_count": suppressed_count,
         "top_written": len(top),
         "runtime_sec": round(time.time() - t0, 3),
         "args": {
@@ -646,6 +703,7 @@ def run_once(args: argparse.Namespace, logger: Logger) -> int:
             "max_leg_price": args.max_leg_price,
             "min_confidence": args.min_confidence,
             "include_non_event": bool(args.include_non_event),
+            "signal_cooldown_sec": args.signal_cooldown_sec,
         },
     }
     append_jsonl(Path(args.metrics_file), metrics_row)
@@ -707,6 +765,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--min-confidence", type=float, default=0.25, help="Minimum model confidence [0,1].")
     p.add_argument("--top-n", type=int, default=15, help="Top opportunities to print/write per run.")
+    p.add_argument(
+        "--signal-cooldown-sec",
+        type=float,
+        default=0.0,
+        help="Suppress repeated emits for same market+side within this cooldown (0 = disabled).",
+    )
+    p.add_argument(
+        "--signal-state-file",
+        default="logs/event-driven-observe-signal-state.json",
+        help="JSON state path for signal cooldown suppression.",
+    )
 
     p.add_argument("--kelly-fraction", type=float, default=0.25, help="Fractional Kelly multiplier.")
     p.add_argument("--max-kelly-fraction", type=float, default=0.20, help="Cap on Kelly fraction of bankroll.")

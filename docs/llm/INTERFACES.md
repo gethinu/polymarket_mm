@@ -17,6 +17,7 @@ PowerShell task scripts (background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_observe.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_arb_observe_task.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_weather_24h_alarm.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cancel_weather_24h_alarm.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_24h_postcheck.ps1`
@@ -36,6 +37,7 @@ PowerShell task scripts (background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_pingpong_task.ps1`
     - If new task creation is denied, installer falls back to reusing `PolymarketClobMM`.
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup_clob_backend.ps1`
     - `setup_clob_backend.ps1` is interactive and relaunches in a separate PowerShell window.
 
@@ -54,8 +56,8 @@ Bot supervisor (parallel manager for multiple bots):
   - `status/stop`: `--state-file`
   - env overrides: `BOTSUP_CONFIG`, `BOTSUP_RUN_SECONDS`, `BOTSUP_POLL_SEC`, `BOTSUP_WRITE_STATE_SEC`
 - Default `configs/bot_supervisor.observe.json` jobs:
-  - enabled: `btc5m_panic`, `event_driven`, `no_longshot_daily_daemon`, `fade_both`, `fade_long_canary`, `fade_short_canary`, `fade_router`
-  - disabled by default: `btc5m_lag`, `clob_fade`
+  - enabled: `event_driven`
+  - disabled by default: `btc5m_lag`, `btc5m_panic`, `no_longshot_daily_daemon`, `fade_both`, `fade_long_canary`, `fade_short_canary`, `fade_router`, `clob_fade`
   - `no_longshot_daily_daemon` を有効化する場合、重複実行防止のため Scheduled Task `NoLongshotDailyReport` は停止/無効化して運用する
   - `weather_daily_daemon` を使う場合は、`WeatherMimicPipelineDaily` / `WeatherTop30ReadinessDaily` Scheduled Task を停止/無効化して重複実行を避ける
 
@@ -74,6 +76,7 @@ Polymarket CLOB arb monitor:
   - `python scripts/polymarket_clob_arb_realtime.py --universe btc-updown --strategy yes-no --btc-updown-window-minutes 5,15 --btc-5m-windows-back 1 --btc-5m-windows-forward 1 --min-edge-cents 1.0`
   - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --gamma-limit 300 --max-subscribe-tokens 40`
   - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --max-subscribe-tokens 40 --observe-exec-edge-filter --observe-exec-edge-min-usd 0 --observe-exec-edge-strike-limit 2 --observe-exec-edge-cooldown-sec 90 --observe-exec-edge-filter-strategies event-yes`
+  - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --gamma-limit 1500 --gamma-min-liquidity 0 --gamma-min-volume24hr 0 --gamma-scan-max-markets 40000 --gamma-max-days-to-end 0 --max-subscribe-tokens 400 --metrics-log-all-candidates --observe-exec-edge-filter --observe-exec-edge-min-usd 0 --observe-exec-edge-strike-limit 2 --observe-exec-edge-cooldown-sec 90 --observe-exec-edge-filter-strategies event-yes`
   - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy yes-no --sports-live-only --sports-live-prestart-min 10 --sports-live-postend-min 30`
   - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy yes-no --sports-live-only --sports-market-types draw,moneyline,total --sports-require-matchup --sports-feed-provider espn --sports-feed-strict`
   - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy yes-no --sports-live-only --notify-observe-signals`
@@ -81,6 +84,8 @@ Polymarket CLOB arb monitor:
 - Key flags:
   - `--universe` (`weather` / `gamma-active` / `btc-5m` / `btc-updown`)
   - `--strategy` (`buckets` / `yes-no` / `event-pair` / `both` / `all`)
+  - `--gamma-limit`, `--gamma-offset`, `--gamma-min-liquidity`, `--gamma-min-volume24hr`, `--gamma-scan-max-markets`, `--gamma-max-days-to-end`, `--gamma-score-halflife-days`（`gamma-active` 探索・選別の上限と品質条件）
+  - `polymarket_clob_arb_realtime.py` の `gamma-active` は `--gamma-pages` / `--gamma-page-size` 非対応（探索深さは `--gamma-scan-max-markets` で調整）。
   - `--btc-updown-window-minutes`（`btc-5m`/`btc-updown` で監視する短期窓。`5` または `15`、複数は `5,15`）
   - `--btc-5m-windows-back`, `--btc-5m-windows-forward`（`btc-5m`/`btc-updown` で前後何窓まで同時監視するか）
   - `--sports-live-only`, `--sports-live-prestart-min`, `--sports-live-postend-min`（`gamma-active + yes-no` でスポーツ市場の試合中/前後のみを監視）
@@ -123,6 +128,7 @@ Polymarket weather arb monitor helper (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_observe.ps1 -NoBackground -RunSeconds 300`
 - Key flags:
   - `-RunSeconds`, `-MinEdgeCents`, `-Shares`, `-Strategy` (`buckets`/`yes-no`/`both`), `-SummaryEverySec`, `-MaxSubscribeTokens`
+  - `-RestartOnFailure`, `-RestartDelaySec`, `-MaxRestarts`（`code!=0` 終了時の自動再試行。`RunSeconds>0` なら残時間で再実行）
   - `-LogFile`, `-StateFile`, `-NoBackground`
   - Default strategy is `buckets` for weather basket monitoring.
   - This helper always forces observe-only (`CLOBBOT_EXECUTE=0` in process scope).
@@ -148,13 +154,17 @@ Polymarket weather 24h completion alarm:
 - Key flags:
   - setter: `-AlarmAt`, `-Message`, `-LogFile`, `-MarkerFile`, `-WaiterStateFile`, `-MsgTimeoutSec`, `-NoBackground`
   - cancel: `-WaiterStateFile`
-  - postcheck: `-ObserveLogFile`, `-Hours`, `-ThresholdsCents`, `-MinUsefulPct`, `-ReportFile`, `-SummaryFile`, `-AlarmLogFile`, `-NoBackground`
+  - postcheck: `-ObserveLogFile`, `-Hours`, `-ThresholdsCents`, `-MinUsefulPct`, `-MinUseful5cPct`, `-MinSamples`, `-ReportFile`, `-SummaryFile`, `-AlarmLogFile`, `-NoBackground`
   - installer: `-TaskName`, `-AlarmAt`, `-Message`, `-LogFile`, `-MarkerFile`, `-MsgTimeoutSec`, `-RunNow`, `-NoBackground`
   - action: `-Message`, `-LogFile`, `-MarkerFile`, `-MsgTimeoutSec`, `-DisableMsg`
 - Behavior:
   - Writes append log, latest marker, and local waiter state under `logs/`.
   - Uses bounded `msg.exe` notification (forced timeout) to avoid task hang.
   - Runs `run_weather_24h_postcheck.ps1` after alarm action to produce latest usefulness snapshot.
+  - Current ADOPT gate (`run_weather_24h_postcheck.ps1` default):
+    - `Samples >= 300`
+    - `positive_0c_pct >= 30.0`
+    - `positive_5c_pct >= 10.0`
 
 Polymarket weather arb monthly-return window estimator (observe-only):
 - Report tool:
@@ -164,10 +174,18 @@ Polymarket weather arb monthly-return window estimator (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1 -NoBackground -ObserveRunSeconds 1800 -AssumedBankrollUsd 100 -TargetMonthlyReturnPct 15`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1 -NoBackground -SkipObserve -ReportHours 24 -FailOnNoGo`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1 -NoBackground -SkipObserve -ReportHours 24 -Discord`
+- Weekly task installer (Monday 01:00, observe-only):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground -StartTime 01:00 -AssumedBankrollUsd 100 -TargetMonthlyReturnPct 15 -Discord`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground -RunNow`
 - Key flags:
   - report: `--thresholds-cents`, `--capture-ratios`, `--base-capture-ratio`, `--assumed-bankroll-usd`, `--target-monthly-return-pct`, `--min-opportunities-per-day`, `--min-unique-events`, `--min-positive-rows-pct`, `--out-json`, `--out-txt`
-  - runner: `-SkipObserve`, `-ObserveRunSeconds`, `-ObserveMinEdgeCents`, `-ObserveStrategy`, `-ObserveLogFile`, `-ObserveStateFile`, `-ReportHours`, `-AssumedBankrollUsd`, `-TargetMonthlyReturnPct`, `-FailOnNoGo`
+  - runner: `-SkipObserve`, `-ObserveRunSeconds`, `-ObserveMinEdgeCents`, `-ObserveStrategy`, `-ObserveLogFile`, `-ObserveStateFile`, `-ReportHours`, `-AssumedBankrollUsd`, `-TargetMonthlyReturnPct`, `-FailOnNoGo`, `-Discord`, `-TransitionStateJson`, `-TransitionLogFile`
+  - installer: `-TaskName`, `-StartTime`, `-ObserveRunSeconds`, `-ObserveMinEdgeCents`, `-ObserveShares`, `-ObserveStrategy`, `-ReportHours`, `-AssumedBankrollUsd`, `-TargetMonthlyReturnPct`, `-SkipObserve`, `-FailOnNoGo`, `-Discord`, `-RunNow`, `-NoBackground`
   - runner always uses `scripts/run_weather_arb_observe.ps1` internally, so execution remains observe-only (`CLOBBOT_EXECUTE=0` enforced in process scope).
+  - `-Discord` は `NO_GO -> GO` 転換検知時のみ通知し、Webhook は `CLOBBOT_DISCORD_WEBHOOK_URL`（fallback: `DISCORD_WEBHOOK_URL`）を利用。
+  - installer は task principal を `S4U` -> `Interactive` -> default の順で登録を試行し、`-RunNow` は runner を `-NoBackground` で直接1回実行する。
 
 Polymarket wallet autopsy toolkit (observe-only):
 - Fetch user trades (Data API):
@@ -526,15 +544,18 @@ Implementation ledger renderer (observe-only):
   - `--include-generated-utc`（ヘッダに生成時刻を出す。既定は差分ノイズ抑制のためOFF）
 
 Polymarket strategy gate stage alarm (observe-only):
-- Detect 3-stage gate transitions from strategy snapshot and emit one alarm event:
+- Detect 3-stage gate transitions and `capital_gate_core` transitions from strategy snapshot and emit one alarm event:
   - `python scripts/check_strategy_gate_alarm.py`
   - `python scripts/check_strategy_gate_alarm.py --snapshot-json logs/strategy_register_latest.json --state-json logs/strategy_gate_alarm_state.json --log-file logs/strategy_gate_alarm.log --strategy-id weather_clob_arb_buckets_observe --discord`
+  - `python scripts/check_strategy_gate_alarm.py --snapshot-json logs/strategy_register_latest.json --state-json logs/strategy_gate_alarm_state.json --log-file logs/strategy_gate_alarm.log --strategy-id weather_clob_arb_buckets_observe --discord --discord-webhook-env CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS`
 - Key flags:
   - `--snapshot-json`（入力スナップショットJSON。既定は `logs/strategy_register_latest.json`）
   - `--state-json`（前回判定保持の状態JSON。既定は `logs/strategy_gate_alarm_state.json`）
   - `--log-file`（アラーム追記ログ。既定は `logs/strategy_gate_alarm.log`）
   - `--strategy-id`（通知対象戦略ID。既定 `weather_clob_arb_buckets_observe`）
+  - `--capital-min-resolved-trades`（`capital_gate_core=ELIGIBLE_REVIEW` に必要な `rolling_30d_resolved_trades` 下限。既定 `30`）
   - `--discord`（Webhook設定時に遷移アラームをDiscord通知）
+  - `--discord-webhook-env`（Discord webhook URL を読む環境変数名。指定時はこの変数のみを参照）
   - `--pretty`
 
 Morning strategy gate check (observe-only):
@@ -545,9 +566,10 @@ Morning strategy gate check (observe-only):
   - `python scripts/check_morning_status.py --fail-on-stage-not-final`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_morning_status.ps1`
 - Key flags:
-  - `--no-refresh`（`record_simmer_realized_daily.py` / `materialize_strategy_realized_daily.py` / `render_strategy_register_snapshot.py` の更新を省略）
+  - `--no-refresh`（refresh一式を省略。`record_simmer_realized_daily.py` / `materialize_strategy_realized_daily.py` / `render_strategy_register_snapshot.py` / `check_strategy_gate_alarm.py` / `render_implementation_ledger.py`）
   - `--skip-health`（`report_automation_health.py` の更新/判定を省略）
   - `--skip-gate-alarm`（`check_strategy_gate_alarm.py` の更新/判定を省略）
+  - `--skip-implementation-ledger`（`render_implementation_ledger.py` の更新を省略）
   - `--strategy-id`（gate判定対象。既定 `weather_clob_arb_buckets_observe`）
   - `--min-realized-days`（最終判定日数。既定 `30`）
   - `--snapshot-json`（読み取る strategy register JSON。既定 `logs/strategy_register_latest.json`）
@@ -555,6 +577,11 @@ Morning strategy gate check (observe-only):
   - `--gate-alarm-state-json`（gateアラーム状態JSON。既定 `logs/strategy_gate_alarm_state.json`）
   - `--gate-alarm-log-file`（gateアラーム追記ログ。既定 `logs/strategy_gate_alarm.log`）
   - `--discord-gate-alarm`（gate遷移検知時にDiscord通知）
+  - `--discord-webhook-env`（`--discord-gate-alarm` 時に `check_strategy_gate_alarm.py --discord-webhook-env` へ透過）
+  - `--skip-simmer-ab`（`logs/simmer-ab-decision-latest.json` 読み取りを省略）
+  - `--simmer-ab-decision-json`（Simmer A/B 判定JSON。既定 `logs/simmer-ab-decision-latest.json`）
+  - `--simmer-ab-max-stale-hours`（Simmer判定JSON鮮度の許容上限時間。既定 `30`）
+  - `--fail-on-simmer-ab-final-no-go`（Simmer判定が `decision_stage=FINAL` かつ `decision!=GO` の場合、または判定JSON欠損時に非0終了）
   - `--fail-on-gate-not-ready`（`realized_30d_gate.decision != READY_FOR_JUDGMENT` で非0終了）
   - `--fail-on-stage-not-final`（`realized_30d_gate.decision_3stage != READY_FINAL` で非0終了）
   - `--fail-on-health-no-go`（`automation_health.decision != GO` で非0終了）
@@ -564,16 +591,18 @@ Morning status daily runner (observe-only):
 - PowerShell runner (background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1 -NoBackground -SkipProcessScan`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1 -NoBackground -SkipImplementationLedger`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1 -NoBackground -FailOnStageNotFinal -FailOnHealthNoGo`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1 -NoBackground -FailOnSimmerAbFinalNoGo`
 - Scheduled task installer:
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -StartTime 08:05 -RunNow`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -StartTime 08:05 -FailOnSimmerAbFinalNoGo -RunNow`
 - Key flags:
-  - runner: `-StrategyId`, `-MinRealizedDays`, `-SnapshotJson`, `-HealthJson`, `-GateAlarmStateJson`, `-GateAlarmLogFile`
-  - runner: `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipProcessScan`, `-DiscordGateAlarm`
-  - runner: `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-NoBackground`
-  - runner は `scripts/check_morning_status.py` を実行し、結果を `logs/morning_status_daily_run.log` に追記する
-  - installer: `-TaskName`, `-StartTime`, `-StrategyId`, `-MinRealizedDays`, `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipProcessScan`, `-DiscordGateAlarm`, `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-RunNow`
+  - runner: `-StrategyId`, `-MinRealizedDays`, `-SnapshotJson`, `-HealthJson`, `-GateAlarmStateJson`, `-GateAlarmLogFile`, `-SimmerAbDecisionJson`, `-SimmerAbMaxStaleHours`
+  - runner: `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipImplementationLedger`, `-SkipSimmerAb`, `-SkipProcessScan`, `-DiscordGateAlarm`, `-DiscordWebhookEnv`
+  - runner: `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-FailOnSimmerAbFinalNoGo`, `-NoBackground`
+  - runner は `scripts/check_morning_status.py` を実行し、結果を `logs/morning_status_daily_run.log` に追記する（既定refresh時は `docs/llm/IMPLEMENTATION_LEDGER.md` も再生成）
+  - installer: `-TaskName`, `-StartTime`, `-StrategyId`, `-MinRealizedDays`, `-SimmerAbDecisionJson`, `-SimmerAbMaxStaleHours`, `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipImplementationLedger`, `-SkipSimmerAb`, `-SkipProcessScan`, `-DiscordGateAlarm`, `-DiscordWebhookEnv`, `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-FailOnSimmerAbFinalNoGo`, `-RunNow`
   - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
 
 Automation health report (observe-only):
@@ -757,6 +786,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapSummaryMode auto -GapSummaryTargetMode events_ratio -GapSummaryTargetEventsRatio 0.2 -GapSummaryTargetUniqueEventsMin 2 -GapSummaryTargetUniqueEventsMax 6 -GapSummaryThresholdGrid "0.5,1.0,2.0"`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapSummaryMode fixed -GapSummaryMinNetEdgeCents 1.0`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -ScreenMaxPages 12 -GapMaxPages 12 -GapFallbackMaxPages 30`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapMaxHoursToEnd 6 -GapFallbackMaxHoursToEnd 48 -GapMinGrossEdgeCents 0.3 -GapPerLegCost 0.002`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapFallbackNoHourCap`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -Discord`
@@ -764,6 +794,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - `NO_LONGSHOT_DAILY_DISCORD=1` でも通知有効（Webhookは `CLOBBOT_DISCORD_WEBHOOK_URL` または `DISCORD_WEBHOOK_URL`）
   - 日次実行時に `record_no_longshot_realized_daily.py` を呼び、`rolling_30d_monthly_return`（実測）を summary に追記
   - 実測エントリー入力は `logs/no_longshot_daily_screen.csv` を基本にしつつ、`logs/no_longshot_fast_screen_lowyes_latest.csv`（YES 0.01-0.20 / 残り72h以内）に候補があれば自動で fast 側を優先
+  - `-RealizedFastYesMin` / `-RealizedFastYesMax` / `-RealizedFastMaxHoursToEnd` / `-RealizedFastMaxPages` で fast 実測候補スクリーンの範囲を明示調整できる（例: `-RealizedFastYesMin 0.16` は概ね `entry_no_price <= 0.84` 相当）。
   - fast screen 取得失敗時は runner 全体を継続し、`primary_screen` へ自動フォールバック（Summaryの `fast screen status` に `failed` を記録）
   - Summary に `monthly_return_now` を追記（実測が未確定の間は Guarded OOS の `annualized_return` を月次換算したフォールバック値を表示）
   - 実測アーティファクト: `logs/no_longshot_forward_positions.json`, `logs/no_longshot_realized_daily.jsonl`, `logs/no_longshot_realized_latest.json`, `logs/no_longshot_monthly_return_latest.txt`
@@ -788,6 +819,11 @@ Polymarket NO-longshot toolkit (observe-only):
   - それでも `interval_markets=0` の場合は、`max-hours-to-end` 制約なしの再スキャンを自動実行（`gap scan stage: fallback_no_hour_cap_auto`）。
   - `-GapFallbackNoHourCap` を付けると、`interval_markets` の値に関係なく、候補0件時に `max-hours-to-end` 制約なし再スキャンを強制追加。
   - `gap` ステージは外部APIタイムアウト時も runner 全体は継続し、`gap scan stage` に `*_error` を記録（例: `primary_error`, `fallback_window_error`, `fallback_no_hour_cap_auto_error`）。
+  - `gap scan stage` が `*_error` の場合、Summary 本文に `WARNING: gap scan had errors ...` を追記して欠損可能性を明示。
+  - runner は `logs/no_longshot_daily_run.log` に `gap scan outcome: stage=... had_error=true/false tag=...` を追記し、Summary Settings に `gap error runs 7d/30d`（既定 `tag=prod` の直近窓 error_runs/runs）を表示。
+  - `-GapOutcomeTag`（既定 `prod`）で `gap scan outcome` の分類タグを設定可能。失敗注入や検証runは `-GapOutcomeTag test` を使うと本番集計（`prod`）を汚さない。
+  - `-GapErrorAlertRate7d`（既定 `0.2`）と `-GapErrorAlertMinRuns7d`（既定 `5`）で、`tag=prod` の7日エラー率アラート条件を設定。条件成立時は Summary 本文に `WARNING: gap scan error rate high ...` を追記。
+  - `-FailOnGapErrorRateHigh` を付けると、上記アラート条件成立時に runner が非0終了（既定は継続実行で `0`）。
   - Summaryの `Logical gaps now` は `raw` / `filtered` / `unique_events` を併記し、表示上位はイベント単位で最良1件に圧縮。
   - Summaryの `Logical gaps threshold stats` で `target_unique_events(applied)` と `net>=0.50c/1.00c/2.00c` ごとの件数を併記し、しきい値調整の判断材料を可視化。
   - gap artifacts: `logs/no_longshot_daily_gap.csv`, `logs/no_longshot_daily_gap.json`
@@ -795,7 +831,9 @@ Polymarket NO-longshot toolkit (observe-only):
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --poll-sec 15 --retry-delay-sec 900 --max-run-seconds 1800 --run-on-start`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
   - key flags: `--run-at-hhmm`, `--poll-sec`, `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`, `--run-on-start`, `--skip-refresh/--no-skip-refresh`, `--discord`, `--log-file`, `--state-file`, `--lock-file`, `--allow-realized-entry-ingest`
+  - runner passthrough flags: `--runner-realized-fast-yes-min`, `--runner-realized-fast-yes-max`, `--runner-realized-fast-max-hours-to-end`, `--runner-realized-fast-max-pages`
   - realized refresh key flags: `--python-exe`, `--realized-refresh-sec`, `--realized-timeout-sec`, `--realized-tool-path`, `--realized-screen-csv`, `--realized-positions-json`, `--realized-out-daily-jsonl`, `--realized-out-latest-json`, `--realized-out-monthly-txt`, `--realized-entry-top-n`, `--realized-per-trade-cost`, `--realized-api-timeout-sec`
   - `--realized-refresh-sec > 0` で daemon が `record_no_longshot_realized_daily.py` を定期実行し、`--realized-entry-top-n 0` なら resolve-only（新規エントリー追加なし）で rolling-30d 実測を同日更新できる
   - 安全策として、`--realized-refresh-sec > 0` かつ `--realized-entry-top-n > 0` で起動する場合は `--allow-realized-entry-ingest` が必須（指定なしは非0終了）
@@ -807,11 +845,13 @@ Polymarket event-driven mispricing monitor (observe-only):
   - `python scripts/polymarket_event_driven_observe.py`
   - `python scripts/polymarket_event_driven_observe.py --min-edge-cents 0.8 --min-liquidity 20000 --top-n 20`
   - `python scripts/polymarket_event_driven_observe.py --poll-sec 300 --include-regex "acquire|approve|court|lawsuit"`
+  - `python scripts/polymarket_event_driven_observe.py --poll-sec 120 --top-n 20 --signal-cooldown-sec 7200 --signal-state-file logs/event-driven-observe-signal-state.json`
 - Key flags:
   - Universe/filter: `--max-pages`, `--page-size`, `--include-regex`, `--exclude-regex`, `--include-non-event`
   - Horizon/liquidity guardrails: `--min-days-to-end`, `--max-days-to-end`, `--min-liquidity`, `--min-volume-24h`
   - Event-pricing model: `--prior-strength`, `--obs-strength`, `--directional-bias-scale`, `--fragility-obs-discount`, `--ambiguity-obs-discount`
   - Signal quality: `--min-edge-cents`, `--min-leg-price`, `--max-leg-price`, `--min-confidence`, `--top-n`
+  - Signal dedupe: `--signal-cooldown-sec`, `--signal-state-file`（同一 `market_id+side` の連続シグナルをクールダウン抑制）
   - Paper sizing: `--kelly-fraction`, `--max-kelly-fraction`, `--bankroll-usd`, `--min-bet-usd`, `--max-bet-usd`
   - Runtime outputs: `--log-file`, `--signals-file`, `--metrics-file` (default under `logs/`)
 - Observation report:
@@ -861,7 +901,7 @@ Simmer ($SIM) ping-pong demo:
   - `--paper-seed-every-sec` (observe-onlyで一定間隔ごとに擬似エントリーを作る)
   - `--asset-quotas` (auto universe minimum mix, e.g. `bitcoin:2,ethereum:1,solana:1`)
   - `--max-hold-sec`, `--sell-target-decay-cents-per-min` (inventory回転・出口制御)
-  - `--prob-min`, `--prob-max`, `--min-time-to-resolve-min` (極端確率/満期近接の除外)
+  - `--prob-min`, `--prob-max`, `--min-time-to-resolve-min`, `--max-time-to-resolve-min`, `--min-divergence` (極端確率/満期ウィンドウ/乖離閾値の除外)
   - Safety: `SIMMER_PONG_EXECUTE=1` だけではLIVE化されない。LIVEは必ず CLI の `--execute --confirm-live YES` が必要。
 - Observation report:
   - `python scripts/report_simmer_observation.py --hours 24`
@@ -885,10 +925,29 @@ Simmer ($SIM) ping-pong demo:
 - A/B compare: `python scripts/compare_simmer_ab_daily.py --hours 24`
   - `Decision: INSUFFICIENT` は、A/Bどちらかで `buy=0` / `sell=0` / `closed_cycles=0` がある状態（判定保留）。
 - A/B trend: `python scripts/report_simmer_ab_trend.py --days 30 --last 14`
+- A/B 30-day decision judge (observe-only):
+  - `python scripts/judge_simmer_ab_decision.py --history-file logs/simmer-ab-daily-compare-history.jsonl --min-days 25`
+  - `python scripts/judge_simmer_ab_decision.py --history-file logs/simmer-ab-daily-compare-history.jsonl --min-days 25 --decision-date 2026-03-22`
+  - data-sufficient rows（`INSUFFICIENT`除外）を日次集約し、4条件の Pass/Fail と `GO/NO_GO`、推奨アクションを出力
+  - key flags: `--history-file`, `--min-days`, `--expectancy-ratio-threshold`, `--decision-date`, `--today`, `--output-file`, `--output-json`
 - A/B daily helper: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_simmer_ab_daily_report.ps1`
+  - compare実行後に `judge_simmer_ab_decision.py` を呼び、`logs/simmer-ab-decision-latest.txt/.json` を更新
+  - key flags: `-JudgeMinDays`, `-JudgeExpectancyRatioThreshold`, `-JudgeDecisionDate`, `-SkipJudge`
+- A/B daily task installer (observe-only):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground -StartTime 00:05 -JudgeMinDays 25 -JudgeDecisionDate 2026-03-22 -RunNow`
+  - key flags: `-TaskName`, `-RepoRoot`, `-StartTime`, `-PowerShellExe`, `-PythonExe`, `-JudgeMinDays`, `-JudgeExpectancyRatioThreshold`, `-JudgeDecisionDate`, `-SkipJudge`, `-RunNow`
 - Set `SIMMER_AB_DAILY_COMPARE_DISCORD=1` to enable Discord post on daily compare (requires webhook env).
 - Status:
   - `python scripts/simmer_status.py`
+- Dedicated main watchdog profile (observe-only, volatile1 seed-10m):
+  - `python scripts/bot_supervisor.py run --config configs/bot_supervisor.simmer_main.observe.json --poll-sec 1 --write-state-sec 2 --halt-when-all-stopped`
+  - `python scripts/bot_supervisor.py status --state-file logs/simmer_main_supervisor_state.json`
+  - `python scripts/bot_supervisor.py stop --state-file logs/simmer_main_supervisor_state.json`
+- Dedicated canary watchdog profile (observe-only, near240 ultrafast seeded):
+  - `python scripts/bot_supervisor.py run --config configs/bot_supervisor.simmer_canary.observe.json --poll-sec 1 --write-state-sec 2 --halt-when-all-stopped`
+  - `python scripts/bot_supervisor.py status --state-file logs/simmer_canary_supervisor_state.json`
+  - `python scripts/bot_supervisor.py stop --state-file logs/simmer_canary_supervisor_state.json`
 
 bitFlyer BTC/JPY MM simulator (observe-only):
 - Observe:
@@ -908,3 +967,4 @@ bitFlyer BTC/JPY MM simulator (observe-only):
 - `SIMMER_API_KEY` (required for Simmer SDK)
 - `PM_PRIVATE_KEY_DPAPI_FILE` + `PM_FUNDER` (required for Polymarket CLOB)
 - `CLOBBOT_DISCORD_WEBHOOK_URL` (optional, secret)
+- `CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS` (optional, secret; dedicated for `check_morning_status` path)

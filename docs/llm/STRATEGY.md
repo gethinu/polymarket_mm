@@ -22,6 +22,13 @@ Primary keys:
 - `no_longshot_status.rolling_30d_monthly_return_text`
 - `realized_30d_gate.decision`
 
+## Bankroll Policy
+
+- Initial bankroll (temporary default): `$100`.
+- Strategy allocation ratio (default): equal-weight allocation across currently `ADOPTED` strategies.
+- Live start max risk: cap daily risk at `5%` of bankroll (`$5/day` when bankroll is `$100`).
+- For analytics/report scripts using `--assumed-bankroll-usd` / `-AssumedBankrollUsd`, use this policy bankroll by default unless an explicit override is required.
+
 ## Active Strategies
 
 1. `weather_clob_arb_buckets_observe`
@@ -41,7 +48,11 @@ Primary keys:
   - Gate result: `NO_GO` against stretch target `+15%` (used as tuning checkpoint, not observe adoption blocker)
 - Decision note: positive edge incidence supports observe adoption; profit-window base projection was `+13.13%` on 2026-02-25 (stretch target `+15%` was not met).
 - Operational gate:
-  - `scripts/run_weather_24h_postcheck.ps1` decision rule uses `positive_0c_pct >= 20.0` as `ADOPT`, else `REVIEW`.
+  - `scripts/run_weather_24h_postcheck.ps1` default decision gate:
+    - `samples >= 300`
+    - `positive_0c_pct >= 30.0`
+    - `positive_5c_pct >= 10.0`
+  - Any gate miss is `REVIEW`.
 
 2. `no_longshot_daily_observe`
 - Status: `ADOPTED` (as of 2026-02-25, observe-only).
@@ -52,6 +63,9 @@ Primary keys:
 - Evidence snapshot (2026-02-25 daily summary):
   - Source summary: `logs/no_longshot_daily_summary.txt`
   - Read latest keys: `monthly_return_now`, `rolling_30d_monthly_return`, `monthly_return_now_source`
+- Evidence snapshot (latest strategy register):
+  - Source JSON: `logs/strategy_register_latest.json`
+  - Read latest keys: `no_longshot_status.monthly_return_now_text`, `no_longshot_status.monthly_return_now_source`, `no_longshot_status.rolling_30d_monthly_return_text`, `realized_30d_gate.decision`
 - Evidence snapshot (2026-02-25 realized refresh):
   - Source JSON: `logs/no_longshot_realized_latest.json`
   - Read latest keys: `metrics.resolved_positions`, `metrics.open_positions`, `metrics.observed_days`, `metrics.rolling_30d.return_pct`
@@ -83,6 +97,8 @@ Primary keys:
 - Scope: Polymarket gamma-active event-pair strategy with observe-only exec-edge suppression (`event-yes` filter).
 - Runtime:
   - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --observe-exec-edge-filter --observe-exec-edge-min-usd 0 --observe-exec-edge-strike-limit 2 --observe-exec-edge-cooldown-sec 90 --observe-exec-edge-filter-strategies event-yes`
+  - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --gamma-limit 500 --gamma-min-liquidity 1000 --gamma-min-volume24hr 100 --gamma-scan-max-markets 20000 --gamma-max-days-to-end 60 --gamma-score-halflife-days 14 --max-markets-per-event 5 --max-subscribe-tokens 400 --metrics-log-all-candidates --observe-exec-edge-filter --observe-exec-edge-min-usd 0 --observe-exec-edge-strike-limit 2 --observe-exec-edge-cooldown-sec 90 --observe-exec-edge-filter-strategies event-yes`
+  - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --gamma-limit 1500 --gamma-min-liquidity 0 --gamma-min-volume24hr 0 --gamma-scan-max-markets 40000 --gamma-max-days-to-end 0 --gamma-score-halflife-days 14 --max-markets-per-event 5 --max-subscribe-tokens 400 --metrics-log-all-candidates --observe-exec-edge-filter --observe-exec-edge-min-usd 0 --observe-exec-edge-strike-limit 2 --observe-exec-edge-cooldown-sec 90 --observe-exec-edge-filter-strategies event-yes`
   - `python scripts/replay_clob_arb_kelly.py --metrics-file logs/clob-arb-monitor-metrics-eventpair-session.jsonl --require-threshold-pass --fill-ratio-mode min --miss-penalty 0.005 --stale-grace-sec 2 --stale-penalty-per-sec 0.001 --max-worst-stale-sec 10 --scales 0.1,0.25,0.5,0.75,1.0 --bootstrap-iters 3000 --pretty --out-json logs/clob-arb-kelly-replay-eventpair-session-conservative-v2.json`
 - Evidence snapshot:
   - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-session.jsonl`
@@ -96,11 +112,38 @@ Primary keys:
   - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-adopt-extended-20260225_205027.jsonl` (`rows=443`, `rows_blocked=180`)
   - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-adopt-extended-20260225_205027-base.json`, `logs/clob-arb-kelly-replay-eventpair-adopt-extended-20260225_205027-gap5s.json`
   - Monthly estimate (outlier-trim recommendation): `logs/clob-arb-eventpair-monthly-estimate-adopt-extended-20260225_205027.json` (`recommended_monthly_return=+2.60%`, rule: `mean_edge_pct_raw <= 25%`)
+- Evidence snapshot (30m combined refresh 2026-02-25):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-adopt-extended2a-20260225_211108.jsonl`, `logs/clob-arb-monitor-metrics-eventpair-adopt-extended2b-20260225_212630.jsonl` (`rows_total=863`, `rows_blocked=381`)
+  - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-adopt-extended2ab-20260225-base.json`, `logs/clob-arb-kelly-replay-eventpair-adopt-extended2ab-20260225-gap5s.json`
+  - Monthly estimate (outlier-trim recommendation): `logs/clob-arb-eventpair-monthly-estimate-adopt-extended2ab-20260225.json` (`recommended_monthly_return=+2.87%`, rule: `mean_edge_pct_raw <= 25%`)
 - Evidence snapshot (coverage refresh 2026-02-25):
-  - Source coverage: `logs/clob-arb-eventpair-metrics-coverage-latest.json`
-  - `distinct_events_all=4` (`event_gate_target=20`, not met)
-- Decision note: promoted to active observe operations by operator decision on 2026-02-25; keep claims low-confidence until event coverage expands.
-- Operational gate: keep this strategy observe-only and mark `REVIEW` when `distinct_events_all < 20` and `observed_realized_days < 30`.
+  - Source coverage (historical): `logs/clob-arb-eventpair-coverage-tuning-latest.json` (`runs[adopt_extended2ab_20260225]`)
+  - `distinct_events_all=4` (`event_gate_target=20`, not met at that time)
+- Evidence snapshot (coverage probe refresh 2026-02-25, 90s observe):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-coverage-probe-baseline.jsonl`, `logs/clob-arb-monitor-metrics-eventpair-coverage-probe-expanded.jsonl`
+  - Baseline probe (`gamma-limit=500`, `gamma-scan-max-markets=20000`, `max-subscribe-tokens=400`): `distinct_events_all=7`, `distinct_events_threshold=4`
+  - Expanded probe (`gamma-limit=1000`, `gamma-scan-max-markets=40000`, `max-subscribe-tokens=800`): `distinct_events_all=7`, `distinct_events_threshold=4`
+  - Coverage note: this runtime uses `--gamma-scan-max-markets` for scan depth; `--gamma-pages` / `--gamma-page-size` are not supported in `polymarket_clob_arb_realtime.py`.
+- Evidence snapshot (coverage expansion refresh 2026-02-26, observe-only):
+  - Source comparison: `logs/clob-arb-eventpair-coverage-tuning-latest.json`
+  - Relaxed profile (`gamma-limit=1500`, `gamma-min-liquidity=0`, `gamma-min-volume24hr=0`, `gamma-scan-max-markets=40000`, `max-subscribe-tokens=400`, `run-seconds=120`): `distinct_events_all=100`, `distinct_events_threshold=23`
+  - High-load profile (`max-subscribe-tokens=1200`, `run-seconds=180`): `distinct_events_all=219`, `distinct_events_threshold=28`
+  - Load note: coverage拡張は候補・購読トークン数を増やすため、ローカル負荷を抑える場合は `max-subscribe-tokens=400` を優先。
+- Evidence snapshot (coverage latest refresh 2026-02-26, observe-only):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-adopt-coverage-refresh-20260226.jsonl` (`rows_total=7674`, `rows_blocked=2808`)
+  - Source coverage: `logs/clob-arb-eventpair-metrics-coverage-latest.json`, `logs/clob-arb-eventpair-metrics-coverage-20260226.json`
+  - `distinct_events_all=100`, `distinct_events_threshold=24`, `event_gate_target=20` (met)
+- Evidence snapshot (regime compression check 2026-02-26, observe-only):
+  - Source long-run metrics: `logs/clob-arb-metrics-eventpair-long-20260225_220258.jsonl` (`rows_total=5068`, `reason=candidate` only)
+  - Threshold sensitivity: `logs/clob-arb-eventpair-threshold-sensitivity-20260226_201054.json`
+  - Current threshold (`3c`, stale `<=10s`, gap `5s`) produced `sample_count=0` (no executable candidates under adopted gate)
+  - What-if threshold (`0.5c`, stale `<=10s`, gap `5s`) produced `weighted_monthly_trim_edgepct_le_25=-7.01%`
+- Evidence snapshot (strict exec-gate probe 2026-02-26, observe-only):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-tuned-20260226-20260226_204500.jsonl` (`rows=1461`, `threshold=86`, `blocked=1375`)
+  - Tuning comparisons: `logs/clob-arb-eventpair-threshold-tuning-coverage-refresh-20260226.json`, `logs/clob-arb-eventpair-execgate-tuning-extended2ab-20260226.json`
+  - Strict profile estimate: `logs/clob-arb-eventpair-monthly-estimate-tuned-20260226_204500.json` (`weighted_monthly_trim_edgepct_le_25=+5.62%`, `sample_count=21`, `distinct_events=3`)
+- Decision note: promoted to active observe operations by operator decision on 2026-02-25; keep claims low-confidence and regime-aware until event coverage and signal quality stabilize.
+- Operational gate: keep this strategy observe-only and mark `REVIEW` when (`distinct_events_threshold < 20` and `observed_realized_days < 30`) or when latest `3c` threshold check yields `sample_count=0`; monitor `distinct_events_all` with `--metrics-log-all-candidates` as secondary coverage signal.
 
 5. `hourly_updown_highprob_calibration_observe`
 - Status: `ADOPTED` (as of 2026-02-25, observe-only).

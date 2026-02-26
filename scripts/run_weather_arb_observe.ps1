@@ -12,7 +12,10 @@ param(
   [int]$MaxSubscribeTokens = 400,
   [string]$LogFile = "",
   [string]$StateFile = "",
-  [string]$MutexName = "Global\PolymarketWeatherArbObserve"
+  [string]$MutexName = "Global\PolymarketWeatherArbObserve",
+  [switch]$RestartOnFailure,
+  [int]$RestartDelaySec = 20,
+  [int]$MaxRestarts = 30
 )
 
 $ErrorActionPreference = "Stop"
@@ -89,23 +92,71 @@ if (-not $hasLock) {
 }
 
 try {
-  $args = @(
-    $botPy,
-    "--universe", "weather",
-    "--strategy", $Strategy,
-    "--run-seconds", (To-Arg $RunSeconds),
-    "--min-edge-cents", (To-Arg $MinEdgeCents),
-    "--shares", (To-Arg $Shares),
-    "--summary-every-sec", (To-Arg $SummaryEverySec),
-    "--max-subscribe-tokens", (To-Arg $MaxSubscribeTokens),
-    "--log-file", $LogFile,
-    "--state-file", $StateFile
-  )
+  $deadlineUtc = $null
+  if ($RunSeconds -gt 0) {
+    $deadlineUtc = [DateTime]::UtcNow.AddSeconds($RunSeconds)
+  }
 
-  Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe run start"
-  & $PythonExe @args
-  $code = $LASTEXITCODE
-  Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe run end (code=$code)`n"
+  $restartCount = 0
+  $code = 0
+
+  while ($true) {
+    $nowUtc = [DateTime]::UtcNow
+    $runSecondsThisAttempt = $RunSeconds
+    if ($null -ne $deadlineUtc) {
+      $remaining = [Math]::Max([int][Math]::Ceiling(($deadlineUtc - $nowUtc).TotalSeconds), 0)
+      if ($remaining -le 0) {
+        break
+      }
+      $runSecondsThisAttempt = $remaining
+    }
+
+    $attemptNo = $restartCount + 1
+    $args = @(
+      $botPy,
+      "--universe", "weather",
+      "--strategy", $Strategy,
+      "--run-seconds", (To-Arg $runSecondsThisAttempt),
+      "--min-edge-cents", (To-Arg $MinEdgeCents),
+      "--shares", (To-Arg $Shares),
+      "--summary-every-sec", (To-Arg $SummaryEverySec),
+      "--max-subscribe-tokens", (To-Arg $MaxSubscribeTokens),
+      "--log-file", $LogFile,
+      "--state-file", $StateFile
+    )
+
+    Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe run start (attempt=$attemptNo run_seconds=$runSecondsThisAttempt)"
+    try {
+      & $PythonExe @args
+      $code = $LASTEXITCODE
+    }
+    catch {
+      $code = 1
+      $msg = $_.Exception.Message
+      Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe exception (attempt=$attemptNo): $msg"
+    }
+
+    Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe run end (attempt=$attemptNo code=$code)`n"
+    if ($code -eq 0) {
+      break
+    }
+    if (-not $RestartOnFailure.IsPresent) {
+      break
+    }
+    if ($MaxRestarts -ge 0 -and $restartCount -ge $MaxRestarts) {
+      Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe restart limit reached (max_restarts=$MaxRestarts)"
+      break
+    }
+    if ($null -ne $deadlineUtc -and [DateTime]::UtcNow -ge $deadlineUtc) {
+      break
+    }
+
+    $delay = [Math]::Max($RestartDelaySec, 1)
+    Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe restart scheduled in ${delay}s"
+    Start-Sleep -Seconds $delay
+    $restartCount += 1
+  }
+
   exit $code
 }
 finally {

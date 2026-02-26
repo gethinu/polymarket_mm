@@ -12,12 +12,14 @@ import argparse
 import datetime as dt
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 from urllib import error, request
 
 
 DEFAULT_STRATEGY_ID = "weather_clob_arb_buckets_observe"
+DEFAULT_MIN_RESOLVED_TRADES = 30
 
 
 def now_utc() -> dt.datetime:
@@ -71,19 +73,33 @@ def append_jsonl(path: Path, payload: dict) -> None:
 
 
 def _env_any(name: str) -> str:
-    for scope in (None,):
-        v = os.environ.get(name)
-        if v and str(v).strip():
-            return str(v).strip()
+    v = os.environ.get(name)
+    if v and str(v).strip():
+        return str(v).strip()
+    # Best-effort HKCU lookup for Windows sessions where process env is stale.
+    if sys.platform.startswith("win"):
+        try:
+            import winreg  # type: ignore
+
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as k:
+                rv, _t = winreg.QueryValueEx(k, name)
+                if rv and str(rv).strip():
+                    return str(rv).strip()
+        except Exception:
+            pass
     return ""
 
 
-def discord_webhook_url() -> str:
+def discord_webhook_url(preferred_env: str = "") -> str:
+    env_name = str(preferred_env or "").strip()
+    if env_name:
+        # If a dedicated env var is supplied, use it strictly (no fallback).
+        return _env_any(env_name)
     return _env_any("CLOBBOT_DISCORD_WEBHOOK_URL") or _env_any("DISCORD_WEBHOOK_URL")
 
 
-def post_discord(content: str) -> tuple[bool, str]:
-    url = discord_webhook_url()
+def post_discord(content: str, preferred_env: str = "") -> tuple[bool, str]:
+    url = discord_webhook_url(preferred_env=preferred_env)
     if not url:
         return False, "webhook_missing"
     payload = {"content": content}
@@ -92,7 +108,10 @@ def post_discord(content: str) -> tuple[bool, str]:
         url=url,
         data=data,
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "polymarket-mm/1.0",
+        },
     )
     try:
         with request.urlopen(req, timeout=15) as resp:
@@ -110,7 +129,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--state-json", default="logs/strategy_gate_alarm_state.json")
     p.add_argument("--log-file", default="logs/strategy_gate_alarm.log")
     p.add_argument("--strategy-id", default=DEFAULT_STRATEGY_ID)
+    p.add_argument(
+        "--capital-min-resolved-trades",
+        type=int,
+        default=DEFAULT_MIN_RESOLVED_TRADES,
+        help="Minimum rolling-30d resolved trades required for capital gate ELIGIBLE_REVIEW.",
+    )
     p.add_argument("--discord", action="store_true", help="Send Discord notification when transition is detected.")
+    p.add_argument(
+        "--discord-webhook-env",
+        default="",
+        help="Environment variable name for Discord webhook URL (strict; no fallback when set).",
+    )
     p.add_argument("--pretty", action="store_true")
     return p.parse_args()
 
@@ -128,12 +158,41 @@ def load_gate(snapshot: dict) -> dict:
     }
 
 
+def _as_int(v: object, default: int = 0) -> int:
+    try:
+        return int(v)  # type: ignore[arg-type]
+    except Exception:
+        return default
+
+
+def load_no_longshot(snapshot: dict) -> dict:
+    no_longshot = snapshot.get("no_longshot_status") if isinstance(snapshot.get("no_longshot_status"), dict) else {}
+    resolved = _as_int(no_longshot.get("rolling_30d_resolved_trades"), _as_int(no_longshot.get("resolved_positions"), 0))
+    monthly_now = str(no_longshot.get("monthly_return_now_text") or "").strip()
+    monthly_src = str(no_longshot.get("monthly_return_now_source") or "").strip()
+    return {
+        "rolling_30d_resolved_trades": resolved,
+        "monthly_return_now_text": monthly_now,
+        "monthly_return_now_source": monthly_src,
+    }
+
+
+def capital_gate_core(decision_3stage: str, resolved_trades: int, min_resolved_trades: int) -> tuple[str, str]:
+    stage = str(decision_3stage or "").strip() or "UNKNOWN"
+    if stage != "READY_FINAL":
+        return "HOLD", f"strategy_stage={stage}"
+    if int(resolved_trades) < int(max(1, min_resolved_trades)):
+        return "HOLD", f"rolling_30d_resolved_trades={int(resolved_trades)}<{int(max(1, min_resolved_trades))}"
+    return "ELIGIBLE_REVIEW", "all core checks passed"
+
+
 def main() -> int:
     args = parse_args()
     snapshot_path = resolve_path(str(args.snapshot_json), "strategy_register_latest.json")
     state_path = resolve_path(str(args.state_json), "strategy_gate_alarm_state.json")
     log_path = resolve_path(str(args.log_file), "strategy_gate_alarm.log")
     strategy_id = str(args.strategy_id or "").strip() or DEFAULT_STRATEGY_ID
+    discord_webhook_env = str(args.discord_webhook_env or "").strip()
 
     snapshot = read_json(snapshot_path)
     if snapshot is None:
@@ -141,18 +200,31 @@ def main() -> int:
         return 2
 
     gate = load_gate(snapshot)
+    no_longshot = load_no_longshot(snapshot)
     current_decision = str(gate.get("decision_3stage") or "").strip()
     if not current_decision:
         print(f"[strategy-gate-alarm] gate data missing in snapshot: {snapshot_path}")
         return 2
+    min_resolved = max(1, int(args.capital_min_resolved_trades))
+    current_capital_gate, current_capital_reason = capital_gate_core(
+        decision_3stage=current_decision,
+        resolved_trades=_as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        min_resolved_trades=min_resolved,
+    )
 
     prev = read_json(state_path) or {}
     prev_decision = str(prev.get("last_decision_3stage") or "").strip()
     has_prev = bool(prev_decision)
+    prev_capital_gate = str(prev.get("last_capital_gate_core") or "").strip()
+    has_prev_capital = bool(prev_capital_gate)
 
     changed = has_prev and (prev_decision != current_decision)
     reached_final = has_prev and current_decision == "READY_FINAL" and prev_decision != "READY_FINAL"
-    should_alarm = bool(changed or reached_final)
+    capital_changed = has_prev_capital and (prev_capital_gate != current_capital_gate)
+    reached_eligible_review = (
+        has_prev_capital and current_capital_gate == "ELIGIBLE_REVIEW" and prev_capital_gate != "ELIGIBLE_REVIEW"
+    )
+    should_alarm = bool(changed or reached_final or capital_changed or reached_eligible_review)
 
     now = now_utc().isoformat()
     event = {
@@ -167,6 +239,11 @@ def main() -> int:
         "current_stage_label_ja": str(gate.get("stage_label_ja") or ""),
         "observed_realized_days": gate.get("observed_realized_days"),
         "reason": str(gate.get("reason") or ""),
+        "previous_capital_gate_core": prev_capital_gate or None,
+        "current_capital_gate_core": current_capital_gate,
+        "current_capital_gate_reason": current_capital_reason,
+        "rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "capital_min_resolved_trades": min_resolved,
         "alarm_triggered": should_alarm,
     }
 
@@ -181,6 +258,11 @@ def main() -> int:
         "last_observed_realized_days": gate.get("observed_realized_days"),
         "last_reason": str(gate.get("reason") or ""),
         "previous_decision_3stage": prev_decision or None,
+        "last_capital_gate_core": current_capital_gate,
+        "last_capital_gate_reason": current_capital_reason,
+        "last_rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "capital_min_resolved_trades": min_resolved,
+        "previous_capital_gate_core": prev_capital_gate or None,
         "alarm_triggered_last_run": should_alarm,
     }
     write_json(state_path, state_payload, pretty=bool(args.pretty))
@@ -192,15 +274,17 @@ def main() -> int:
             mention = _env_any("CLOBBOT_DISCORD_MENTION")
             label_ja = str(gate.get("decision_3stage_label_ja") or "-")
             days = gate.get("observed_realized_days")
+            resolved = _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0)
             body = (
                 "[Strategy Gate Alarm]\n"
                 f"strategy={strategy_id}\n"
-                f"{prev_decision or '-'} -> {current_decision} ({label_ja})\n"
-                f"observed_days={days}"
+                f"gate: {prev_decision or '-'} -> {current_decision} ({label_ja})\n"
+                f"capital_gate: {prev_capital_gate or '-'} -> {current_capital_gate}\n"
+                f"observed_days={days} resolved_trades={resolved}"
             )
             if mention:
                 body = f"{mention} {body}"
-            ok, status = post_discord(body)
+            ok, status = post_discord(body, preferred_env=discord_webhook_env)
             discord_status = status if ok else f"failed:{status}"
 
     summary = {
@@ -213,6 +297,12 @@ def main() -> int:
         "current_decision_3stage": current_decision,
         "current_decision_3stage_label_ja": str(gate.get("decision_3stage_label_ja") or ""),
         "observed_realized_days": gate.get("observed_realized_days"),
+        "previous_capital_gate_core": prev_capital_gate or None,
+        "current_capital_gate_core": current_capital_gate,
+        "current_capital_gate_reason": current_capital_reason,
+        "rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "capital_min_resolved_trades": min_resolved,
+        "capital_alarm_triggered": bool(capital_changed or reached_eligible_review),
         "alarm_triggered": should_alarm,
         "discord": discord_status,
     }
@@ -225,4 +315,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

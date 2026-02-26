@@ -8,4 +8,5 @@ This repository contains automation code that can place trades.
 - If you add new long-lived state files, document them in `docs/STATE.md`.
 - If you add new CLI entrypoints or flags, document them in `docs/INTERFACES.md`.
 - Before implementing anything non-trivial, check `docs/llm/IMPLEMENTATION_LEDGER.md` to avoid duplicate work, and refresh it after changes (`python scripts/render_implementation_ledger.py`).
+- For KPI/status reporting or no-longshot operations, invoke `$polymarket-canon-first` and follow `docs/llm/CANON.md` first.
 </INSTRUCTIONS>

@@ -28,6 +28,12 @@ No-longshot daily daemon (observe-only):
   - Latest realized snapshot JSON: `logs/no_longshot_realized_latest.json`
   - Latest rolling-30d monthly return text: `logs/no_longshot_monthly_return_latest.txt`
 
+Polymarket event-driven mispricing monitor (observe-only):
+- Log: `logs/event-driven-observe.log`
+- Signals JSONL: `logs/event-driven-observe-signals.jsonl`
+- Metrics JSONL: `logs/event-driven-observe-metrics.jsonl`
+- Optional signal dedupe state JSON: `logs/event-driven-observe-signal-state.json`
+
 Polymarket CLOB MM:
 - Log: `logs/clob-mm.log`
 - State: `logs/clob_mm_state.json`
@@ -90,10 +96,20 @@ Simmer ping-pong:
 - State: `logs/simmer_pingpong_state.json`
 - Instance lock: `logs/simmer_pingpong_state.json.lock`
 - Metrics: `logs/simmer-pingpong-metrics.jsonl`
+- Optional dedicated supervisor config: `configs/bot_supervisor.simmer_main.observe.json`
+- Optional dedicated supervisor runtime files:
+  - `logs/simmer_main_supervisor.log`
+  - `logs/simmer_main_supervisor_state.json`
+- Optional canary supervisor config: `configs/bot_supervisor.simmer_canary.observe.json`
+- Optional canary supervisor runtime files:
+  - `logs/simmer_canary_supervisor.log`
+  - `logs/simmer_canary_supervisor_state.json`
 - A/B helper outputs:
   - `logs/simmer-ab-daily-report.log`
   - `logs/simmer-ab-daily-compare-latest.txt`
   - `logs/simmer-ab-daily-compare-history.jsonl`
+  - `logs/simmer-ab-decision-latest.txt`
+  - `logs/simmer-ab-decision-latest.json`
 - A/B state locks:
   - `logs/simmer_ab_baseline_state.json.lock`
   - `logs/simmer_ab_candidate_state.json.lock`
@@ -125,6 +141,8 @@ Polymarket weather arb monthly-return window estimator (observe-only):
 - Observe state (runner default): `logs/clob_arb_weather_profit_state.json`
 - Profit-window summary JSON: `logs/weather_arb_profit_window_latest.json`
 - Profit-window summary TXT: `logs/weather_arb_profit_window_latest.txt`
+- GO transition state JSON: `logs/weather_arb_profit_window_transition_state.json`
+- GO transition event log (JSONL): `logs/weather_arb_profit_window_transition.log`
 
 Polymarket wallet autopsy toolkit (observe-only):
 - Trade snapshot JSON: `logs/trades_<wallet_prefix>_<market_tag>_<utc_tag>.json` (default from `fetch_trades.py`)
@@ -233,6 +251,7 @@ Morning status daily runner (observe-only):
   - `logs/strategy_register_latest.json`
   - `logs/strategy_gate_alarm.log`, `logs/strategy_gate_alarm_state.json`
   - `logs/automation_health_latest.json`, `logs/automation_health_latest.txt`
+  - `docs/llm/IMPLEMENTATION_LEDGER.md`（`--skip-implementation-ledger` 指定時は更新しない）
 
 Polymarket CLOB realized PnL daily capture (observe-only):
 - Daily series JSONL: `logs/clob_arb_realized_daily.jsonl`
@@ -246,13 +265,18 @@ Polymarket strategy-scoped realized PnL materializer (observe-only):
 Polymarket strategy register snapshot (observe-only):
 - Snapshot JSON: `logs/strategy_register_latest.json`
 - Snapshot HTML: `logs/strategy_register_latest.html`
-- Snapshot JSON には `realized_30d_gate` と `realized_monthly_return` を含む（`realized_30d_gate.decision` は30日最終判定の互換フィールド）。
+- Snapshot JSON には `bankroll_policy`、`realized_30d_gate`、`realized_monthly_return` を含む（`realized_30d_gate.decision` は30日最終判定の互換フィールド）。
+- `bankroll_policy` は `docs/llm/STRATEGY.md` の `## Bankroll Policy` から抽出され、`initial_bankroll_usd`、`allocation_mode`、`live_max_daily_risk_ratio`、`live_max_daily_risk_usd`、`default_adopted_allocations` を保持する。
 - `realized_30d_gate` は `decision_3stage`（7日暫定 / 14日中間 / 30日確定）、`decision_3stage_label_ja`、`stage_label_ja`、`stages`（`label_ja` 含む）、`next_stage`（`label_ja` 含む）を含む。
 - `realized_monthly_return` は `strategy_realized_pnl_daily.jsonl` を優先し、未存在時は累積 snapshot の差分系列をフォールバック利用して計算される。
 
 Polymarket strategy gate stage alarm (observe-only):
 - Alarm log: `logs/strategy_gate_alarm.log`
 - Alarm state JSON: `logs/strategy_gate_alarm_state.json`
+- State/log records include:
+  - `decision_3stage` transition info (strategy gate)
+  - `capital_gate_core` transition info (`HOLD` / `ELIGIBLE_REVIEW`)
+  - `rolling_30d_resolved_trades` and `capital_min_resolved_trades`
 
 Automation health report (observe-only):
 - Latest health JSON: `logs/automation_health_latest.json`

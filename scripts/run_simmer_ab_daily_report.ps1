@@ -1,6 +1,10 @@
 param(
   [string]$RepoRoot = "C:\Repos\polymarket_mm",
   [string]$PythonExe = "C:\Users\stair\AppData\Local\Programs\Python\Python311\python.exe",
+  [int]$JudgeMinDays = 25,
+  [double]$JudgeExpectancyRatioThreshold = 0.9,
+  [string]$JudgeDecisionDate = "2026-03-22",
+  [switch]$SkipJudge,
   [switch]$Background,
   [switch]$NoBackground
 )
@@ -45,9 +49,12 @@ if (-not $Background -and -not $NoBackground) {
 
 $reportScript = Join-Path $RepoRoot "scripts\report_simmer_observation.py"
 $compareScript = Join-Path $RepoRoot "scripts\compare_simmer_ab_daily.py"
+$judgeScript = Join-Path $RepoRoot "scripts\judge_simmer_ab_decision.py"
 $logFile = Join-Path $RepoRoot "logs\simmer-ab-daily-report.log"
 $compareLatestFile = Join-Path $RepoRoot "logs\simmer-ab-daily-compare-latest.txt"
 $compareHistoryFile = Join-Path $RepoRoot "logs\simmer-ab-daily-compare-history.jsonl"
+$judgeLatestFile = Join-Path $RepoRoot "logs\simmer-ab-decision-latest.txt"
+$judgeLatestJson = Join-Path $RepoRoot "logs\simmer-ab-decision-latest.json"
 
 function Parse-Bool([string]$v) {
   if ([string]::IsNullOrWhiteSpace($v)) { return $false }
@@ -111,5 +118,16 @@ if ($discordEnabled) {
 }
 
 & $PythonExe @compareArgs 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+
+if (-not $SkipJudge) {
+  "[$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))] judge min_days=$JudgeMinDays exp_ratio=$JudgeExpectancyRatioThreshold decision_date=$JudgeDecisionDate" | Out-File -FilePath $logFile -Append -Encoding utf8
+  & $PythonExe $judgeScript `
+    --history-file $compareHistoryFile `
+    --min-days ([string]$JudgeMinDays) `
+    --expectancy-ratio-threshold ([string]$JudgeExpectancyRatioThreshold) `
+    --decision-date ([string]$JudgeDecisionDate) `
+    --output-file $judgeLatestFile `
+    --output-json $judgeLatestJson 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+}
 
 "[$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))] done" | Out-File -FilePath $logFile -Append -Encoding utf8

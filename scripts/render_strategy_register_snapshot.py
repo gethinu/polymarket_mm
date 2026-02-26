@@ -107,6 +107,32 @@ def _is_command_or_artifact(ref: str) -> bool:
     return False
 
 
+def _extract_multiline_field(lines: List[str], label: str) -> str:
+    marker = f"- {label}:"
+    for i, raw in enumerate(lines):
+        if not raw.startswith(marker):
+            continue
+        collected: List[str] = []
+        head = raw[len(marker) :].strip()
+        if head:
+            collected.append(head)
+        j = i + 1
+        while j < len(lines):
+            nxt = lines[j]
+            if nxt.startswith("- "):
+                break
+            t = nxt.strip()
+            if not t:
+                j += 1
+                continue
+            if t.startswith("- "):
+                t = t[2:].strip()
+            collected.append(t)
+            j += 1
+        return " ; ".join([x for x in collected if x]).strip()
+    return ""
+
+
 def parse_strategy_register(md_path: Path) -> dict:
     out: dict = {
         "source_path": str(md_path),
@@ -210,6 +236,11 @@ def parse_strategy_register(md_path: Path) -> dict:
                     if _is_command_or_artifact(ref):
                         evidence_refs.append(ref)
 
+        if not decision_note:
+            decision_note = _extract_multiline_field(body_lines, "Decision note")
+        if not operational_gate:
+            operational_gate = _extract_multiline_field(body_lines, "Operational gate")
+
         status = status if status in counts else "UNKNOWN"
         counts[status] += 1
 
@@ -229,6 +260,129 @@ def parse_strategy_register(md_path: Path) -> dict:
 
     out["entries"] = parsed
     out["counts"] = counts
+    return out
+
+
+def _extract_section_lines(md_path: Path, section_title: str) -> List[str]:
+    if not md_path.exists():
+        return []
+    lines = md_path.read_text(encoding="utf-8").splitlines()
+    want = str(section_title or "").strip().lower()
+    capture = False
+    out: List[str] = []
+    for line in lines:
+        if line.startswith("## "):
+            title = line[3:].strip().lower()
+            if capture and title != want:
+                break
+            capture = title == want
+            continue
+        if capture:
+            out.append(line.rstrip())
+    return out
+
+
+def _extract_first_money(text: str) -> Optional[float]:
+    s = str(text or "")
+    m_dollar = re.search(r"\$([0-9]+(?:\.[0-9]+)?)", s)
+    if m_dollar:
+        return _as_float(m_dollar.group(1))
+    m_num = re.search(r"([0-9]+(?:\.[0-9]+)?)", s)
+    if m_num:
+        return _as_float(m_num.group(1))
+    return None
+
+
+def _extract_first_ratio_percent(text: str) -> Optional[float]:
+    s = str(text or "")
+    m = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*%", s)
+    if not m:
+        return None
+    v = _as_float(m.group(1))
+    if v is None:
+        return None
+    return float(v) / 100.0
+
+
+def parse_bankroll_policy(md_path: Path, strategy_entries: Optional[List[dict]] = None) -> dict:
+    out: dict = {
+        "source_path": str(md_path),
+        "exists": md_path.exists(),
+        "section_found": False,
+        "initial_bankroll_usd": None,
+        "allocation_mode": "unspecified",
+        "allocation_policy": "",
+        "live_max_daily_risk_ratio": None,
+        "live_max_daily_risk_usd": None,
+        "live_max_daily_risk_policy": "",
+        "assumed_bankroll_policy_note": "",
+        "adopted_strategy_count": 0,
+        "adopted_strategy_ids": [],
+        "default_adopted_allocations": [],
+        "bullets": [],
+    }
+    if not md_path.exists():
+        return out
+
+    section_lines = _extract_section_lines(md_path, "Bankroll Policy")
+    if not section_lines:
+        return out
+    out["section_found"] = True
+
+    for raw in section_lines:
+        s = str(raw or "").strip()
+        if not s.startswith("- "):
+            continue
+        bullet = s[2:].strip()
+        out["bullets"].append(bullet)
+        lower = bullet.lower()
+
+        if "initial bankroll" in lower and out["initial_bankroll_usd"] is None:
+            out["initial_bankroll_usd"] = _extract_first_money(bullet)
+
+        if "allocation" in lower and "ratio" in lower:
+            out["allocation_policy"] = bullet
+            if "equal-weight" in lower or "equal weight" in lower:
+                out["allocation_mode"] = "equal_weight_adopted"
+
+        if ("max risk" in lower or "daily risk" in lower) and not out["live_max_daily_risk_policy"]:
+            out["live_max_daily_risk_policy"] = bullet
+            out["live_max_daily_risk_ratio"] = _extract_first_ratio_percent(bullet)
+
+        if "--assumed-bankroll-usd" in lower or "-assumedbankrollusd" in lower:
+            out["assumed_bankroll_policy_note"] = bullet
+
+    init_bankroll = _as_float(out.get("initial_bankroll_usd"))
+    risk_ratio = _as_float(out.get("live_max_daily_risk_ratio"))
+    if init_bankroll is not None and init_bankroll > 0 and risk_ratio is not None and risk_ratio >= 0:
+        out["live_max_daily_risk_usd"] = float(init_bankroll * risk_ratio)
+
+    entries = strategy_entries if isinstance(strategy_entries, list) else []
+    adopted_ids = []
+    for row in entries:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status") or "").upper() != "ADOPTED":
+            continue
+        sid = str(row.get("strategy_id") or "").strip()
+        if sid:
+            adopted_ids.append(sid)
+    out["adopted_strategy_ids"] = adopted_ids
+    out["adopted_strategy_count"] = len(adopted_ids)
+
+    if out.get("allocation_mode") == "equal_weight_adopted" and adopted_ids:
+        ratio = 1.0 / float(len(adopted_ids))
+        alloc_rows: List[dict] = []
+        for sid in adopted_ids:
+            row = {
+                "strategy_id": sid,
+                "allocation_ratio": float(ratio),
+                "allocation_pct": float(ratio * 100.0),
+                "allocation_usd": float(init_bankroll * ratio) if init_bankroll is not None and init_bankroll > 0 else None,
+            }
+            alloc_rows.append(row)
+        out["default_adopted_allocations"] = alloc_rows
+
     return out
 
 
@@ -899,6 +1053,7 @@ def render_html_snapshot(payload: dict) -> str:
     strat = payload.get("strategy_register") if isinstance(payload.get("strategy_register"), dict) else {}
     counts = strat.get("counts") if isinstance(strat.get("counts"), dict) else {}
     strategies = strat.get("entries") if isinstance(strat.get("entries"), list) else []
+    bankroll_policy = payload.get("bankroll_policy") if isinstance(payload.get("bankroll_policy"), dict) else {}
     readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
     readiness_rows = readiness.get("latest_records") if isinstance(readiness.get("latest_records"), list) else []
     readiness_summary = readiness.get("summary") if isinstance(readiness.get("summary"), dict) else {}
@@ -1090,6 +1245,30 @@ def render_html_snapshot(payload: dict) -> str:
         realized_monthly.get("source_files") if isinstance(realized_monthly.get("source_files"), list) else []
     )
     clob_src_html = "".join(f"<li><code>{html.escape(str(x))}</code></li>" for x in clob_src_files) or "<li>-</li>"
+    bp_initial = _as_float(bankroll_policy.get("initial_bankroll_usd"))
+    bp_initial_txt = f"${bp_initial:.2f}" if bp_initial is not None else "-"
+    bp_mode = html.escape(str(bankroll_policy.get("allocation_mode") or "-"))
+    bp_count = int(bankroll_policy.get("adopted_strategy_count") or 0)
+    bp_risk_ratio = _as_float(bankroll_policy.get("live_max_daily_risk_ratio"))
+    bp_risk_ratio_txt = f"{bp_risk_ratio * 100.0:.2f}%" if bp_risk_ratio is not None else "-"
+    bp_risk_usd = _as_float(bankroll_policy.get("live_max_daily_risk_usd"))
+    bp_risk_usd_txt = f"${bp_risk_usd:.2f}" if bp_risk_usd is not None else "-"
+    bp_allocation_policy = html.escape(str(bankroll_policy.get("allocation_policy") or "-"))
+    bp_risk_policy = html.escape(str(bankroll_policy.get("live_max_daily_risk_policy") or "-"))
+    bp_assumed_note = html.escape(str(bankroll_policy.get("assumed_bankroll_policy_note") or "-"))
+    bp_alloc_rows: List[str] = []
+    for row in (bankroll_policy.get("default_adopted_allocations") if isinstance(bankroll_policy.get("default_adopted_allocations"), list) else []):
+        if not isinstance(row, dict):
+            continue
+        sid = html.escape(str(row.get("strategy_id") or "-"))
+        ratio = _as_float(row.get("allocation_ratio"))
+        pct = _as_float(row.get("allocation_pct"))
+        usd = _as_float(row.get("allocation_usd"))
+        ratio_txt = f"{ratio:.6f}" if ratio is not None else "-"
+        pct_txt = f"{pct:.2f}%" if pct is not None else "-"
+        usd_txt = f"${usd:.2f}" if usd is not None else "-"
+        bp_alloc_rows.append(f"<tr><td><code>{sid}</code></td><td>{ratio_txt}</td><td>{pct_txt}</td><td>{usd_txt}</td></tr>")
+    bp_alloc_rows_html = "".join(bp_alloc_rows) if bp_alloc_rows else '<tr><td colspan="4">no default allocation rows</td></tr>'
 
     return f"""<!doctype html>
 <html lang="ja">
@@ -1187,6 +1366,27 @@ def render_html_snapshot(payload: dict) -> str:
       <table>
         <thead><tr><th>strategy_id</th><th>status</th><th>section</th><th>scope</th><th>metric</th><th>runtime</th><th>decision_note</th></tr></thead>
         <tbody>{''.join(strategy_rows) if strategy_rows else '<tr><td colspan="7">no strategy entries</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>Bankroll Policy</h2>
+      <table>
+        <thead><tr><th>metric</th><th>value</th></tr></thead>
+        <tbody>
+          <tr><td>initial_bankroll_usd</td><td>{bp_initial_txt}</td></tr>
+          <tr><td>allocation_mode</td><td>{bp_mode}</td></tr>
+          <tr><td>adopted_strategy_count</td><td>{bp_count}</td></tr>
+          <tr><td>allocation_policy</td><td>{bp_allocation_policy}</td></tr>
+          <tr><td>live_max_daily_risk_ratio</td><td>{bp_risk_ratio_txt}</td></tr>
+          <tr><td>live_max_daily_risk_usd</td><td>{bp_risk_usd_txt}</td></tr>
+          <tr><td>live_max_daily_risk_policy</td><td>{bp_risk_policy}</td></tr>
+          <tr><td>assumed_bankroll_policy_note</td><td>{bp_assumed_note}</td></tr>
+        </tbody>
+      </table>
+      <table style="margin-top:10px;">
+        <thead><tr><th>strategy_id</th><th>allocation_ratio</th><th>allocation_pct</th><th>allocation_usd</th></tr></thead>
+        <tbody>{bp_alloc_rows_html}</tbody>
       </table>
     </div>
 
@@ -1304,6 +1504,11 @@ def main() -> int:
     min_realized_days = max(1, int(args.min_realized_days))
     realized_strategy_id = str(args.realized_strategy_id or "").strip() or DEFAULT_REALIZED_STRATEGY_ID
     realized_series = load_realized_daily_series(strategy_id=realized_strategy_id)
+    strategy_register = parse_strategy_register(strategy_path)
+    bankroll_policy = parse_bankroll_policy(
+        strategy_path,
+        strategy_entries=(strategy_register.get("entries") if isinstance(strategy_register.get("entries"), list) else []),
+    )
 
     payload = {
         "generated_utc": now_utc().isoformat(),
@@ -1317,7 +1522,8 @@ def main() -> int:
             "clob_state_file": str(resolve_path(str(args.clob_state_file), "clob_arb_state.json")),
             "realized_strategy_id": realized_strategy_id,
         },
-        "strategy_register": parse_strategy_register(strategy_path),
+        "strategy_register": strategy_register,
+        "bankroll_policy": bankroll_policy,
         "readiness": {
             "latest_records": readiness_latest_rows,
             "summary": summarize_readiness(readiness_latest_rows),
