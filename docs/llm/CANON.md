@@ -88,6 +88,13 @@ Decision handling:
 - `REVIEW`: keep observe-only and do not promote
 - `REJECTED`: remove from active operation
 
+Sample-shortfall handling (`gate_reasons` contains `samples_below_min`):
+
+- Treat as evidence-insufficient `REVIEW`, not immediate reject.
+- Keep observe process running and recheck later.
+- Recommended recheck alarm (separate waiter state so existing alarm is not overwritten):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_weather_24h_alarm.ps1 -AlarmAt "<local datetime>" -Message "Weather usefulness gate recheck (samples>=300?)" -WaiterStateFile logs/weather24h_gate_recheck_waiter_state.json -LogFile logs/alarm_weather24h_gate_recheck.log -MarkerFile logs/alarm_weather24h_gate_recheck.marker`
+
 ## 7. Strategy Change Protocol
 
 When changing strategy status/policy:

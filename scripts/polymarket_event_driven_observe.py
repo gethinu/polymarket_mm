@@ -243,6 +243,22 @@ EVENT_RULES: Tuple[EventClassRule, ...] = (
         fragility_boost=0.24,
     ),
     EventClassRule(
+        name="geopolitical",
+        terms=(
+            "ceasefire",
+            "truce",
+            "peace deal",
+            "peace agreement",
+            "sanction",
+            "summit",
+            "invasion",
+            "withdrawal",
+            "armistice",
+        ),
+        prior_shift=0.00,
+        fragility_boost=0.22,
+    ),
+    EventClassRule(
         name="special_situations",
         terms=(
             "spin-off",
