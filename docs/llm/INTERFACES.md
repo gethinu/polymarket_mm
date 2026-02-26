@@ -764,6 +764,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - `NO_LONGSHOT_DAILY_DISCORD=1` でも通知有効（Webhookは `CLOBBOT_DISCORD_WEBHOOK_URL` または `DISCORD_WEBHOOK_URL`）
   - 日次実行時に `record_no_longshot_realized_daily.py` を呼び、`rolling_30d_monthly_return`（実測）を summary に追記
   - 実測エントリー入力は `logs/no_longshot_daily_screen.csv` を基本にしつつ、`logs/no_longshot_fast_screen_lowyes_latest.csv`（YES 0.01-0.20 / 残り72h以内）に候補があれば自動で fast 側を優先
+  - fast screen 取得失敗時は runner 全体を継続し、`primary_screen` へ自動フォールバック（Summaryの `fast screen status` に `failed` を記録）
   - Summary に `monthly_return_now` を追記（実測が未確定の間は Guarded OOS の `annualized_return` を月次換算したフォールバック値を表示）
   - 実測アーティファクト: `logs/no_longshot_forward_positions.json`, `logs/no_longshot_realized_daily.jsonl`, `logs/no_longshot_realized_latest.json`, `logs/no_longshot_monthly_return_latest.txt`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -RunNow`

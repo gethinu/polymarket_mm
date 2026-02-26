@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `19`
-- worktree_changes: `3`
+- commits_scanned: `20`
+- worktree_changes: `1`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,20 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 7 | `2026-02-25 21:59` | `f4f884b5` | feat: add ratio-based gap summary target selection |
+| `docs_llm` | 8 | `2026-02-25 22:19` | `602612dc` | fix: keep no-longshot daily runner resilient on gap scan errors |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
-| `no_longshot` | 6 | `2026-02-25 21:59` | `f4f884b5` | feat: add ratio-based gap summary target selection |
+| `no_longshot` | 7 | `2026-02-25 22:19` | `602612dc` | fix: keep no-longshot daily runner resilient on gap scan errors |
 | `security_or_ops` | 5 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
 | `simmer_clob` | 13 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `strategy_register` | 5 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
-| `task_automation` | 8 | `2026-02-25 21:59` | `f4f884b5` | feat: add ratio-based gap summary target selection |
+| `task_automation` | 9 | `2026-02-25 22:19` | `602612dc` | fix: keep no-longshot daily runner resilient on gap scan errors |
 | `weather_pipeline` | 4 | `2026-02-25 21:48` | `6866105c` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation f... |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-25 22:19` | `602612dc` | `docs_llm,no_longshot,task_automation` | fix: keep no-longshot daily runner resilient on gap scan errors | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/run_no_longshot_daily_report.ps1` |
 | `2026-02-25 21:59` | `f4f884b5` | `docs_llm,no_longshot,task_automation` | feat: add ratio-based gap summary target selection | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/run_no_longshot_daily_report.ps1` |
 | `2026-02-25 21:48` | `6866105c` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation,weather_pipeline` | feat: Add new daily daemons, reporting scripts, and comprehensive LLM documentation for a... | `README.md`, `docs/README.md`, `docs/llm/ARCHITECTURE.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, +9 |
 | `2026-02-25 21:11` | `36ebdddf` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation,weather_pipeline` | feat: add morning status automation and strategy health reporting | `AGENTS.md`, `configs/bot_supervisor.observe.json`, `docs/IMPLEMENTATION_LEDGER.md`, `docs/README.md`, +25 |
@@ -56,9 +57,7 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
-| `M` | `scripts/run_no_longshot_daily_report.ps1` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |
