@@ -481,6 +481,10 @@ def _apply_morning_task_argument_guard(task_rows: List[dict]) -> None:
             row["status"] = "INVALID_CONTENT"
             row["status_note"] = "missing_action_arguments"
             return
+        if "||" in args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "multiple_actions_detected"
+            return
 
         def _has_flag_token(flag: str) -> bool:
             return bool(re.search(rf"(?i)(?:^|\s){re.escape(flag)}(?::|\s|$)", args_raw))
@@ -596,6 +600,10 @@ def _apply_simmer_ab_task_argument_guard(task_rows: List[dict]) -> None:
         if not args_raw:
             row["status"] = "INVALID_CONTENT"
             row["status_note"] = "missing_action_arguments"
+            return
+        if "||" in args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "multiple_actions_detected"
             return
 
         def _has_flag_token(flag: str) -> bool:

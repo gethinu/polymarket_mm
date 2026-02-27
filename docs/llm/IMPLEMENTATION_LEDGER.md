@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `40`
-- worktree_changes: `9`
+- commits_scanned: `42`
+- worktree_changes: `11`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,21 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 25 | `2026-02-27 22:13` | `c2f07a53` | feat: add fade observe watchdog auto-recovery task |
+| `docs_llm` | 27 | `2026-02-27 23:38` | `cf0e06e8` | fix: require -NoBackground for morning task guard |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 15 | `2026-02-27 20:37` | `00ba4dfe` | test: extend no-longshot mode switcher daemon/off coverage |
-| `security_or_ops` | 13 | `2026-02-27 20:54` | `62752b4b` | feat: harden simmer daily judge and morning interim gates |
+| `security_or_ops` | 15 | `2026-02-27 23:38` | `cf0e06e8` | fix: require -NoBackground for morning task guard |
 | `simmer_clob` | 25 | `2026-02-27 22:13` | `c2f07a53` | feat: add fade observe watchdog auto-recovery task |
-| `strategy_register` | 10 | `2026-02-27 20:54` | `62752b4b` | feat: harden simmer daily judge and morning interim gates |
-| `task_automation` | 18 | `2026-02-27 22:13` | `c2f07a53` | feat: add fade observe watchdog auto-recovery task |
-| `weather_pipeline` | 6 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
+| `strategy_register` | 11 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
+| `task_automation` | 19 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
+| `weather_pipeline` | 7 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-27 23:38` | `cf0e06e8` | `docs_llm,security_or_ops` | fix: require -NoBackground for morning task guard | `docs/llm/STRATEGY.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
+| `2026-02-27 22:49` | `4b6eba99` | `docs_llm,security_or_ops,strategy_register,task_automation,weather_pipeline` | feat: tighten automation health guards and weather mutex wiring | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STRATEGY.md`, `scripts/install_weather_profit_window_weekly_task.ps1`, +5 |
 | `2026-02-27 22:13` | `c2f07a53` | `docs_llm,simmer_clob,task_automation` | feat: add fade observe watchdog auto-recovery task | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `scripts/install_fade_observe_watchdog_task.ps1`, +1 |
 | `2026-02-27 20:54` | `62752b4b` | `docs_llm,security_or_ops,simmer_clob,strategy_register,task_automation` | feat: harden simmer daily judge and morning interim gates | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `scripts/install_morning_status_daily_task.ps1`, +7 |
 | `2026-02-27 20:44` | `fd41b84e` | `docs_llm,security_or_ops,simmer_clob,strategy_register` | feat: enforce simmer interim gate in morning checks | `docs/llm/CANON.md`, `docs/llm/STRATEGY.md`, `scripts/check_morning_status.ps1`, `scripts/report_automation_health.py`, +1 |
@@ -80,12 +82,14 @@
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STRATEGY.md` |
-| `M` | `scripts/install_weather_profit_window_weekly_task.ps1` |
+| `M` | `scripts/install_event_driven_daily_task.ps1` |
+| `M` | `scripts/lib/clob_arb_eval.py` |
+| `M` | `scripts/polymarket_clob_arb_realtime.py` |
 | `M` | `scripts/report_automation_health.py` |
-| `M` | `scripts/run_weather_arb_profit_window.ps1` |
+| `M` | `scripts/report_event_driven_profit_window.py` |
+| `M` | `scripts/run_event_driven_daily_report.ps1` |
+| `M` | `tests/test_clob_arb_eval.py` |
 | `M` | `tests/test_report_automation_health.py` |
-| `??` | `tests/test_check_morning_status_ps1.py` |
-| `??` | `tests/test_morning_status_daily_ps1.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

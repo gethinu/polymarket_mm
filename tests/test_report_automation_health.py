@@ -446,6 +446,30 @@ def test_apply_morning_task_argument_guard_marks_invalid_when_required_missing()
     assert "missing_required_flags=" in str(rows[0].get("status_note") or "")
 
 
+def test_apply_morning_task_argument_guard_marks_invalid_when_multiple_actions_detected():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget 7d "
+                "-FailOnSimmerAbInterimNoGo || "
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert rows[0].get("status_note") == "multiple_actions_detected"
+
+
 def test_apply_morning_task_argument_guard_keeps_ok_when_required_present_and_no_forbidden():
     rows = [
         {
@@ -703,6 +727,27 @@ def test_apply_simmer_ab_task_argument_guard_marks_invalid_when_required_missing
     assert "-judgeexpectancyratiothreshold" in note
     assert "-judgedecisiondate" in note
     assert "-failonfinalnogo" in note
+
+
+def test_apply_simmer_ab_task_argument_guard_marks_invalid_when_multiple_actions_detected():
+    rows = [
+        {
+            "task_name": "SimmerABDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground "
+                "-JudgeMinDays 25 -JudgeMinWindowHours 20 -JudgeExpectancyRatioThreshold 0.9 "
+                "-JudgeDecisionDate 2026-03-22 -FailOnFinalNoGo || "
+                "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground"
+            ),
+        }
+    ]
+
+    mod._apply_simmer_ab_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert rows[0].get("status_note") == "multiple_actions_detected"
 
 
 def test_apply_simmer_ab_task_argument_guard_marks_invalid_when_skipjudge_present():
