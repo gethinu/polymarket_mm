@@ -455,6 +455,7 @@ def _apply_morning_task_argument_guard(task_rows: List[dict]) -> None:
     ]
     required_switch_flags = [
         "-failonsimmerabinterimnogo",
+        "-nobackground",
     ]
     forbidden_flags = [
         "-norefresh",

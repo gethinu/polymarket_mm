@@ -468,6 +468,55 @@ def test_apply_morning_task_argument_guard_keeps_ok_when_required_present_and_no
     assert rows[0]["status"] == "OK"
 
 
+def test_apply_morning_task_argument_guard_marks_invalid_when_nobackground_missing():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget 7d "
+                "-FailOnSimmerAbInterimNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "-nobackground" in note
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_nobackground_explicit_false():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 "
+                "-NoBackground:$false "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget 7d "
+                "-FailOnSimmerAbInterimNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "-nobackground" in note
+
+
 def test_apply_morning_task_argument_guard_keeps_ok_when_forbidden_switch_is_explicit_false():
     rows = [
         {

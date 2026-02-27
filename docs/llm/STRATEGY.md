@@ -14,9 +14,11 @@ For operational source-of-truth workflow, follow `docs/llm/CANON.md`.
 Do not hand-edit KPI numbers in this file.
 
 Always read the latest values from:
+
 - `logs/strategy_register_latest.json`
 
 Primary keys:
+
 - `no_longshot_status.monthly_return_now_text`
 - `no_longshot_status.monthly_return_now_source`
 - `no_longshot_status.monthly_return_now_new_condition_text`
@@ -42,6 +44,7 @@ Primary keys:
 ## Active Strategies
 
 1. `weather_clob_arb_buckets_observe`
+
 - Status: `ADOPTED` (as of 2026-02-23, revalidated 2026-02-25).
 - Scope: Polymarket weather basket opportunities, observe-only.
 - Runtime:
@@ -65,6 +68,7 @@ Primary keys:
   - Any gate miss is `REVIEW`.
 
 2. `no_longshot_daily_observe`
+
 - Status: `ADOPTED` (as of 2026-02-25, revalidated 2026-02-26, observe-only).
 - Scope: Polymarket no-longshot daily monitor + logical-gap scan + forward realized tracker, observe-only.
 - Runtime:
@@ -103,6 +107,7 @@ Primary keys:
   - If threshold is still unmet on `2026-03-02`, keep observe-only and slide judgment date by `+3` calendar days.
 
 3. `link_intake_walletseed_cohort_observe`
+
 - Status: `ADOPTED` (as of 2026-02-25, observe-only).
 - Scope: profile/wallet hints from social links are converted to reproducible cohort autopsy inputs, observe-only.
 - Runtime:
@@ -120,6 +125,7 @@ Primary keys:
 - Operational gate: keep this strategy in `REVIEW` for any run where `stats.resolved_user_count < 1` or `stats.cohort_ok != true`.
 
 4. `hourly_updown_highprob_calibration_observe`
+
 - Status: `ADOPTED` (as of 2026-02-25, observe-only).
 - Scope: short-horizon hourly crypto up/down high-probability pricing calibration, observe-only.
 - Runtime:
@@ -137,10 +143,12 @@ Primary keys:
 ## Rejected Strategies
 
 1. `weather_clob_arb_yes_no_only`
+
 - Status: `REJECTED`.
 - Reason: low usefulness in this workspace run; switched to `buckets` as default.
 
 2. `gamma_eventpair_exec_edge_filter_observe`
+
 - Status: `REJECTED` (as of 2026-02-26, observe-only).
 - Scope: Polymarket gamma-active event-pair strategy with observe-only exec-edge suppression (`event-yes` filter).
 - Runtime:
@@ -179,6 +187,7 @@ Primary keys:
 ## Pending Strategies
 
 1. `social_profit_claim_validation_observe`
+
 - Status: `PENDING` (as of 2026-02-25).
 - Scope: social/X performance claims around Polymarket bot profitability, observe-only.
 - Runtime:
