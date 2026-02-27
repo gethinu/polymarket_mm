@@ -172,6 +172,46 @@ class EventClassRule:
 
 EVENT_RULES: Tuple[EventClassRule, ...] = (
     EventClassRule(
+        name="election_politics",
+        terms=(
+            "election",
+            "president",
+            "prime minister",
+            "governor",
+            "senate",
+            "house",
+            "parliament",
+            "candidate",
+            "poll",
+            "vote",
+            "referendum",
+            "ballot",
+            "coalition",
+        ),
+        prior_shift=0.00,
+        fragility_boost=0.18,
+    ),
+    EventClassRule(
+        name="macro_policy",
+        terms=(
+            "fomc",
+            "fed",
+            "interest rate",
+            "rate cut",
+            "rate hike",
+            "inflation",
+            "cpi",
+            "gdp",
+            "recession",
+            "payrolls",
+            "unemployment",
+            "tariff",
+            "stimulus",
+        ),
+        prior_shift=0.00,
+        fragility_boost=0.14,
+    ),
+    EventClassRule(
         name="merger_arb",
         terms=(
             "merger",
@@ -625,7 +665,10 @@ def run_once(args: argparse.Namespace, logger: Logger) -> int:
             continue
         if s.volume_24h < args.min_volume_24h:
             continue
-        if s.days_to_end is not None:
+        if s.days_to_end is None:
+            if not args.allow_missing_end_date:
+                continue
+        else:
             if s.days_to_end < args.min_days_to_end:
                 continue
             if args.max_days_to_end > 0 and s.days_to_end > args.max_days_to_end:
@@ -718,6 +761,7 @@ def run_once(args: argparse.Namespace, logger: Logger) -> int:
             "min_leg_price": args.min_leg_price,
             "max_leg_price": args.max_leg_price,
             "min_confidence": args.min_confidence,
+            "allow_missing_end_date": bool(args.allow_missing_end_date),
             "include_non_event": bool(args.include_non_event),
             "signal_cooldown_sec": args.signal_cooldown_sec,
         },
@@ -744,6 +788,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-volume-24h", type=float, default=250.0, help="Minimum 24h volume filter.")
     p.add_argument("--min-days-to-end", type=float, default=0.5, help="Minimum days until market end.")
     p.add_argument("--max-days-to-end", type=float, default=365.0, help="Maximum days until market end (<=0 disables).")
+    p.add_argument(
+        "--allow-missing-end-date",
+        action="store_true",
+        help="Allow markets without endDate/end_ts (default: filter them out).",
+    )
 
     p.add_argument("--prior-strength", type=float, default=5.0, help="Base strength of text-derived prior.")
     p.add_argument("--obs-strength", type=float, default=12.0, help="Base strength of market-implied evidence.")

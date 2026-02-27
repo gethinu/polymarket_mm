@@ -8,6 +8,11 @@ param(
   [int]$MinRealizedDays = 30,
   [string]$SnapshotJson = "logs/strategy_register_latest.json",
   [string]$HealthJson = "logs/automation_health_latest.json",
+  [string]$UncorrelatedJson = "logs/uncorrelated_portfolio_proxy_analysis_latest.json",
+  [string]$UncorrelatedStrategyIds = "weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe",
+  [double]$UncorrelatedCorrThresholdAbs = 0.30,
+  [int]$UncorrelatedMinOverlapDays = 2,
+  [int]$UncorrelatedMinRealizedDaysForCorrelation = 7,
   [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
   [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
   [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",
@@ -18,6 +23,7 @@ param(
   [switch]$NoRefresh,
   [switch]$SkipHealth,
   [switch]$SkipGateAlarm,
+  [switch]$SkipUncorrelatedPortfolio,
   [switch]$SkipImplementationLedger,
   [switch]$SkipSimmerAb,
   [switch]$SkipProcessScan,
@@ -35,7 +41,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground [-TaskName MorningStrategyStatusDaily] [-StartTime 08:05] [-StrategyId weather_clob_arb_buckets_observe] [-FailOnStageNotFinal] [-FailOnSimmerAbFinalNoGo] [-SimmerAbMaxStaleHours 30] [-SkipImplementationLedger] [-DiscordWebhookEnv CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground [-TaskName MorningStrategyStatusDaily] [-StartTime 08:05] [-StrategyId weather_clob_arb_buckets_observe] [-FailOnStageNotFinal] [-FailOnSimmerAbFinalNoGo] [-SimmerAbMaxStaleHours 30] [-SkipImplementationLedger] [-SkipUncorrelatedPortfolio] [-UncorrelatedStrategyIds weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe] [-UncorrelatedCorrThresholdAbs 0.30] [-DiscordWebhookEnv CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -?"
 }
 
@@ -113,6 +119,12 @@ if ($at -le $now.AddMinutes(1)) {
   $at = $at.AddDays(1)
 }
 
+$uncorrelatedStrategyIds = [string]$UncorrelatedStrategyIds
+if ($null -eq $uncorrelatedStrategyIds) {
+  $uncorrelatedStrategyIds = ""
+}
+$uncorrelatedStrategyIds = $uncorrelatedStrategyIds.Trim()
+
 $argList = @(
   "-NoLogo",
   "-NoProfile",
@@ -124,14 +136,23 @@ $argList = @(
   "-MinRealizedDays", "$MinRealizedDays",
   "-SnapshotJson", $SnapshotJson,
   "-HealthJson", $HealthJson,
+  "-UncorrelatedJson", $UncorrelatedJson,
+  "-UncorrelatedCorrThresholdAbs", "$UncorrelatedCorrThresholdAbs",
+  "-UncorrelatedMinOverlapDays", "$UncorrelatedMinOverlapDays",
+  "-UncorrelatedMinRealizedDaysForCorrelation", "$UncorrelatedMinRealizedDaysForCorrelation",
   "-GateAlarmStateJson", $GateAlarmStateJson,
   "-GateAlarmLogFile", $GateAlarmLogFile,
   "-SimmerAbDecisionJson", $SimmerAbDecisionJson,
   "-SimmerAbMaxStaleHours", "$SimmerAbMaxStaleHours"
 )
+if (-not [string]::IsNullOrWhiteSpace($uncorrelatedStrategyIds)) {
+  $argList += "-UncorrelatedStrategyIds"
+  $argList += $uncorrelatedStrategyIds
+}
 if ($NoRefresh.IsPresent) { $argList += "-NoRefresh" }
 if ($SkipHealth.IsPresent) { $argList += "-SkipHealth" }
 if ($SkipGateAlarm.IsPresent) { $argList += "-SkipGateAlarm" }
+if ($SkipUncorrelatedPortfolio.IsPresent) { $argList += "-SkipUncorrelatedPortfolio" }
 if ($SkipImplementationLedger.IsPresent) { $argList += "-SkipImplementationLedger" }
 if ($SkipSimmerAb.IsPresent) { $argList += "-SkipSimmerAb" }
 if ($SkipProcessScan.IsPresent) { $argList += "-SkipProcessScan" }
@@ -202,14 +223,23 @@ if ($RunNow.IsPresent) {
     "-MinRealizedDays", "$MinRealizedDays",
     "-SnapshotJson", $SnapshotJson,
     "-HealthJson", $HealthJson,
+    "-UncorrelatedJson", $UncorrelatedJson,
+    "-UncorrelatedCorrThresholdAbs", "$UncorrelatedCorrThresholdAbs",
+    "-UncorrelatedMinOverlapDays", "$UncorrelatedMinOverlapDays",
+    "-UncorrelatedMinRealizedDaysForCorrelation", "$UncorrelatedMinRealizedDaysForCorrelation",
     "-GateAlarmStateJson", $GateAlarmStateJson,
     "-GateAlarmLogFile", $GateAlarmLogFile,
     "-SimmerAbDecisionJson", $SimmerAbDecisionJson,
     "-SimmerAbMaxStaleHours", "$SimmerAbMaxStaleHours"
   )
+  if (-not [string]::IsNullOrWhiteSpace($uncorrelatedStrategyIds)) {
+    $runArgs += "-UncorrelatedStrategyIds"
+    $runArgs += $uncorrelatedStrategyIds
+  }
   if ($NoRefresh.IsPresent) { $runArgs += "-NoRefresh" }
   if ($SkipHealth.IsPresent) { $runArgs += "-SkipHealth" }
   if ($SkipGateAlarm.IsPresent) { $runArgs += "-SkipGateAlarm" }
+  if ($SkipUncorrelatedPortfolio.IsPresent) { $runArgs += "-SkipUncorrelatedPortfolio" }
   if ($SkipImplementationLedger.IsPresent) { $runArgs += "-SkipImplementationLedger" }
   if ($SkipSimmerAb.IsPresent) { $runArgs += "-SkipSimmerAb" }
   if ($SkipProcessScan.IsPresent) { $runArgs += "-SkipProcessScan" }

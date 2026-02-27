@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+DEFAULT_ASSUMED_BANKROLL_USD = 100.0
+
 
 SUMMARY_RE = re.compile(
     r"^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] "
@@ -64,6 +66,16 @@ class Segment:
 
 def parse_ts(s: str) -> dt.datetime:
     return dt.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+
+
+def as_float(v: object) -> Optional[float]:
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(n):
+        return None
+    return n
 
 
 def now_local() -> dt.datetime:
@@ -375,6 +387,7 @@ def build_text_report(result: dict) -> str:
     window = result.get("window") or {}
     summary = result.get("summary") or {}
     decision = result.get("decision") or {}
+    settings = result.get("settings") or {}
     selected = result.get("selected_threshold") or {}
     base = selected.get("base_scenario") if isinstance(selected, dict) else None
 
@@ -392,6 +405,10 @@ def build_text_report(result: dict) -> str:
         f"Edge pct median={float(summary.get('edge_pct_median') or 0.0) * 100.0:.2f}% "
         f"p90={float(summary.get('edge_pct_p90') or 0.0) * 100.0:.2f}% "
         f"max={float(summary.get('edge_pct_max') or 0.0) * 100.0:.2f}%"
+    )
+    lines.append(
+        f"Assumed bankroll=${float(settings.get('assumed_bankroll_usd') or 0.0):.2f} "
+        f"(source={str(settings.get('assumed_bankroll_source') or '-')})"
     )
 
     if selected:
@@ -433,6 +450,70 @@ def resolve_path(root: Path, raw: str, default_rel: str) -> Path:
     return root / p
 
 
+def extract_initial_bankroll_from_strategy_md(path: Path) -> Optional[float]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return None
+    in_policy = False
+    for line in lines:
+        if line.startswith("## "):
+            title = line[3:].strip().lower()
+            if in_policy and title != "bankroll policy":
+                break
+            in_policy = title == "bankroll policy"
+            continue
+        if not in_policy:
+            continue
+        s = line.strip()
+        if not s.startswith("- "):
+            continue
+        bullet = s[2:].strip()
+        if not bullet.lower().startswith("initial bankroll"):
+            continue
+        m = re.search(r"\$([0-9]+(?:\.[0-9]+)?)", bullet)
+        if not m:
+            m = re.search(r"([0-9]+(?:\.[0-9]+)?)", bullet)
+        if not m:
+            continue
+        n = as_float(m.group(1))
+        if n is not None and n > 0:
+            return float(n)
+    return None
+
+
+def extract_initial_bankroll_from_snapshot(path: Path) -> Optional[float]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    bp = payload.get("bankroll_policy") if isinstance(payload.get("bankroll_policy"), dict) else {}
+    n = as_float(bp.get("initial_bankroll_usd"))
+    if n is not None and n > 0:
+        return float(n)
+    return None
+
+
+def resolve_assumed_bankroll_usd(root: Path, cli_value: Optional[float]) -> tuple[float, str]:
+    n_cli = as_float(cli_value)
+    if n_cli is not None:
+        return float(n_cli), "cli_arg"
+
+    snapshot_path = root / "logs" / "strategy_register_latest.json"
+    n_snapshot = extract_initial_bankroll_from_snapshot(snapshot_path)
+    if n_snapshot is not None:
+        return float(n_snapshot), "logs/strategy_register_latest.json:bankroll_policy.initial_bankroll_usd"
+
+    strategy_path = root / "docs" / "llm" / "STRATEGY.md"
+    n_policy = extract_initial_bankroll_from_strategy_md(strategy_path)
+    if n_policy is not None:
+        return float(n_policy), "docs/llm/STRATEGY.md:Bankroll Policy.initial_bankroll"
+
+    return float(DEFAULT_ASSUMED_BANKROLL_USD), f"hardcoded_default:{DEFAULT_ASSUMED_BANKROLL_USD:.2f}"
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Estimate weather arb monthly return range from observe logs (observe-only).")
     p.add_argument("--log-file", default="logs/clob-arb-weather-observe.log")
@@ -443,7 +524,12 @@ def main() -> int:
     p.add_argument("--capture-ratios", default="0.25,0.35,0.50")
     p.add_argument("--base-capture-ratio", type=float, default=0.35)
     p.add_argument("--days-per-month", type=float, default=30.0)
-    p.add_argument("--assumed-bankroll-usd", type=float, default=100.0)
+    p.add_argument(
+        "--assumed-bankroll-usd",
+        type=float,
+        default=None,
+        help="When omitted, resolve from strategy bankroll policy (fallback: 100).",
+    )
     p.add_argument("--max-assumed-trades-per-day", type=float, default=8.0)
     p.add_argument("--target-monthly-return-pct", type=float, default=15.0)
     p.add_argument("--min-span-hours", type=float, default=6.0)
@@ -477,6 +563,7 @@ def main() -> int:
     capture_ratios = parse_capture_ratios(args.capture_ratios)
     if not capture_ratios:
         capture_ratios = [0.25, 0.35, 0.5]
+    assumed_bankroll_usd, assumed_bankroll_source = resolve_assumed_bankroll_usd(root, args.assumed_bankroll_usd)
 
     rows_all = list(iter_rows(log_file.read_text(encoding="utf-8", errors="replace").splitlines()))
     rows = sorted([r for r in rows_all if since <= r.ts <= until], key=lambda r: r.ts)
@@ -506,7 +593,7 @@ def main() -> int:
             span_days=span_days,
             max_assumed_trades_per_day=float(args.max_assumed_trades_per_day),
             days_per_month=float(args.days_per_month),
-            assumed_bankroll_usd=float(args.assumed_bankroll_usd),
+            assumed_bankroll_usd=float(assumed_bankroll_usd),
         )
         for t in thresholds_usd
     ]
@@ -605,7 +692,8 @@ def main() -> int:
             "capture_ratios": [float(c) for c in capture_ratios],
             "base_capture_ratio": float(args.base_capture_ratio),
             "days_per_month": float(args.days_per_month),
-            "assumed_bankroll_usd": float(args.assumed_bankroll_usd),
+            "assumed_bankroll_usd": float(assumed_bankroll_usd),
+            "assumed_bankroll_source": assumed_bankroll_source,
             "max_assumed_trades_per_day": float(args.max_assumed_trades_per_day),
             "target_monthly_return_pct": float(args.target_monthly_return_pct),
             "min_span_hours": float(args.min_span_hours),
@@ -654,6 +742,10 @@ def main() -> int:
     else:
         out_json.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
 
+    print(
+        f"[weather-profit] assumed_bankroll=${assumed_bankroll_usd:.2f} "
+        f"source={assumed_bankroll_source}"
+    )
     print(f"[weather-profit] decision={decision} projected_monthly={selected_base_monthly * 100.0:+.2f}%")
     print(f"[weather-profit] wrote {out_json}")
     print(f"[weather-profit] wrote {out_txt}")

@@ -7,6 +7,7 @@ This repo intentionally keeps runtime outputs under `logs/` (gitignored).
 - PowerShell task scripts run in background by default.
 - Scheduled Task actions run hidden with `-NoBackground` so task instance state stays observable and `MultipleInstances=IgnoreNew` can prevent overlap.
 - Background launch mode does not introduce extra long-lived state files by itself.
+- `scripts/disable_repo_tasks.ps1` is an operational stop helper and does not create new long-lived state files.
 - Existing task outputs continue to use documented `logs/` files (for example `logs/clob-arb-monitor.log`, `logs/no_longshot_daily_run.log`, `logs/simmer-ab-daily-report.log`).
 
 ## Files
@@ -132,6 +133,10 @@ Polymarket weather 24h completion alarm:
 - Waiter state: `logs/weather24h_alarm_waiter_state.json` (local detached alarm process metadata)
 - Postcheck report: `logs/weather24h_postcheck_latest.txt`
 - Postcheck summary: `logs/weather24h_postcheck_latest.json`
+- Optional sample-shortfall recheck artifacts (when custom `-WaiterStateFile/-LogFile/-MarkerFile` are used):
+  - `logs/weather24h_gate_recheck_waiter_state.json`
+  - `logs/alarm_weather24h_gate_recheck.log`
+  - `logs/alarm_weather24h_gate_recheck.marker`
 
 Simmer hold-to-settlement followup (observe-only):
 - Waiter state: `logs/simmer_settlement_followup_waiter_state.json` (detached watcher process metadata)
@@ -251,6 +256,7 @@ Morning status daily runner (observe-only):
 - Runner log: `logs/morning_status_daily_run.log`
 - 実行時に `scripts/check_morning_status.py` を呼び出し、必要に応じて以下既存 artifact を更新:
   - `logs/strategy_register_latest.json`
+  - `logs/uncorrelated_portfolio_proxy_analysis_latest.json`
   - `logs/strategy_gate_alarm.log`, `logs/strategy_gate_alarm_state.json`
   - `logs/automation_health_latest.json`, `logs/automation_health_latest.txt`
   - `docs/llm/IMPLEMENTATION_LEDGER.md`（`--skip-implementation-ledger` 指定時は更新しない）
@@ -274,7 +280,9 @@ Polymarket strategy register snapshot (observe-only):
 
 Polymarket strategy uncorrelated-portfolio reporter (observe-only):
 - Analysis snapshot JSON: `logs/uncorrelated_portfolio_proxy_analysis_<yyyymmdd>.json`
+- Analysis latest JSON (morning check default): `logs/uncorrelated_portfolio_proxy_analysis_latest.json`
 - Output memo (docs artifact): `docs/memo_uncorrelated_portfolio_<yyyymmdd>.txt`
+- Output latest memo (docs artifact): `docs/memo_uncorrelated_portfolio_latest.txt`
 - 相関は strategy-level realized daily return を優先し、未整備戦略は observe proxy 日次系列をフォールバック利用する。
 - 戦略ごとの不足メトリクス（missing daily return / overlap不足 / proxy依存）を JSON/memo に明記する。
 
@@ -293,6 +301,11 @@ Automation health report (observe-only):
   - `logs/weather_top30_readiness_daily_run.log`
   - `logs/weather_mimic_pipeline_daily_run.log`
   - `logs/no_longshot_daily_run.log`
+  - `logs/morning_status_daily_run.log`
+- Optional freshness checks include:
+  - `logs/wallet_autopsy_daily_run.log`
+  - `logs/simmer-ab-daily-report.log`
+  - `logs/simmer-ab-decision-latest.json`
 
 ## Secrets
 

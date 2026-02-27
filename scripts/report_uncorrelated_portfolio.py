@@ -885,10 +885,13 @@ def main() -> int:
         )
         memo_path.parent.mkdir(parents=True, exist_ok=True)
         memo_path.write_text(memo_txt, encoding="utf-8")
+        latest_memo_path = docs_dir() / "memo_uncorrelated_portfolio_latest.txt"
+        latest_memo_path.write_text(memo_txt, encoding="utf-8")
 
     print(f"[uncorrelated-portfolio] wrote json: {out_json_path}")
     if not bool(args.no_memo):
         print(f"[uncorrelated-portfolio] wrote memo: {memo_path}")
+        print(f"[uncorrelated-portfolio] wrote latest memo: {latest_memo_path}")
     return 0
 
 

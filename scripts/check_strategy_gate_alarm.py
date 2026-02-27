@@ -17,6 +17,11 @@ from pathlib import Path
 from typing import Optional
 from urllib import error, request
 
+try:
+    from report_no_longshot_monthly_return import build_kpi as _NO_LONGSHOT_KPI_BUILDER
+except Exception:
+    _NO_LONGSHOT_KPI_BUILDER = None
+
 
 DEFAULT_STRATEGY_ID = "weather_clob_arb_buckets_observe"
 DEFAULT_MIN_RESOLVED_TRADES = 30
@@ -167,9 +172,20 @@ def _as_int(v: object, default: int = 0) -> int:
 
 def load_no_longshot(snapshot: dict) -> dict:
     no_longshot = snapshot.get("no_longshot_status") if isinstance(snapshot.get("no_longshot_status"), dict) else {}
-    resolved = _as_int(no_longshot.get("rolling_30d_resolved_trades"), _as_int(no_longshot.get("resolved_positions"), 0))
-    monthly_now = str(no_longshot.get("monthly_return_now_text") or "").strip()
-    monthly_src = str(no_longshot.get("monthly_return_now_source") or "").strip()
+    kpi: dict = {}
+    if callable(_NO_LONGSHOT_KPI_BUILDER):
+        try:
+            raw = _NO_LONGSHOT_KPI_BUILDER(snapshot)
+            if isinstance(raw, dict):
+                kpi = raw
+        except Exception:
+            kpi = {}
+    resolved = _as_int(
+        kpi.get("rolling_30d_resolved_trades"),
+        _as_int(no_longshot.get("rolling_30d_resolved_trades"), _as_int(no_longshot.get("resolved_positions"), 0)),
+    )
+    monthly_now = str(kpi.get("monthly_return_now_text") or no_longshot.get("monthly_return_now_text") or "").strip()
+    monthly_src = str(kpi.get("monthly_return_now_source") or no_longshot.get("monthly_return_now_source") or "").strip()
     return {
         "rolling_30d_resolved_trades": resolved,
         "monthly_return_now_text": monthly_now,
@@ -243,6 +259,8 @@ def main() -> int:
         "current_capital_gate_core": current_capital_gate,
         "current_capital_gate_reason": current_capital_reason,
         "rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "monthly_return_now_text": str(no_longshot.get("monthly_return_now_text") or ""),
+        "monthly_return_now_source": str(no_longshot.get("monthly_return_now_source") or ""),
         "capital_min_resolved_trades": min_resolved,
         "alarm_triggered": should_alarm,
     }
@@ -261,6 +279,8 @@ def main() -> int:
         "last_capital_gate_core": current_capital_gate,
         "last_capital_gate_reason": current_capital_reason,
         "last_rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "last_monthly_return_now_text": str(no_longshot.get("monthly_return_now_text") or ""),
+        "last_monthly_return_now_source": str(no_longshot.get("monthly_return_now_source") or ""),
         "capital_min_resolved_trades": min_resolved,
         "previous_capital_gate_core": prev_capital_gate or None,
         "alarm_triggered_last_run": should_alarm,
@@ -301,6 +321,8 @@ def main() -> int:
         "current_capital_gate_core": current_capital_gate,
         "current_capital_gate_reason": current_capital_reason,
         "rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "monthly_return_now_text": str(no_longshot.get("monthly_return_now_text") or ""),
+        "monthly_return_now_source": str(no_longshot.get("monthly_return_now_source") or ""),
         "capital_min_resolved_trades": min_resolved,
         "capital_alarm_triggered": bool(capital_changed or reached_eligible_review),
         "alarm_triggered": should_alarm,

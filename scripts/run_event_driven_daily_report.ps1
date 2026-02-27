@@ -3,17 +3,17 @@ param(
   [string]$PythonExe = "python",
   [switch]$Background,
   [switch]$NoBackground,
-  [int]$MaxPages = 10,
+  [int]$MaxPages = 12,
   [int]$PageSize = 200,
   [double]$MinLiquidity = 5000,
   [double]$MinVolume24h = 250,
   [double]$MinDaysToEnd = 0.5,
-  [double]$MaxDaysToEnd = 365,
-  [double]$MinEdgeCents = 1.0,
+  [double]$MaxDaysToEnd = 180,
+  [double]$MinEdgeCents = 0.8,
   [double]$MinLegPrice = 0.05,
   [double]$MaxLegPrice = 0.95,
   [double]$MinConfidence = 0.25,
-  [int]$TopN = 15,
+  [int]$TopN = 20,
   [double]$KellyFraction = 0.25,
   [double]$MaxKellyFraction = 0.20,
   [double]$BankrollUsd = 1000,
@@ -214,6 +214,7 @@ Write-Host $reportText
 Log "report build done"
 
 if (-not $SkipProfitWindow.IsPresent) {
+  $failReason = ""
   $profitArgs = @(
     $profitReportScript,
     "--hours", "$ReportHours",
@@ -248,17 +249,21 @@ if (-not $SkipProfitWindow.IsPresent) {
 
   if ($FailOnNoGo.IsPresent) {
     if (-not (Test-Path $profitJson)) {
-      throw "profit-window json missing: $profitJson"
+      $failReason = "profit-window json missing: $profitJson"
+      Log $failReason
+    } else {
+      $profitObj = Get-Content -Path $profitJson -Raw | ConvertFrom-Json
+      $profitDecision = [string]$profitObj.decision.decision
+      if ([string]::IsNullOrWhiteSpace($profitDecision)) {
+        $failReason = "profit-window decision missing in $profitJson"
+        Log $failReason
+      } elseif ($profitDecision -ne "GO") {
+        $failReason = "profit-window decision=$profitDecision (FailOnNoGo)"
+        Log $failReason
+      } else {
+        Log "profit-window decision GO"
+      }
     }
-    $profitObj = Get-Content -Path $profitJson -Raw | ConvertFrom-Json
-    $profitDecision = [string]$profitObj.decision.decision
-    if ([string]::IsNullOrWhiteSpace($profitDecision)) {
-      throw "profit-window decision missing in $profitJson"
-    }
-    if ($profitDecision -ne "GO") {
-      throw "profit-window decision=$profitDecision (FailOnNoGo)"
-    }
-    Log "profit-window decision GO"
   }
 }
 
@@ -266,6 +271,10 @@ $summaryText = ($summaryParts -join [Environment]::NewLine)
 $summaryText | Out-File -FilePath $summaryTxt -Encoding utf8
 $summaryText | Out-File -FilePath $runLog -Append -Encoding utf8
 Log "summary write done -> $summaryTxt"
+
+if (-not [string]::IsNullOrWhiteSpace($failReason)) {
+  throw $failReason
+}
 
 if ($discordRequested) {
   $webhook = Get-DiscordWebhookUrl

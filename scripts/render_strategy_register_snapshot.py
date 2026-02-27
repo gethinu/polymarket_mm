@@ -568,11 +568,30 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
         "monthly_return_now_text": "n/a",
         "monthly_return_now_ratio": None,
         "monthly_return_now_source": "",
+        "monthly_return_now_all_text": "n/a",
+        "monthly_return_now_all_ratio": None,
+        "monthly_return_now_all_source": "",
+        "monthly_return_now_new_condition_text": "n/a",
+        "monthly_return_now_new_condition_ratio": None,
+        "monthly_return_now_new_condition_source": "",
         "rolling_30d_monthly_return_text": "n/a",
         "rolling_30d_monthly_return_ratio": None,
+        "rolling_30d_monthly_return_source": "",
+        "rolling_30d_monthly_return_all_text": "n/a",
+        "rolling_30d_monthly_return_all_ratio": None,
+        "rolling_30d_monthly_return_all_source": "",
+        "rolling_30d_monthly_return_new_condition_text": "n/a",
+        "rolling_30d_monthly_return_new_condition_ratio": None,
+        "rolling_30d_monthly_return_new_condition_source": "",
         "rolling_30d_resolved_trades": None,
+        "rolling_30d_resolved_trades_all": None,
+        "rolling_30d_resolved_trades_new_condition": None,
         "open_positions": None,
+        "open_positions_all": None,
+        "open_positions_new_condition": None,
         "resolved_positions": None,
+        "resolved_positions_all": None,
+        "resolved_positions_new_condition": None,
         "realized_latest_rolling_30d_return_text": "n/a",
         "realized_latest_rolling_30d_return_ratio": None,
     }
@@ -587,16 +606,67 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
                     line_map[str(m.group(1)).strip()] = str(m.group(2)).strip()
             monthly_now_text = str(line_map.get("monthly_return_now") or "n/a").strip()
             monthly_now_ratio = _parse_pct_text_to_ratio(monthly_now_text)
+            monthly_now_src = str(line_map.get("monthly_return_now_source") or "").strip()
+            monthly_now_all_text = str(line_map.get("monthly_return_now_all") or "n/a").strip()
+            monthly_now_all_ratio = _parse_pct_text_to_ratio(monthly_now_all_text)
+            monthly_now_all_src = str(line_map.get("monthly_return_now_all_source") or "").strip()
+            monthly_now_new_text = str(line_map.get("monthly_return_now_new_condition") or "n/a").strip()
+            monthly_now_new_ratio = _parse_pct_text_to_ratio(monthly_now_new_text)
+            monthly_now_new_src = str(line_map.get("monthly_return_now_new_condition_source") or "").strip()
             roll_text = str(line_map.get("rolling_30d_monthly_return") or "n/a").strip()
             roll_ratio = _parse_pct_text_to_ratio(roll_text)
+            roll_src = str(line_map.get("rolling_30d_monthly_return_source") or "").strip()
+            roll_all_text = str(line_map.get("rolling_30d_monthly_return_all") or "n/a").strip()
+            roll_all_ratio = _parse_pct_text_to_ratio(roll_all_text)
+            roll_all_src = str(line_map.get("rolling_30d_monthly_return_all_source") or "").strip()
+            roll_new_text = str(line_map.get("rolling_30d_monthly_return_new_condition") or "n/a").strip()
+            roll_new_ratio = _parse_pct_text_to_ratio(roll_new_text)
+            roll_new_src = str(line_map.get("rolling_30d_monthly_return_new_condition_source") or "").strip()
             out["monthly_return_now_text"] = monthly_now_text
             out["monthly_return_now_ratio"] = monthly_now_ratio
-            out["monthly_return_now_source"] = str(line_map.get("monthly_return_now_source") or "").strip()
+            out["monthly_return_now_source"] = monthly_now_src
+            out["monthly_return_now_all_text"] = monthly_now_all_text
+            out["monthly_return_now_all_ratio"] = monthly_now_all_ratio
+            out["monthly_return_now_all_source"] = monthly_now_all_src
+            out["monthly_return_now_new_condition_text"] = monthly_now_new_text
+            out["monthly_return_now_new_condition_ratio"] = monthly_now_new_ratio
+            out["monthly_return_now_new_condition_source"] = monthly_now_new_src
             out["rolling_30d_monthly_return_text"] = roll_text
             out["rolling_30d_monthly_return_ratio"] = roll_ratio
+            out["rolling_30d_monthly_return_source"] = roll_src
+            out["rolling_30d_monthly_return_all_text"] = roll_all_text
+            out["rolling_30d_monthly_return_all_ratio"] = roll_all_ratio
+            out["rolling_30d_monthly_return_all_source"] = roll_all_src
+            out["rolling_30d_monthly_return_new_condition_text"] = roll_new_text
+            out["rolling_30d_monthly_return_new_condition_ratio"] = roll_new_ratio
+            out["rolling_30d_monthly_return_new_condition_source"] = roll_new_src
             out["rolling_30d_resolved_trades"] = _as_int(line_map.get("rolling_30d_resolved_trades"))
+            out["rolling_30d_resolved_trades_all"] = _as_int(line_map.get("rolling_30d_resolved_trades_all"))
+            out["rolling_30d_resolved_trades_new_condition"] = _as_int(
+                line_map.get("rolling_30d_resolved_trades_new_condition")
+            )
             out["open_positions"] = _as_int(line_map.get("open_positions"))
+            out["open_positions_all"] = _as_int(line_map.get("open_positions_all"))
+            out["open_positions_new_condition"] = _as_int(line_map.get("open_positions_new_condition"))
             out["resolved_positions"] = _as_int(line_map.get("resolved_positions"))
+            out["resolved_positions_all"] = _as_int(line_map.get("resolved_positions_all"))
+            out["resolved_positions_new_condition"] = _as_int(line_map.get("resolved_positions_new_condition"))
+
+            # If dedicated new-condition tracker exists, prefer it for top-line KPI display.
+            if monthly_now_new_ratio is not None:
+                out["monthly_return_now_text"] = monthly_now_new_text
+                out["monthly_return_now_ratio"] = monthly_now_new_ratio
+                out["monthly_return_now_source"] = monthly_now_new_src or "realized_rolling_30d_new_condition"
+            if roll_new_ratio is not None:
+                out["rolling_30d_monthly_return_text"] = roll_new_text
+                out["rolling_30d_monthly_return_ratio"] = roll_new_ratio
+                out["rolling_30d_monthly_return_source"] = roll_new_src or "realized_rolling_30d_new_condition"
+            if out.get("rolling_30d_resolved_trades_new_condition") is not None:
+                out["rolling_30d_resolved_trades"] = out.get("rolling_30d_resolved_trades_new_condition")
+            if out.get("open_positions_new_condition") is not None:
+                out["open_positions"] = out.get("open_positions_new_condition")
+            if out.get("resolved_positions_new_condition") is not None:
+                out["resolved_positions"] = out.get("resolved_positions_new_condition")
         except Exception:
             pass
 
@@ -607,12 +677,16 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
             if m:
                 txt = str(m.group(1)).strip()
                 ratio = _parse_pct_text_to_ratio(txt)
-                if ratio is not None:
+                source_now = str(out.get("rolling_30d_monthly_return_source") or "").strip().lower()
+                should_override = source_now in {"", "realized_rolling_30d", "realized_rolling_30d_all"}
+                if ratio is not None and should_override:
                     out["rolling_30d_monthly_return_text"] = _fmt_ratio_pct(ratio, digits=2)
                     out["rolling_30d_monthly_return_ratio"] = ratio
-                elif txt.lower() in {"n/a", "na", "none", "null", "-"}:
+                    out["rolling_30d_monthly_return_source"] = "realized_rolling_30d_all"
+                elif txt.lower() in {"n/a", "na", "none", "null", "-"} and should_override:
                     out["rolling_30d_monthly_return_text"] = "n/a"
                     out["rolling_30d_monthly_return_ratio"] = None
+                    out["rolling_30d_monthly_return_source"] = "n/a"
         except Exception:
             pass
 
@@ -1136,7 +1210,9 @@ def render_html_snapshot(payload: dict) -> str:
             m_now = str(no_longshot.get("monthly_return_now_text") or "n/a")
             m_roll = str(no_longshot.get("rolling_30d_monthly_return_text") or "n/a")
             m_src = str(no_longshot.get("monthly_return_now_source") or "-")
-            strategy_metric = f"monthly_now={m_now}; roll30={m_roll}; src={m_src}"
+            m_now_all = str(no_longshot.get("monthly_return_now_all_text") or "n/a")
+            m_now_new = str(no_longshot.get("monthly_return_now_new_condition_text") or "n/a")
+            strategy_metric = f"monthly_now={m_now}; roll30={m_roll}; src={m_src}; monthly_now_new={m_now_new}; monthly_now_all={m_now_all}"
         metric = html.escape(strategy_metric)
         strategy_rows.append(
             f"<tr><td><code>{sid}</code></td><td>{chip(status)}</td><td>{section}</td><td>{scope}</td><td>{metric}</td><td><code>{cmd}</code></td><td>{note}</td></tr>"
@@ -1214,12 +1290,26 @@ def render_html_snapshot(payload: dict) -> str:
             f"<tr><td>{s_name}</td><td>{s_label_ja}</td><td>{s_label}</td><td>{s_min}</td><td>{chip(s_reached)}</td></tr>"
         )
     no_monthly_now = html.escape(str(no_longshot.get("monthly_return_now_text") or "n/a"))
+    no_monthly_all = html.escape(str(no_longshot.get("monthly_return_now_all_text") or "n/a"))
+    no_monthly_new = html.escape(str(no_longshot.get("monthly_return_now_new_condition_text") or "n/a"))
     no_roll30 = html.escape(str(no_longshot.get("rolling_30d_monthly_return_text") or "n/a"))
+    no_roll30_all = html.escape(str(no_longshot.get("rolling_30d_monthly_return_all_text") or "n/a"))
+    no_roll30_new = html.escape(str(no_longshot.get("rolling_30d_monthly_return_new_condition_text") or "n/a"))
     no_open = html.escape(str(no_longshot.get("open_positions") if no_longshot.get("open_positions") is not None else "-"))
+    no_open_all = html.escape(str(no_longshot.get("open_positions_all") if no_longshot.get("open_positions_all") is not None else "-"))
+    no_open_new = html.escape(str(no_longshot.get("open_positions_new_condition") if no_longshot.get("open_positions_new_condition") is not None else "-"))
     no_resolved = html.escape(
         str(no_longshot.get("resolved_positions") if no_longshot.get("resolved_positions") is not None else "-")
     )
+    no_resolved_all = html.escape(
+        str(no_longshot.get("resolved_positions_all") if no_longshot.get("resolved_positions_all") is not None else "-")
+    )
+    no_resolved_new = html.escape(
+        str(no_longshot.get("resolved_positions_new_condition") if no_longshot.get("resolved_positions_new_condition") is not None else "-")
+    )
     no_source = html.escape(str(no_longshot.get("monthly_return_now_source") or "-"))
+    no_source_all = html.escape(str(no_longshot.get("monthly_return_now_all_source") or "-"))
+    no_source_new = html.escape(str(no_longshot.get("monthly_return_now_new_condition_source") or "-"))
     clob_monthly_now = html.escape(str(realized_monthly.get("projected_monthly_return_text") or "n/a"))
     clob_roll30 = html.escape(str(realized_monthly.get("rolling_30d_return_text") or "n/a"))
     clob_obs_days = html.escape(
@@ -1417,9 +1507,19 @@ def render_html_snapshot(payload: dict) -> str:
             <tr><td>clob_realized.bankroll_usd</td><td>{clob_bankroll}</td></tr>
             <tr><td>no_longshot.monthly_return_now</td><td>{no_monthly_now}</td></tr>
             <tr><td>no_longshot.monthly_return_source</td><td>{no_source}</td></tr>
+            <tr><td>no_longshot.monthly_return_now_new_condition</td><td>{no_monthly_new}</td></tr>
+            <tr><td>no_longshot.monthly_return_source_new_condition</td><td>{no_source_new}</td></tr>
+            <tr><td>no_longshot.monthly_return_now_all</td><td>{no_monthly_all}</td></tr>
+            <tr><td>no_longshot.monthly_return_source_all</td><td>{no_source_all}</td></tr>
             <tr><td>no_longshot.rolling_30d</td><td>{no_roll30}</td></tr>
+            <tr><td>no_longshot.rolling_30d_new_condition</td><td>{no_roll30_new}</td></tr>
+            <tr><td>no_longshot.rolling_30d_all</td><td>{no_roll30_all}</td></tr>
             <tr><td>no_longshot.open_positions</td><td>{no_open}</td></tr>
+            <tr><td>no_longshot.open_positions_new_condition</td><td>{no_open_new}</td></tr>
+            <tr><td>no_longshot.open_positions_all</td><td>{no_open_all}</td></tr>
             <tr><td>no_longshot.resolved_positions</td><td>{no_resolved}</td></tr>
+            <tr><td>no_longshot.resolved_positions_new_condition</td><td>{no_resolved_new}</td></tr>
+            <tr><td>no_longshot.resolved_positions_all</td><td>{no_resolved_all}</td></tr>
           </tbody>
         </table>
         <table style="margin-top:10px;">

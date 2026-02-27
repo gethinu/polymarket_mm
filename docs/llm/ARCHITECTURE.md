@@ -112,6 +112,9 @@ Polymarket CLOB:
 - `scripts/weather_daily_daemon.py`
   - Observe-only daemon for weather mimic/top30 daily jobs without relying on Task Scheduler
   - Keeps runtime artifacts under `logs/` with single-instance lock semantics
+- `scripts/set_weather_daily_mode.ps1`
+  - Observe-only mode switcher for weather daily execution path (`Task Scheduler` vs `weather_daily_daemon`)
+  - Applies duplicate-run guard by toggling weather scheduled tasks alongside supervisor daemon enablement
 - `scripts/run_weather_24h_alarm_action.ps1`
   - One-shot alarm action (append log + marker + bounded notification)
 - `scripts/run_weather_24h_postcheck.ps1`

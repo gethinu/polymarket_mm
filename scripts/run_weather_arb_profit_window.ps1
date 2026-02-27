@@ -20,7 +20,7 @@ param(
   [string]$ReportThresholdsCents = "1,1.5,2,3,4",
   [string]$ReportCaptureRatios = "0.25,0.35,0.50",
   [double]$ReportBaseCaptureRatio = 0.35,
-  [double]$AssumedBankrollUsd = 100.0,
+  [double]$AssumedBankrollUsd = [double]::NaN,
   [double]$TargetMonthlyReturnPct = 15.0,
   [double]$MinSpanHours = 6.0,
   [int]$MinRows = 120,
@@ -244,7 +244,6 @@ $reportArgs = @(
   "--thresholds-cents", $ReportThresholdsCents,
   "--capture-ratios", $ReportCaptureRatios,
   "--base-capture-ratio", (To-Arg $ReportBaseCaptureRatio),
-  "--assumed-bankroll-usd", (To-Arg $AssumedBankrollUsd),
   "--target-monthly-return-pct", (To-Arg $TargetMonthlyReturnPct),
   "--min-span-hours", (To-Arg $MinSpanHours),
   "--min-rows", (To-Arg $MinRows),
@@ -256,6 +255,12 @@ $reportArgs = @(
   "--out-txt", $reportTxtPath,
   "--pretty"
 )
+if (-not [double]::IsNaN($AssumedBankrollUsd)) {
+  $reportArgs += @("--assumed-bankroll-usd", (To-Arg $AssumedBankrollUsd))
+}
+else {
+  Write-Host "[weather-profit] assumed bankroll omitted; using policy-resolved default"
+}
 & $PythonExe @reportArgs
 if ($LASTEXITCODE -ne 0) {
   throw "report tool failed (exit=$LASTEXITCODE)"

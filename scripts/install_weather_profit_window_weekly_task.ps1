@@ -11,7 +11,7 @@ param(
   [ValidateSet("buckets", "yes-no", "both")]
   [string]$ObserveStrategy = "buckets",
   [double]$ReportHours = 24.0,
-  [double]$AssumedBankrollUsd = 100.0,
+  [double]$AssumedBankrollUsd = [double]::NaN,
   [double]$TargetMonthlyReturnPct = 15.0,
   [Alias("h")]
   [switch]$Help,
@@ -28,6 +28,7 @@ $ErrorActionPreference = "Stop"
 function Show-Usage {
   Write-Host "Usage:"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground [-TaskName WeatherArbProfitWindowWeekly] [-StartTime 01:00] [-AssumedBankrollUsd 100] [-TargetMonthlyReturnPct 15] [-Discord] [-RunNow]"
+  Write-Host "  (omit -AssumedBankrollUsd to use STRATEGY bankroll policy default)"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground -?"
 }
 
@@ -124,9 +125,9 @@ $argList = @(
   "-ObserveShares", "$ObserveShares",
   "-ObserveStrategy", $ObserveStrategy,
   "-ReportHours", "$ReportHours",
-  "-AssumedBankrollUsd", "$AssumedBankrollUsd",
   "-TargetMonthlyReturnPct", "$TargetMonthlyReturnPct"
 )
+if (-not [double]::IsNaN($AssumedBankrollUsd)) { $argList += @("-AssumedBankrollUsd", "$AssumedBankrollUsd") }
 if ($SkipObserve.IsPresent) { $argList += "-SkipObserve" }
 if ($FailOnNoGo.IsPresent) { $argList += "-FailOnNoGo" }
 if ($Discord.IsPresent) { $argList += "-Discord" }
@@ -189,9 +190,9 @@ if ($RunNow.IsPresent) {
     "-ObserveShares", "$ObserveShares",
     "-ObserveStrategy", $ObserveStrategy,
     "-ReportHours", "$ReportHours",
-    "-AssumedBankrollUsd", "$AssumedBankrollUsd",
     "-TargetMonthlyReturnPct", "$TargetMonthlyReturnPct"
   )
+  if (-not [double]::IsNaN($AssumedBankrollUsd)) { $runArgs += @("-AssumedBankrollUsd", "$AssumedBankrollUsd") }
   if ($SkipObserve.IsPresent) { $runArgs += "-SkipObserve" }
   if ($FailOnNoGo.IsPresent) { $runArgs += "-FailOnNoGo" }
   if ($Discord.IsPresent) { $runArgs += "-Discord" }

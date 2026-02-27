@@ -414,6 +414,11 @@ def main() -> int:
         default="",
         help="Override local today date in YYYY-MM-DD for simulation/testing.",
     )
+    p.add_argument(
+        "--fail-on-final-no-go",
+        action="store_true",
+        help="Return non-zero when decision stage is FINAL and overall decision is not GO.",
+    )
     p.add_argument("--output-file", default="", help="Optional text output path")
     p.add_argument("--output-json", default="", help="Optional JSON output path")
     args = p.parse_args()
@@ -450,6 +455,14 @@ def main() -> int:
         outj = Path(args.output_json)
         outj.parent.mkdir(parents=True, exist_ok=True)
         outj.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    if args.fail_on_final_no_go:
+        summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+        stage = str(summary.get("decision_stage") or "")
+        decision = str(result.get("decision") or "")
+        if stage == "FINAL" and decision != "GO":
+            print(f"Exit Gate: FINAL_NO_GO (decision={decision})")
+            return 6
 
     return 0
 

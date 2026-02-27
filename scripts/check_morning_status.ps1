@@ -4,6 +4,11 @@ param(
   [int]$MinRealizedDays = 30,
   [string]$SnapshotJson = "logs/strategy_register_latest.json",
   [string]$HealthJson = "logs/automation_health_latest.json",
+  [string]$UncorrelatedJson = "logs/uncorrelated_portfolio_proxy_analysis_latest.json",
+  [string]$UncorrelatedStrategyIds = "weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe",
+  [double]$UncorrelatedCorrThresholdAbs = 0.30,
+  [int]$UncorrelatedMinOverlapDays = 2,
+  [int]$UncorrelatedMinRealizedDaysForCorrelation = 7,
   [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
   [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
   [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",
@@ -12,6 +17,7 @@ param(
   [switch]$NoRefresh,
   [switch]$SkipHealth,
   [switch]$SkipGateAlarm,
+  [switch]$SkipUncorrelatedPortfolio,
   [switch]$SkipImplementationLedger,
   [switch]$SkipSimmerAb,
   [switch]$SkipProcessScan,
@@ -36,6 +42,11 @@ $argsList = @(
   "--min-realized-days", [string]$MinRealizedDays,
   "--snapshot-json", $SnapshotJson,
   "--health-json", $HealthJson,
+  "--uncorrelated-json", $UncorrelatedJson,
+  "--uncorrelated-strategy-ids", $UncorrelatedStrategyIds,
+  "--uncorrelated-corr-threshold-abs", ([string]$UncorrelatedCorrThresholdAbs),
+  "--uncorrelated-min-overlap-days", [string]$UncorrelatedMinOverlapDays,
+  "--uncorrelated-min-realized-days-for-correlation", [string]$UncorrelatedMinRealizedDaysForCorrelation,
   "--gate-alarm-state-json", $GateAlarmStateJson,
   "--gate-alarm-log-file", $GateAlarmLogFile,
   "--simmer-ab-decision-json", $SimmerAbDecisionJson,
@@ -45,6 +56,7 @@ $argsList = @(
 if ($NoRefresh.IsPresent) { $argsList += "--no-refresh" }
 if ($SkipHealth.IsPresent) { $argsList += "--skip-health" }
 if ($SkipGateAlarm.IsPresent) { $argsList += "--skip-gate-alarm" }
+if ($SkipUncorrelatedPortfolio.IsPresent) { $argsList += "--skip-uncorrelated-portfolio" }
 if ($SkipImplementationLedger.IsPresent) { $argsList += "--skip-implementation-ledger" }
 if ($SkipSimmerAb.IsPresent) { $argsList += "--skip-simmer-ab" }
 if ($SkipProcessScan.IsPresent) { $argsList += "--skip-process-scan" }

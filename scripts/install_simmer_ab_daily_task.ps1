@@ -10,6 +10,7 @@ param(
   [string]$JudgeDecisionDate = "2026-03-22",
   [Alias("h")]
   [switch]$Help,
+  [switch]$FailOnFinalNoGo,
   [switch]$SkipJudge,
   [switch]$RunNow,
   [switch]$Background,
@@ -20,7 +21,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground [-TaskName SimmerABDailyReport] [-StartTime 00:05] [-JudgeMinDays 25] [-JudgeExpectancyRatioThreshold 0.9] [-JudgeDecisionDate 2026-03-22] [-SkipJudge] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground [-TaskName SimmerABDailyReport] [-StartTime 00:05] [-JudgeMinDays 25] [-JudgeExpectancyRatioThreshold 0.9] [-JudgeDecisionDate 2026-03-22] [-FailOnFinalNoGo] [-SkipJudge] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground -?"
 }
 
@@ -122,6 +123,9 @@ $argList = @(
 if ($SkipJudge.IsPresent) {
   $argList += "-SkipJudge"
 }
+if ($FailOnFinalNoGo.IsPresent) {
+  $argList += "-FailOnFinalNoGo"
+}
 $actionArgs = ($argList -join " ")
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
@@ -177,6 +181,9 @@ if ($RunNow.IsPresent) {
   )
   if ($SkipJudge.IsPresent) {
     $runArgs += "-SkipJudge"
+  }
+  if ($FailOnFinalNoGo.IsPresent) {
+    $runArgs += "-FailOnFinalNoGo"
   }
   Write-Host "RunNow: executing runner directly (observe-only) ..."
   & $PowerShellExe @runArgs

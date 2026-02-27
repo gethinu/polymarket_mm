@@ -27,7 +27,11 @@ DEFAULT_TASKS = [
     "WeatherTop30ReadinessDaily",
     "WeatherMimicPipelineDaily",
     "NoLongshotDailyReport",
+    "SimmerABDailyReport",
     "MorningStrategyStatusDaily",
+]
+DEFAULT_OPTIONAL_TASKS = [
+    "WalletAutopsyDailyReport",
 ]
 
 DEFAULT_ARTIFACT_SPECS = [
@@ -38,6 +42,8 @@ DEFAULT_ARTIFACT_SPECS = [
     "logs/weather_top30_readiness_daily_run.log:30",
     "logs/weather_mimic_pipeline_daily_run.log:30",
     "logs/no_longshot_daily_run.log:30",
+    "?logs/wallet_autopsy_daily_run.log:30",
+    "?logs/simmer-ab-daily-report.log:30",
     "logs/morning_status_daily_run.log:30",
     "?logs/simmer-ab-decision-latest.json:30",
 ]
@@ -110,6 +116,26 @@ def _parse_artifact_specs(specs: List[str]) -> List[Tuple[str, float, bool]]:
             out.append((p.strip(), max(0.1, max_h), optional))
         else:
             out.append((s, 30.0, optional))
+    return out
+
+
+def _parse_task_specs(specs: List[str]) -> List[Tuple[str, bool]]:
+    out: List[Tuple[str, bool]] = []
+    seen: set[str] = set()
+    for raw in specs:
+        s = str(raw or "").strip()
+        if not s:
+            continue
+        optional = False
+        if s.startswith("?"):
+            optional = True
+            s = s[1:].strip()
+        if not s:
+            continue
+        if s in seen:
+            continue
+        seen.add(s)
+        out.append((s, not optional))
     return out
 
 
@@ -197,8 +223,9 @@ def _run_task_query(task_names: List[str]) -> List[dict]:
 
 
 def _task_status(row: dict) -> str:
+    required = bool(row.get("required", True))
     if not bool(row.get("exists")):
-        return "MISSING"
+        return "MISSING" if required else "OPTIONAL_MISSING"
     if str(row.get("error") or "").strip():
         return "ERROR"
     state = str(row.get("state") or "").strip().lower()
@@ -281,7 +308,10 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
     top30_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\weather_top30_readiness_daily_run.log")
     mimic_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\weather_mimic_pipeline_daily_run.log")
     no_longshot_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\no_longshot_daily_run.log")
+    wallet_autopsy_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\wallet_autopsy_daily_run.log")
+    simmer_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\simmer-ab-daily-report.log")
     morning_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\morning_status_daily_run.log")
+    interrupted_codes = {3221225786, 267014}
 
     for row in task_rows:
         if not isinstance(row, dict):
@@ -295,25 +325,33 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
         except Exception:
             continue
 
-        if name == "MorningStrategyStatusDaily" and morning_log_fresh and code in (3221225786, 267014):
+        if name == "MorningStrategyStatusDaily" and morning_log_fresh and code in interrupted_codes:
             row["status"] = "SOFT_FAIL_INTERRUPTED"
             row["status_note"] = "last_result indicates interrupted task host but morning status runner log is fresh"
             continue
 
-        # Some Windows task host terminations report STATUS_CONTROL_C_EXIT (0xC000013A)
+        # Some Windows task host terminations report interrupt-like nonzero codes
         # even when the pipeline artifacts were refreshed successfully.
-        if code != 3221225786:
+        if code not in interrupted_codes:
             continue
 
         if name == "WeatherTop30ReadinessDaily" and (top30_fresh or top30_log_fresh):
             row["status"] = "SOFT_FAIL_INTERRUPTED"
-            row["status_note"] = "last_result=0xC000013A but top30 artifacts/log are fresh"
+            row["status_note"] = f"last_result={code} indicates interrupted task host but top30 artifacts/log are fresh"
         elif name == "WeatherMimicPipelineDaily" and mimic_log_fresh:
             row["status"] = "SOFT_FAIL_INTERRUPTED"
-            row["status_note"] = "last_result=0xC000013A but mimic runner log is fresh"
+            row["status_note"] = f"last_result={code} indicates interrupted task host but mimic runner log is fresh"
         elif name == "NoLongshotDailyReport" and no_longshot_log_fresh:
             row["status"] = "SOFT_FAIL_INTERRUPTED"
-            row["status_note"] = "last_result=0xC000013A but no_longshot runner log is fresh"
+            row["status_note"] = f"last_result={code} indicates interrupted task host but no_longshot runner log is fresh"
+        elif name == "WalletAutopsyDailyReport" and wallet_autopsy_log_fresh:
+            row["status"] = "SOFT_FAIL_INTERRUPTED"
+            row["status_note"] = (
+                f"last_result={code} indicates interrupted task host but wallet autopsy runner log is fresh"
+            )
+        elif name == "SimmerABDailyReport" and simmer_log_fresh:
+            row["status"] = "SOFT_FAIL_INTERRUPTED"
+            row["status_note"] = f"last_result={code} indicates interrupted task host but simmer runner log is fresh"
 
 
 def _apply_supervisor_overrides(task_rows: List[dict]) -> None:
@@ -331,6 +369,27 @@ def _apply_supervisor_overrides(task_rows: List[dict]) -> None:
         elif task_name in {"WeatherMimicPipelineDaily", "WeatherTop30ReadinessDaily"} and weather_daemon_enabled:
             row["status"] = "SUPPRESSED_BY_SUPERVISOR"
             row["status_note"] = f"{task_name} disabled while weather_daily_daemon is enabled"
+
+
+def _apply_duplicate_run_guard(task_rows: List[dict]) -> None:
+    # Canon requires one no-longshot mode only: scheduled task or daemon.
+    if not _is_supervisor_job_enabled("no_longshot_daily_daemon"):
+        return
+
+    for row in task_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("task_name") or "") != "NoLongshotDailyReport":
+            continue
+        status = str(row.get("status") or "")
+        if status in {"DISABLED", "SUPPRESSED_BY_SUPERVISOR", "MISSING"}:
+            return
+        row["status"] = "DUPLICATE_RUN_RISK"
+        row["status_note"] = (
+            "NoLongshotDailyReport is active while no_longshot_daily_daemon is enabled "
+            "(disable one mode)"
+        )
+        return
 
 
 def _artifact_rows(specs: List[Tuple[str, float, bool]]) -> List[dict]:
@@ -360,6 +419,107 @@ def _artifact_rows(specs: List[Tuple[str, float, bool]]) -> List[dict]:
     return out
 
 
+def _has_morning_kpi_marker(path: Path, marker: str, tail_lines: int = 400) -> bool:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return False
+    if tail_lines > 0 and len(lines) > tail_lines:
+        lines = lines[-tail_lines:]
+    for line in lines:
+        if marker in line:
+            return True
+    return False
+
+
+def _extract_nested(payload: dict, dotted_key: str) -> tuple[bool, object]:
+    cur: object = payload
+    for part in dotted_key.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return False, None
+        cur = cur[part]
+    return True, cur
+
+
+def _apply_strategy_register_kpi_key_check(artifact_rows: List[dict]) -> None:
+    target_suffix = r"logs\strategy_register_latest.json"
+    required_keys = [
+        "no_longshot_status.monthly_return_now_text",
+        "no_longshot_status.monthly_return_now_source",
+        "no_longshot_status.monthly_return_now_new_condition_text",
+        "no_longshot_status.monthly_return_now_all_text",
+        "realized_30d_gate.decision",
+    ]
+
+    for row in artifact_rows:
+        if not isinstance(row, dict):
+            continue
+        path_text = str(row.get("path") or "").replace("/", "\\").lower()
+        if not path_text.endswith(target_suffix):
+            continue
+        status = str(row.get("status") or "").upper()
+        # Freshness check handles missing/stale cases; content check applies only to currently fresh files.
+        if status != "FRESH":
+            return
+        p = Path(str(row.get("path") or ""))
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            if bool(row.get("required", True)):
+                row["status"] = "INVALID_CONTENT"
+            else:
+                row["status"] = "OPTIONAL_INVALID_CONTENT"
+            row["status_note"] = f"json_parse_failed:{type(exc).__name__}"
+            return
+        if not isinstance(payload, dict):
+            if bool(row.get("required", True)):
+                row["status"] = "INVALID_CONTENT"
+            else:
+                row["status"] = "OPTIONAL_INVALID_CONTENT"
+            row["status_note"] = "invalid_json_root:not_object"
+            return
+
+        missing: List[str] = []
+        for key in required_keys:
+            ok, value = _extract_nested(payload, key)
+            if not ok:
+                missing.append(key)
+                continue
+            if isinstance(value, str) and not value.strip():
+                missing.append(key)
+        if missing:
+            if bool(row.get("required", True)):
+                row["status"] = "INVALID_CONTENT"
+            else:
+                row["status"] = "OPTIONAL_INVALID_CONTENT"
+            row["status_note"] = "missing_or_empty_keys=" + ",".join(missing)
+        return
+
+
+def _apply_morning_kpi_marker_check(artifact_rows: List[dict]) -> None:
+    target_suffix = r"logs\morning_status_daily_run.log"
+    marker = "kpi[post] no_longshot.monthly_return_now_text="
+
+    for row in artifact_rows:
+        if not isinstance(row, dict):
+            continue
+        path_text = str(row.get("path") or "").replace("/", "\\").lower()
+        if not path_text.endswith(target_suffix):
+            continue
+        status = str(row.get("status") or "").upper()
+        # Freshness check handles missing/stale cases; content check applies only to currently fresh logs.
+        if status != "FRESH":
+            return
+        p = Path(str(row.get("path") or ""))
+        if not _has_morning_kpi_marker(p, marker=marker, tail_lines=400):
+            if bool(row.get("required", True)):
+                row["status"] = "INVALID_CONTENT"
+            else:
+                row["status"] = "OPTIONAL_INVALID_CONTENT"
+            row["status_note"] = f"missing marker: {marker}"
+        return
+
+
 def _render_txt(payload: dict) -> str:
     lines: List[str] = []
     lines.append(f"Automation health @ {payload.get('generated_utc','')}")
@@ -376,14 +536,16 @@ def _render_txt(payload: dict) -> str:
             continue
         note = str(t.get("status_note") or "").strip()
         note_txt = f" note={note}" if note else ""
+        req_txt = "required" if bool(t.get("required", True)) else "optional"
         lines.append(
-            "  {0}: {1} state={2} last_result={3} last_run={4} next_run={5}".format(
+            "  {0}: {1} state={2} last_result={3} last_run={4} next_run={5} ({6})".format(
                 str(t.get("task_name") or "-"),
                 str(t.get("status") or "-"),
                 str(t.get("state") or "-"),
                 str(t.get("last_task_result") if t.get("last_task_result") is not None else "-"),
                 str(t.get("last_run_time") or "-"),
                 str(t.get("next_run_time") or "-"),
+                req_txt,
             )
             + note_txt
         )
@@ -401,6 +563,8 @@ def _render_txt(payload: dict) -> str:
             except Exception:
                 age_txt = str(a.get("age_hours"))
         req_txt = "required" if bool(a.get("required", True)) else "optional"
+        note = str(a.get("status_note") or "").strip()
+        note_txt = f" note={note}" if note else ""
         lines.append(
             "  {0}: {1} age={2} max={3}h ({4})".format(
                 str(a.get("path") or "-"),
@@ -409,13 +573,19 @@ def _render_txt(payload: dict) -> str:
                 str(a.get("max_age_hours") if a.get("max_age_hours") is not None else "-"),
                 req_txt,
             )
+            + note_txt
         )
     return "\n".join(lines).strip() + "\n"
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Report automation health (observe-only).")
-    p.add_argument("--task", action="append", default=[], help="Repeatable scheduled task name to check")
+    p.add_argument(
+        "--task",
+        action="append",
+        default=[],
+        help="Repeatable scheduled task name to check; prefix with '?' to mark optional",
+    )
     p.add_argument(
         "--artifact",
         action="append",
@@ -427,9 +597,12 @@ def main() -> int:
     p.add_argument("--pretty", action="store_true", help="Pretty-print JSON")
     args = p.parse_args()
 
-    task_names = [str(x).strip() for x in (args.task or []) if str(x).strip()]
-    if not task_names:
-        task_names = list(DEFAULT_TASKS)
+    task_specs = [str(x).strip() for x in (args.task or []) if str(x).strip()]
+    if not task_specs:
+        task_specs = list(DEFAULT_TASKS) + [f"?{x}" for x in DEFAULT_OPTIONAL_TASKS]
+    parsed_task_specs = _parse_task_specs(task_specs)
+    task_names = [name for name, _required in parsed_task_specs]
+    task_required_map = {name: required for name, required in parsed_task_specs}
     artifact_specs = [str(x).strip() for x in (args.artifact or []) if str(x).strip()]
     if not artifact_specs:
         artifact_specs = list(DEFAULT_ARTIFACT_SPECS)
@@ -437,15 +610,29 @@ def main() -> int:
 
     task_rows = _run_task_query(task_names)
     for r in task_rows:
+        task_name = str(r.get("task_name") or "")
+        r["required"] = bool(task_required_map.get(task_name, True))
         r["status"] = _task_status(r)
 
     art_rows = _artifact_rows(parsed_specs)
+    _apply_strategy_register_kpi_key_check(art_rows)
+    _apply_morning_kpi_marker_check(art_rows)
     _apply_soft_fail_overrides(task_rows, art_rows)
     _apply_supervisor_overrides(task_rows)
+    _apply_duplicate_run_guard(task_rows)
 
     reasons: List[str] = []
-    bad_task = [r for r in task_rows if str(r.get("status")) in {"MISSING", "ERROR", "LAST_RUN_FAILED", "DISABLED"}]
-    stale_art = [r for r in art_rows if str(r.get("status")) in {"MISSING", "STALE"}]
+    bad_task = [
+        r
+        for r in task_rows
+        if bool(r.get("required", True))
+        and str(r.get("status")) in {"MISSING", "ERROR", "LAST_RUN_FAILED", "DISABLED", "DUPLICATE_RUN_RISK"}
+    ]
+    optional_missing_tasks = [r for r in task_rows if str(r.get("status")) == "OPTIONAL_MISSING"]
+    stale_art = [r for r in art_rows if str(r.get("status")) in {"MISSING", "STALE", "INVALID_CONTENT"}]
+    duplicate_run_guard_violations = [r for r in task_rows if str(r.get("status")) == "DUPLICATE_RUN_RISK"]
+    if duplicate_run_guard_violations:
+        reasons.append(f"duplicate_run_guard_violations={len(duplicate_run_guard_violations)}")
     if bad_task:
         reasons.append(f"bad_tasks={len(bad_task)}")
     if stale_art:
@@ -465,6 +652,7 @@ def main() -> int:
         "summary": {
             "task_count": len(task_rows),
             "task_bad_count": len(bad_task),
+            "task_optional_missing_count": len(optional_missing_tasks),
             "artifact_count": len(art_rows),
             "artifact_stale_or_missing_count": len(stale_art),
         },

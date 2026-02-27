@@ -4,15 +4,22 @@ param(
   [string]$RepoRoot = "C:\Repos\polymarket_mm",
   [string]$StartTime = "00:15",
   [string]$PowerShellExe = "powershell.exe",
-  [int]$MaxPages = 10,
+  [int]$MaxPages = 12,
   [double]$MinLiquidity = 5000,
   [double]$MinVolume24h = 250,
-  [double]$MinEdgeCents = 1.0,
-  [int]$TopN = 15,
+  [double]$MinEdgeCents = 0.8,
+  [int]$TopN = 20,
   [double]$ReportHours = 24,
   [string]$IncludeRegex = "",
   [string]$ExcludeRegex = "",
   [switch]$IncludeNonEvent,
+  [string]$ProfitThresholdsCents = "0.8,1,2,3,5",
+  [string]$ProfitCaptureRatios = "0.25,0.35,0.50",
+  [double]$ProfitTargetMonthlyReturnPct = 12,
+  [double]$ProfitAssumedBankrollUsd = 100,
+  [double]$ProfitMaxEvMultipleOfStake = 0.35,
+  [switch]$SkipProfitWindow,
+  [switch]$FailOnNoGo,
   [ValidateSet("auto", "default", "s4u", "interactive")]
   [string]$PrincipalMode = "auto",
   [ValidateSet("cmd", "powershell")]
@@ -29,7 +36,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground [-TaskName EventDrivenDailyReport] [-StartTime 00:15] [-PrincipalMode auto|default|s4u|interactive] [-ActionMode cmd|powershell] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground [-TaskName EventDrivenDailyReport] [-StartTime 00:15] [-PrincipalMode auto|default|s4u|interactive] [-ActionMode cmd|powershell] [-FailOnNoGo] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground -?"
 }
 
@@ -130,7 +137,12 @@ $runnerArgList = @(
   "-MinVolume24h", "$MinVolume24h",
   "-MinEdgeCents", "$MinEdgeCents",
   "-TopN", "$TopN",
-  "-ReportHours", "$ReportHours"
+  "-ReportHours", "$ReportHours",
+  "-ProfitThresholdsCents", "$ProfitThresholdsCents",
+  "-ProfitCaptureRatios", "$ProfitCaptureRatios",
+  "-ProfitTargetMonthlyReturnPct", "$ProfitTargetMonthlyReturnPct",
+  "-ProfitAssumedBankrollUsd", "$ProfitAssumedBankrollUsd",
+  "-ProfitMaxEvMultipleOfStake", "$ProfitMaxEvMultipleOfStake"
 )
 if (-not [string]::IsNullOrWhiteSpace($IncludeRegex)) {
   $runnerArgList += @("-IncludeRegex", $IncludeRegex)
@@ -140,6 +152,12 @@ if (-not [string]::IsNullOrWhiteSpace($ExcludeRegex)) {
 }
 if ($IncludeNonEvent.IsPresent) {
   $runnerArgList += "-IncludeNonEvent"
+}
+if ($SkipProfitWindow.IsPresent) {
+  $runnerArgList += "-SkipProfitWindow"
+}
+if ($FailOnNoGo.IsPresent) {
+  $runnerArgList += "-FailOnNoGo"
 }
 if ($Discord.IsPresent) {
   $runnerArgList += "-Discord"

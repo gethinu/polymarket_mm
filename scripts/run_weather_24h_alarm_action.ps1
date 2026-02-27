@@ -4,7 +4,9 @@ param(
   [string]$LogFile = "logs/alarm_weather24h.log",
   [string]$MarkerFile = "logs/alarm_weather24h.marker",
   [int]$MsgTimeoutSec = 3,
-  [switch]$DisableMsg
+  [switch]$DisableMsg,
+  [string]$PythonExe = "python",
+  [switch]$SkipStrategySnapshot
 )
 
 $ErrorActionPreference = "Stop"
@@ -61,8 +63,22 @@ if (-not $DisableMsg.IsPresent) {
 $postcheckScriptPath = Join-Path $PSScriptRoot "run_weather_24h_postcheck.ps1"
 if (Test-Path $postcheckScriptPath) {
   try {
-    & $postcheckScriptPath -NoBackground -AlarmLogFile $LogFile | Out-Null
+    & $postcheckScriptPath -NoBackground -AlarmLogFile $LogFile -AutoRecheckOnSamplesShortfall | Out-Null
   } catch {
+  }
+}
+
+if (-not $SkipStrategySnapshot.IsPresent) {
+  $snapshotScriptPath = Join-Path $PSScriptRoot "render_strategy_register_snapshot.py"
+  if (Test-Path $snapshotScriptPath) {
+    try {
+      & $PythonExe $snapshotScriptPath --pretty | Out-Null
+      $tsSnapshot = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+      Add-Content -Path $logPath -Value ("[{0}] SNAPSHOT refreshed: strategy_register_latest.json/html" -f $tsSnapshot)
+    } catch {
+      $tsSnapshot = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+      Add-Content -Path $logPath -Value ("[{0}] SNAPSHOT refresh error: {1}" -f $tsSnapshot, $_.Exception.Message)
+    }
   }
 }
 

@@ -15,7 +15,9 @@ param(
   [string]$MutexName = "Global\PolymarketWeatherArbObserve",
   [switch]$RestartOnFailure,
   [int]$RestartDelaySec = 20,
-  [int]$MaxRestarts = 30
+  [int]$MaxRestarts = 30,
+  [int]$ShortFailureThresholdSec = 180,
+  [int]$ShortFailureRestartDelaySec = 300
 )
 
 $ErrorActionPreference = "Stop"
@@ -126,6 +128,7 @@ try {
     )
 
     Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe run start (attempt=$attemptNo run_seconds=$runSecondsThisAttempt)"
+    $attemptStartedAt = Get-Date
     try {
       & $PythonExe @args
       $code = $LASTEXITCODE
@@ -136,6 +139,10 @@ try {
       Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe exception (attempt=$attemptNo): $msg"
     }
 
+    $attemptElapsedSec = [int][Math]::Max(
+      0,
+      [Math]::Round(((Get-Date) - $attemptStartedAt).TotalSeconds)
+    )
     Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe run end (attempt=$attemptNo code=$code)`n"
     if ($code -eq 0) {
       break
@@ -152,6 +159,14 @@ try {
     }
 
     $delay = [Math]::Max($RestartDelaySec, 1)
+    if (
+      $ShortFailureThresholdSec -gt 0 -and
+      $ShortFailureRestartDelaySec -gt $delay -and
+      $attemptElapsedSec -le $ShortFailureThresholdSec
+    ) {
+      $delay = [Math]::Max($ShortFailureRestartDelaySec, 1)
+      Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe short-failure backoff applied (elapsed=${attemptElapsedSec}s delay=${delay}s threshold=${ShortFailureThresholdSec}s)"
+    }
     Add-Content -Path $LogFile -Value "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] weather-observe restart scheduled in ${delay}s"
     Start-Sleep -Seconds $delay
     $restartCount += 1

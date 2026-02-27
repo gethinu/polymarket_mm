@@ -16,6 +16,19 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+try:
+    from report_no_longshot_monthly_return import build_kpi as _NO_LONGSHOT_KPI_BUILDER
+except Exception:
+    _NO_LONGSHOT_KPI_BUILDER = None
+
+DEFAULT_UNCORRELATED_STRATEGY_IDS = (
+    "weather_clob_arb_buckets_observe,"
+    "no_longshot_daily_observe,"
+    "link_intake_walletseed_cohort_observe,"
+    "gamma_eventpair_exec_edge_filter_observe,"
+    "hourly_updown_highprob_calibration_observe"
+)
+
 
 def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
@@ -80,6 +93,75 @@ def fmt_ratio_pct(v: Any) -> str:
     return f"{x * 100.0:+.2f}%"
 
 
+def extract_no_longshot_monthly(payload: Dict[str, Any]) -> Dict[str, Any]:
+    no_longshot = payload.get("no_longshot_status") if isinstance(payload.get("no_longshot_status"), dict) else {}
+    kpi: Dict[str, Any] = {}
+    if callable(_NO_LONGSHOT_KPI_BUILDER):
+        try:
+            raw = _NO_LONGSHOT_KPI_BUILDER(payload)
+            if isinstance(raw, dict):
+                kpi = raw
+        except Exception:
+            kpi = {}
+
+    monthly_now_text = str(
+        kpi.get("monthly_return_now_text")
+        or no_longshot.get("monthly_return_now_text")
+        or fmt_ratio_pct(no_longshot.get("monthly_return_now_ratio"))
+    )
+    monthly_now_source = str(
+        kpi.get("monthly_return_now_source")
+        or no_longshot.get("monthly_return_now_source")
+        or "-"
+    )
+    monthly_new_text = str(
+        kpi.get("monthly_return_now_new_condition_text")
+        or no_longshot.get("monthly_return_now_new_condition_text")
+        or fmt_ratio_pct(no_longshot.get("monthly_return_now_new_condition_ratio"))
+    )
+    monthly_new_source = str(
+        kpi.get("monthly_return_now_new_condition_source")
+        or no_longshot.get("monthly_return_now_new_condition_source")
+        or "-"
+    )
+    monthly_all_text = str(
+        kpi.get("monthly_return_now_all_text")
+        or no_longshot.get("monthly_return_now_all_text")
+        or fmt_ratio_pct(no_longshot.get("monthly_return_now_all_ratio"))
+    )
+    monthly_all_source = str(
+        kpi.get("monthly_return_now_all_source")
+        or no_longshot.get("monthly_return_now_all_source")
+        or "-"
+    )
+    obs_days_val = no_longshot.get("observed_days")
+    obs_days_txt = str(_as_int(obs_days_val, 0)) if obs_days_val is not None else "n/a"
+    resolved = _as_int(
+        kpi.get("rolling_30d_resolved_trades"),
+        _as_int(
+            no_longshot.get("rolling_30d_resolved_trades"),
+            _as_int(no_longshot.get("resolved_positions"), 0),
+        ),
+    )
+    resolved_new = _as_int(no_longshot.get("rolling_30d_resolved_trades_new_condition"), 0)
+    resolved_all = _as_int(no_longshot.get("rolling_30d_resolved_trades_all"), 0)
+    open_positions = _as_int(no_longshot.get("open_positions"), 0)
+
+    return {
+        "monthly_now_text": monthly_now_text,
+        "monthly_now_source": monthly_now_source,
+        "monthly_new_text": monthly_new_text,
+        "monthly_new_source": monthly_new_source,
+        "monthly_all_text": monthly_all_text,
+        "monthly_all_source": monthly_all_source,
+        "obs_days_txt": obs_days_txt,
+        "rolling_30d_resolved_trades": resolved,
+        "rolling_30d_resolved_trades_new_condition": resolved_new,
+        "rolling_30d_resolved_trades_all": resolved_all,
+        "open_positions": open_positions,
+    }
+
+
 def no_longshot_confidence_label(resolved_trades: int) -> str:
     n = max(0, int(resolved_trades))
     if n >= 30:
@@ -132,6 +214,7 @@ def main() -> int:
     p.add_argument("--no-refresh", action="store_true", help="Skip refresh commands and only read existing snapshot.")
     p.add_argument("--skip-health", action="store_true", help="Skip automation health refresh/check.")
     p.add_argument("--skip-gate-alarm", action="store_true", help="Skip strategy gate alarm refresh/check.")
+    p.add_argument("--skip-uncorrelated-portfolio", action="store_true", help="Skip uncorrelated portfolio refresh/check.")
     p.add_argument(
         "--skip-implementation-ledger",
         action="store_true",
@@ -154,6 +237,37 @@ def main() -> int:
         "--health-json",
         default="logs/automation_health_latest.json",
         help="Automation health JSON path.",
+    )
+    p.add_argument(
+        "--uncorrelated-json",
+        default="logs/uncorrelated_portfolio_proxy_analysis_latest.json",
+        help="Uncorrelated portfolio analysis JSON path.",
+    )
+    p.add_argument(
+        "--uncorrelated-strategy-ids",
+        default=DEFAULT_UNCORRELATED_STRATEGY_IDS,
+        help=(
+            "Comma-separated strategy ids passed to report_uncorrelated_portfolio.py. "
+            "Default uses fixed 5-strategy diagnostic cohort."
+        ),
+    )
+    p.add_argument(
+        "--uncorrelated-corr-threshold-abs",
+        type=float,
+        default=0.30,
+        help="Absolute correlation threshold passed to report_uncorrelated_portfolio.py.",
+    )
+    p.add_argument(
+        "--uncorrelated-min-overlap-days",
+        type=int,
+        default=2,
+        help="Minimum overlap days passed to report_uncorrelated_portfolio.py.",
+    )
+    p.add_argument(
+        "--uncorrelated-min-realized-days-for-correlation",
+        type=int,
+        default=7,
+        help="Minimum realized days passed to report_uncorrelated_portfolio.py before proxy fallback.",
     )
     p.add_argument(
         "--gate-alarm-state-json",
@@ -262,12 +376,36 @@ def main() -> int:
             rc = run_cmd(alarm_cmd)
             if rc != 0:
                 return rc
+        if not args.skip_uncorrelated_portfolio:
+            uncorrelated_ids = str(args.uncorrelated_strategy_ids or "").strip()
+            uncorrelated_ids_args: list[str] = []
+            if uncorrelated_ids:
+                uncorrelated_ids_args = ["--strategy-ids", uncorrelated_ids]
+            rc = run_cmd(
+                [
+                    "python",
+                    "scripts/report_uncorrelated_portfolio.py",
+                    "--out-json",
+                    str(args.uncorrelated_json),
+                    "--no-memo",
+                    "--corr-threshold-abs",
+                    str(float(args.uncorrelated_corr_threshold_abs)),
+                    "--min-overlap-days",
+                    str(max(2, int(args.uncorrelated_min_overlap_days))),
+                    "--min-realized-days-for-correlation",
+                    str(max(2, int(args.uncorrelated_min_realized_days_for_correlation))),
+                    *uncorrelated_ids_args,
+                ]
+            )
+            if rc != 0:
+                return rc
         if not args.skip_implementation_ledger:
             rc = run_cmd(["python", "scripts/render_implementation_ledger.py"])
             if rc != 0:
                 return rc
 
     health_payload: Dict[str, Any] = {}
+    uncorrelated_payload: Dict[str, Any] = {}
     if not args.skip_health:
         rc = run_cmd(["python", "scripts/report_automation_health.py"])
         if rc != 0:
@@ -278,6 +416,16 @@ def main() -> int:
                 health_payload = load_json(health_path)
             except Exception:
                 health_payload = {}
+    if not args.skip_uncorrelated_portfolio:
+        uncorrelated_path = resolve_repo_path(
+            str(args.uncorrelated_json),
+            "logs/uncorrelated_portfolio_proxy_analysis_latest.json",
+        )
+        if uncorrelated_path.exists():
+            try:
+                uncorrelated_payload = load_json(uncorrelated_path)
+            except Exception:
+                uncorrelated_payload = {}
 
     snapshot_path = resolve_repo_path(str(args.snapshot_json), "logs/strategy_register_latest.json")
     if not snapshot_path.exists():
@@ -292,7 +440,6 @@ def main() -> int:
 
     gate = payload.get("realized_30d_gate") if isinstance(payload.get("realized_30d_gate"), dict) else {}
     monthly = payload.get("realized_monthly_return") if isinstance(payload.get("realized_monthly_return"), dict) else {}
-    no_longshot = payload.get("no_longshot_status") if isinstance(payload.get("no_longshot_status"), dict) else {}
     readiness = payload.get("readiness") if isinstance(payload.get("readiness"), dict) else {}
     readiness_summary = readiness.get("summary") if isinstance(readiness.get("summary"), dict) else {}
     strict = readiness_summary.get("strict") if isinstance(readiness_summary.get("strict"), dict) else {}
@@ -311,20 +458,18 @@ def main() -> int:
     next_remain = _as_int(next_stage.get("remaining_days"), -1)
     proj_monthly_text = str(monthly.get("projected_monthly_return_text") or fmt_ratio_pct(monthly.get("projected_monthly_return_ratio")))
     rolling_30d_text = str(monthly.get("rolling_30d_return_text") or fmt_ratio_pct(monthly.get("rolling_30d_return_ratio")))
-    no_longshot_monthly_text = str(
-        no_longshot.get("monthly_return_now_text")
-        or fmt_ratio_pct(no_longshot.get("monthly_return_now_ratio"))
-    )
-    no_longshot_source = str(no_longshot.get("monthly_return_now_source") or "-")
-    no_longshot_obs_days_val = no_longshot.get("observed_days")
-    no_longshot_obs_days_txt = (
-        str(_as_int(no_longshot_obs_days_val, 0)) if no_longshot_obs_days_val is not None else "n/a"
-    )
-    no_longshot_resolved = _as_int(
-        no_longshot.get("rolling_30d_resolved_trades"),
-        _as_int(no_longshot.get("resolved_positions"), 0),
-    )
-    no_longshot_open = _as_int(no_longshot.get("open_positions"), 0)
+    no_longshot_monthly = extract_no_longshot_monthly(payload)
+    no_longshot_monthly_text = str(no_longshot_monthly.get("monthly_now_text") or "n/a")
+    no_longshot_source = str(no_longshot_monthly.get("monthly_now_source") or "-")
+    no_longshot_monthly_new_text = str(no_longshot_monthly.get("monthly_new_text") or "n/a")
+    no_longshot_monthly_new_source = str(no_longshot_monthly.get("monthly_new_source") or "-")
+    no_longshot_monthly_all_text = str(no_longshot_monthly.get("monthly_all_text") or "n/a")
+    no_longshot_monthly_all_source = str(no_longshot_monthly.get("monthly_all_source") or "-")
+    no_longshot_obs_days_txt = str(no_longshot_monthly.get("obs_days_txt") or "n/a")
+    no_longshot_resolved = _as_int(no_longshot_monthly.get("rolling_30d_resolved_trades"), 0)
+    no_longshot_resolved_new = _as_int(no_longshot_monthly.get("rolling_30d_resolved_trades_new_condition"), 0)
+    no_longshot_resolved_all = _as_int(no_longshot_monthly.get("rolling_30d_resolved_trades_all"), 0)
+    no_longshot_open = _as_int(no_longshot_monthly.get("open_positions"), 0)
     no_longshot_conf = no_longshot_confidence_label(no_longshot_resolved)
 
     strict_go = _as_int(strict.get("go_count"), 0)
@@ -352,6 +497,18 @@ def main() -> int:
         f"rolling_30d_resolved={no_longshot_resolved} open_positions={no_longshot_open} "
         f"observed_days={no_longshot_obs_days_txt}"
     )
+    if no_longshot_monthly_new_text != "n/a":
+        print(
+            "no_longshot_monthly_new_condition="
+            f"{no_longshot_monthly_new_text} source={no_longshot_monthly_new_source} "
+            f"rolling_30d_resolved={no_longshot_resolved_new}"
+        )
+    if no_longshot_monthly_all_text != "n/a":
+        print(
+            "no_longshot_monthly_all="
+            f"{no_longshot_monthly_all_text} source={no_longshot_monthly_all_source} "
+            f"rolling_30d_resolved={no_longshot_resolved_all}"
+        )
     print(f"no_longshot_confidence={no_longshot_conf} threshold_resolved_trades>=30")
     print(f"readiness_strict=GO {strict_go}/{strict_cnt} readiness_quality=GO {quality_go}/{quality_cnt}")
     print(f"snapshot={snapshot_path}")
@@ -440,6 +597,73 @@ def main() -> int:
         print(f"automation_health={health_decision} reasons={reason_txt}")
     elif not args.skip_health:
         print("automation_health=UNKNOWN reasons=health_json_missing_or_invalid")
+
+    if not args.skip_uncorrelated_portfolio:
+        if uncorrelated_payload:
+            recommendation = (
+                uncorrelated_payload.get("recommendation")
+                if isinstance(uncorrelated_payload.get("recommendation"), dict)
+                else {}
+            )
+            best_pair = (
+                recommendation.get("best_pair_with_monthly_proxy")
+                if isinstance(recommendation.get("best_pair_with_monthly_proxy"), dict)
+                else {}
+            )
+            recommended_set = (
+                recommendation.get("recommended_min_set")
+                if isinstance(recommendation.get("recommended_min_set"), list)
+                else []
+            )
+            low_pairs = (
+                recommendation.get("low_corr_pairs")
+                if isinstance(recommendation.get("low_corr_pairs"), list)
+                else []
+            )
+            monthly_proxy = (
+                uncorrelated_payload.get("portfolio_monthly_proxy")
+                if isinstance(uncorrelated_payload.get("portfolio_monthly_proxy"), dict)
+                else {}
+            )
+            risk_proxy = (
+                uncorrelated_payload.get("portfolio_risk_proxy")
+                if isinstance(uncorrelated_payload.get("portfolio_risk_proxy"), dict)
+                else {}
+            )
+            print(
+                "uncorrelated_low_pairs="
+                f"{len(low_pairs)} threshold_abs={_as_float(recommendation.get('low_corr_threshold_abs'), 0.3):.2f}"
+            )
+            if recommended_set:
+                print(f"uncorrelated_recommended_set={','.join(str(x) for x in recommended_set)}")
+            else:
+                print("uncorrelated_recommended_set=n/a")
+            if best_pair:
+                pair = best_pair.get("pair")
+                corr = _as_float(best_pair.get("corr"), None)
+                avg_m = _as_float(best_pair.get("avg_monthly_return_proxy_ratio"), None)
+                pair_txt = ",".join(str(x) for x in pair) if isinstance(pair, list) else "n/a"
+                corr_txt = "n/a" if corr is None else f"{corr:+.4f}"
+                print(
+                    "uncorrelated_best_pair="
+                    f"{pair_txt} corr={corr_txt} avg_monthly_proxy={fmt_ratio_pct(avg_m)}"
+                )
+            else:
+                print("uncorrelated_best_pair=n/a")
+            if monthly_proxy:
+                print(
+                    "uncorrelated_portfolio_monthly_proxy="
+                    f"{fmt_ratio_pct(monthly_proxy.get('monthly_return_proxy_equal_weight'))} "
+                    f"improve_vs_no_longshot={fmt_ratio_pct(monthly_proxy.get('improvement_vs_no_longshot_monthly_proxy'))}"
+                )
+            if risk_proxy:
+                print(
+                    "uncorrelated_risk_reduction_proxy="
+                    f"{fmt_ratio_pct(risk_proxy.get('risk_reduction_vs_avg_std'))} "
+                    f"overlap_days={_as_int(risk_proxy.get('overlap_days'), 0)}"
+                )
+        else:
+            print("uncorrelated_portfolio=UNKNOWN reason=uncorrelated_json_missing_or_invalid")
 
     capital_gate, capital_reasons = real_capital_gate_decision(
         gate_decision_3stage=gate_decision_3,

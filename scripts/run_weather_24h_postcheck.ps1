@@ -11,6 +11,13 @@ param(
   [string]$ReportFile = "logs/weather24h_postcheck_latest.txt",
   [string]$SummaryFile = "logs/weather24h_postcheck_latest.json",
   [string]$AlarmLogFile = "logs/alarm_weather24h.log",
+  [switch]$AutoRecheckOnSamplesShortfall,
+  [int]$AutoRecheckBufferMinutes = 10,
+  [int]$AutoRecheckMinDelayMinutes = 5,
+  [string]$AutoRecheckMessage = "Weather usefulness gate recheck (samples>=300?)",
+  [string]$AutoRecheckWaiterStateFile = "logs/weather24h_gate_recheck_waiter_state.json",
+  [string]$AutoRecheckLogFile = "logs/alarm_weather24h_gate_recheck.log",
+  [string]$AutoRecheckMarkerFile = "logs/alarm_weather24h_gate_recheck.marker",
   [switch]$Background,
   [switch]$NoBackground
 )
@@ -122,6 +129,7 @@ Set-Content -Path $reportOutPath -Value $reportBody -Encoding UTF8
 $match0 = [regex]::Match($outputText, '>=\s+\$0\.0000\s*:\s*(?<hit>\d+)\s*/\s*(?<total>\d+)\s*\((?<pct>\d+(?:\.\d+)?)%\)')
 $match5 = [regex]::Match($outputText, '>=\s+\$0\.0500\s*:\s*(?<hit>\d+)\s*/\s*(?<total>\d+)\s*\((?<pct>\d+(?:\.\d+)?)%\)')
 $matchSamples = [regex]::Match($outputText, 'Samples:\s*(?<samples>\d+)')
+$matchSummaryEvery = [regex]::Match($outputText, 'summary_every=(?<sec>\d+)s')
 
 $pct0 = $null
 $hit0 = $null
@@ -144,6 +152,14 @@ if ($match5.Success) {
 $samples = $null
 if ($matchSamples.Success) {
   $samples = [int]$matchSamples.Groups["samples"].Value
+}
+
+$summaryEverySec = 30
+if ($matchSummaryEvery.Success) {
+  $summaryEverySec = [int]$matchSummaryEvery.Groups["sec"].Value
+  if ($summaryEverySec -lt 1) {
+    $summaryEverySec = 30
+  }
 }
 
 $decision = "REVIEW"
@@ -184,11 +200,50 @@ if ($gateReasons.Count -eq 0) {
   $gateReasons += "all_gates_passed"
 }
 
+$autoRecheckScheduled = $false
+$autoRecheckAlarmAtLocal = $null
+$autoRecheckDelaySec = $null
+$autoRecheckWaiterStatePath = $null
+$autoRecheckError = $null
+
+if (
+  $AutoRecheckOnSamplesShortfall.IsPresent -and
+  $decision -eq "REVIEW" -and
+  ($gateReasons -contains "samples_below_min") -and
+  $null -ne $samples
+) {
+  $remainingSamples = [Math]::Max($MinSamples - $samples, 0)
+  $delayFromSamplesSec = [int]($remainingSamples * $summaryEverySec)
+  $delayBufferSec = [Math]::Max($AutoRecheckBufferMinutes, 0) * 60
+  $delayMinSec = [Math]::Max($AutoRecheckMinDelayMinutes, 0) * 60
+  $autoRecheckDelaySec = [int][Math]::Max($delayMinSec, $delayFromSamplesSec + $delayBufferSec)
+  $autoRecheckAlarmAtLocal = (Get-Date).AddSeconds($autoRecheckDelaySec).ToString("yyyy-MM-dd HH:mm:ss")
+  $setAlarmScriptPath = Join-Path $PSScriptRoot "set_weather_24h_alarm.ps1"
+
+  if (Test-Path $setAlarmScriptPath) {
+    try {
+      $autoRecheckWaiterStatePath = Resolve-RepoPath -PathText $AutoRecheckWaiterStateFile
+      & $setAlarmScriptPath `
+        -AlarmAt $autoRecheckAlarmAtLocal `
+        -Message $AutoRecheckMessage `
+        -WaiterStateFile $AutoRecheckWaiterStateFile `
+        -LogFile $AutoRecheckLogFile `
+        -MarkerFile $AutoRecheckMarkerFile | Out-Null
+      $autoRecheckScheduled = $true
+    } catch {
+      $autoRecheckError = $_.Exception.Message
+    }
+  } else {
+    $autoRecheckError = "set_weather_24h_alarm.ps1 not found: $setAlarmScriptPath"
+  }
+}
+
 $summary = [ordered]@{
   ts_local = $ts
   observe_log_file = $observeLogPath
   hours = $Hours
   thresholds_cents = $ThresholdsCents
+  summary_every_sec = $summaryEverySec
   samples = $samples
   min_samples = $MinSamples
   min_useful_pct = $MinUsefulPct
@@ -202,6 +257,12 @@ $summary = [ordered]@{
   positive_5c_pct = $pct5
   decision = $decision
   gate_reasons = $gateReasons
+  auto_recheck_enabled = [bool]$AutoRecheckOnSamplesShortfall.IsPresent
+  auto_recheck_scheduled = $autoRecheckScheduled
+  auto_recheck_alarm_at_local = $autoRecheckAlarmAtLocal
+  auto_recheck_delay_sec = $autoRecheckDelaySec
+  auto_recheck_waiter_state_file = $autoRecheckWaiterStatePath
+  auto_recheck_error = $autoRecheckError
   report_file = $reportOutPath
 }
 $summary | ConvertTo-Json -Depth 6 | Set-Content -Path $summaryPath -Encoding UTF8
@@ -215,6 +276,12 @@ if ($null -ne $pct5) {
 }
 if ($null -ne $samples) {
   $alarmLine += (" samples={0} min_samples={1}" -f $samples, $MinSamples)
+}
+if ($autoRecheckScheduled -and $null -ne $autoRecheckAlarmAtLocal) {
+  $alarmLine += (" auto_recheck_at={0}" -f $autoRecheckAlarmAtLocal)
+}
+if ($null -ne $autoRecheckError) {
+  $alarmLine += (" auto_recheck_error={0}" -f $autoRecheckError)
 }
 Add-Content -Path $alarmLogPath -Value $alarmLine
 

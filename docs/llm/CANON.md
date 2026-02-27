@@ -49,6 +49,8 @@ Monthly return authority:
 
 - `no_longshot_status.monthly_return_now_text`
 - `no_longshot_status.monthly_return_now_source`
+- `no_longshot_status.monthly_return_now_new_condition_text`（新条件専用表示）
+- `no_longshot_status.monthly_return_now_all_text`（全体比較値）
 
 Also report when needed:
 
@@ -66,7 +68,8 @@ When alarm fires:
 
 1. `scripts/run_weather_24h_alarm_action.ps1` appends alarm history and marker.
 2. `scripts/run_weather_24h_postcheck.ps1` runs follow-up usefulness check.
-3. Read:
+3. `python scripts/render_strategy_register_snapshot.py --pretty` is refreshed by alarm action.
+4. Read:
    - `logs/weather24h_postcheck_latest.json`
    - `logs/weather24h_postcheck_latest.txt`
 
@@ -92,6 +95,8 @@ Sample-shortfall handling (`gate_reasons` contains `samples_below_min`):
 
 - Treat as evidence-insufficient `REVIEW`, not immediate reject.
 - Keep observe process running and recheck later.
+- Preferred one-shot:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_24h_postcheck.ps1 -NoBackground -AutoRecheckOnSamplesShortfall`
 - Recommended recheck alarm (separate waiter state so existing alarm is not overwritten):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_weather_24h_alarm.ps1 -AlarmAt "<local datetime>" -Message "Weather usefulness gate recheck (samples>=300?)" -WaiterStateFile logs/weather24h_gate_recheck_waiter_state.json -LogFile logs/alarm_weather24h_gate_recheck.log -MarkerFile logs/alarm_weather24h_gate_recheck.marker`
 

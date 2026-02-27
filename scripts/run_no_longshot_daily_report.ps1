@@ -56,7 +56,8 @@ param(
   [switch]$FailOnGapErrorRateHigh,
   [int]$GapMaxPairsPerEvent = 20,
   [int]$GapTopN = 30,
-  [switch]$Discord
+  [switch]$Discord,
+  [string]$RunLogPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,6 +111,13 @@ $oosAllJson = Join-Path $logDir "no_longshot_daily_oos_allfolds.json"
 $oosGuardJson = Join-Path $logDir "no_longshot_daily_oos_guarded.json"
 $summaryTxt = Join-Path $logDir "no_longshot_daily_summary.txt"
 $runLog = Join-Path $logDir "no_longshot_daily_run.log"
+if (-not [string]::IsNullOrWhiteSpace($RunLogPath)) {
+  if ([System.IO.Path]::IsPathRooted($RunLogPath)) {
+    $runLog = $RunLogPath
+  } else {
+    $runLog = Join-Path $RepoRoot $RunLogPath
+  }
+}
 $realizedTool = Join-Path $RepoRoot "scripts\record_no_longshot_realized_daily.py"
 $realizedPositionsJson = Join-Path $logDir "no_longshot_forward_positions.json"
 $realizedDailyJsonl = Join-Path $logDir "no_longshot_realized_daily.jsonl"
@@ -359,6 +367,137 @@ function Select-BestGapRowsPerEvent([object[]]$Rows) {
       @{ Expression = { [double]($_.gross_edge_cents) }; Descending = $true }, `
       @{ Expression = { [double]($_.liquidity_sum) }; Descending = $true }
   return @($bestRows)
+}
+
+function Get-RealizedBandMetrics(
+  [string]$PositionsPath,
+  [double]$EntryYesMin,
+  [double]$EntryYesMax
+) {
+  $ret = @{
+    entry_yes_min = [double]$EntryYesMin
+    entry_yes_max = [double]$EntryYesMax
+    rolling_30d_return_pct = $null
+    rolling_30d_return_text = "n/a"
+    rolling_30d_resolved_trades = 0
+    observed_days = 0
+    open_positions = 0
+    resolved_positions = 0
+  }
+  if (-not (Test-Path $PositionsPath)) {
+    return $ret
+  }
+
+  $raw = $null
+  try {
+    $raw = Get-Content -Path $PositionsPath -Raw | ConvertFrom-Json
+  } catch {
+    return $ret
+  }
+
+  $positions = @()
+  if ($null -eq $raw) {
+    return $ret
+  } elseif ($raw -is [System.Array]) {
+    $positions = @($raw)
+  } elseif ($raw.PSObject.Properties["positions"]) {
+    $positions = @($raw.positions)
+  } else {
+    $positions = @($raw)
+  }
+
+  $todayUtc = (Get-Date).ToUniversalTime().Date
+  $rollStartUtc = $todayUtc.AddDays(-29)
+  $rollPnl = 0.0
+  $rollCost = 0.0
+  $daySet = @{}
+
+  foreach ($pos in $positions) {
+    if ($null -eq $pos) {
+      continue
+    }
+    $yesProp = $pos.PSObject.Properties["entry_yes_price"]
+    if (-not $yesProp -or $null -eq $yesProp.Value) {
+      continue
+    }
+    $entryYes = 0.0
+    try {
+      $entryYes = [double]$yesProp.Value
+    } catch {
+      continue
+    }
+    if ($entryYes -lt [double]$EntryYesMin -or $entryYes -gt [double]$EntryYesMax) {
+      continue
+    }
+
+    $status = [string]$pos.status
+    if ($status -eq "open") {
+      $ret.open_positions = [int]$ret.open_positions + 1
+      continue
+    }
+    if ($status -ne "resolved") {
+      continue
+    }
+    $ret.resolved_positions = [int]$ret.resolved_positions + 1
+
+    $resolvedDayRaw = [string]$pos.resolved_day
+    if ([string]::IsNullOrWhiteSpace($resolvedDayRaw)) {
+      continue
+    }
+    $resolvedDay = $null
+    try {
+      $resolvedDay = [datetime]::ParseExact(
+        $resolvedDayRaw.Trim(),
+        "yyyy-MM-dd",
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        [System.Globalization.DateTimeStyles]::AssumeUniversal
+      )
+    } catch {
+      try {
+        $resolvedDay = [datetime]::Parse(
+          $resolvedDayRaw.Trim(),
+          [System.Globalization.CultureInfo]::InvariantCulture,
+          [System.Globalization.DateTimeStyles]::AssumeUniversal
+        )
+      } catch {
+        $resolvedDay = $null
+      }
+    }
+    if ($null -eq $resolvedDay) {
+      continue
+    }
+    $d = $resolvedDay.ToUniversalTime().Date
+    if ($d -lt $rollStartUtc -or $d -gt $todayUtc) {
+      continue
+    }
+
+    $pnlProp = $pos.PSObject.Properties["pnl_per_share"]
+    $costProp = $pos.PSObject.Properties["cost_basis_per_share"]
+    if (-not $pnlProp -or -not $costProp -or $null -eq $pnlProp.Value -or $null -eq $costProp.Value) {
+      continue
+    }
+    $pnl = 0.0
+    $cost = 0.0
+    try {
+      $pnl = [double]$pnlProp.Value
+      $cost = [double]$costProp.Value
+    } catch {
+      continue
+    }
+
+    $rollPnl += $pnl
+    $rollCost += $cost
+    $ret.rolling_30d_resolved_trades = [int]$ret.rolling_30d_resolved_trades + 1
+    $dayKey = $d.ToString("yyyy-MM-dd")
+    $daySet[$dayKey] = 1
+  }
+
+  $ret.observed_days = [int]$daySet.Count
+  if ($rollCost -gt 1e-12) {
+    $ret.rolling_30d_return_pct = [double]($rollPnl / $rollCost)
+    $ret.rolling_30d_return_text = "{0:+0.00%;-0.00%;+0.00%}" -f [double]$ret.rolling_30d_return_pct
+  }
+  return $ret
 }
 
 trap {
@@ -767,6 +906,18 @@ $realizedObservedDays = 0
 $realizedOpenPositions = 0
 $realizedResolvedPositions = 0
 $realizedRollingTrades = 0
+$realizedMonthlyReturnAllText = "n/a"
+$realizedMonthlyReturnAllPct = $null
+$realizedObservedDaysAll = 0
+$realizedOpenPositionsAll = 0
+$realizedResolvedPositionsAll = 0
+$realizedRollingTradesAll = 0
+$realizedMonthlyReturnBandText = "n/a"
+$realizedMonthlyReturnBandPct = $null
+$realizedObservedDaysBand = 0
+$realizedOpenPositionsBand = 0
+$realizedResolvedPositionsBand = 0
+$realizedRollingTradesBand = 0
 $realizedScreenCsv = $screenCsv
 $realizedEntrySource = "primary_screen"
 $realizedEntryCandidates = 0
@@ -847,12 +998,72 @@ if (Test-Path $realizedTool) {
   Log "realized monthly tracker skip: tool not found"
 }
 
+$realizedMonthlyReturnAllText = $realizedMonthlyReturnText
+$realizedMonthlyReturnAllPct = $realizedMonthlyReturnPct
+$realizedObservedDaysAll = $realizedObservedDays
+$realizedOpenPositionsAll = $realizedOpenPositions
+$realizedResolvedPositionsAll = $realizedResolvedPositions
+$realizedRollingTradesAll = $realizedRollingTrades
+
+$bandMetrics = Get-RealizedBandMetrics `
+  -PositionsPath $realizedPositionsJson `
+  -EntryYesMin $realizedFastYesMin `
+  -EntryYesMax $realizedFastYesMax
+if ($null -ne $bandMetrics) {
+  $realizedMonthlyReturnBandText = [string]$bandMetrics.rolling_30d_return_text
+  $realizedMonthlyReturnBandPct = $bandMetrics.rolling_30d_return_pct
+  $realizedObservedDaysBand = [int]$bandMetrics.observed_days
+  $realizedOpenPositionsBand = [int]$bandMetrics.open_positions
+  $realizedResolvedPositionsBand = [int]$bandMetrics.resolved_positions
+  $realizedRollingTradesBand = [int]$bandMetrics.rolling_30d_resolved_trades
+}
+Log "realized band tracker yes=[$realizedFastYesMin,$realizedFastYesMax] monthly_30d=$realizedMonthlyReturnBandText observed_days=$realizedObservedDaysBand rolling_trades=$realizedRollingTradesBand open=$realizedOpenPositionsBand resolved=$realizedResolvedPositionsBand"
+
 Log "compose summary"
 $oosAll = Get-Content -Path $oosAllJson -Raw | ConvertFrom-Json
 $oosGuard = Get-Content -Path $oosGuardJson -Raw | ConvertFrom-Json
-$monthlyNowText = $realizedMonthlyReturnText
-$monthlyNowSource = "realized_rolling_30d"
-if ($null -eq $realizedMonthlyReturnPct) {
+$monthlyNowAllText = $realizedMonthlyReturnAllText
+$monthlyNowAllSource = "realized_rolling_30d_all"
+$rolling30AllText = $realizedMonthlyReturnAllText
+$rolling30AllSource = "realized_rolling_30d_all"
+if ($null -eq $realizedMonthlyReturnAllPct) {
+  $monthlyNowAllText = "n/a"
+  $monthlyNowAllSource = "n/a"
+  $rolling30AllText = "n/a"
+  $rolling30AllSource = "n/a"
+}
+
+$monthlyNowBandText = $realizedMonthlyReturnBandText
+$monthlyNowBandSource = "realized_rolling_30d_new_condition"
+$rolling30BandText = $realizedMonthlyReturnBandText
+$rolling30BandSource = "realized_rolling_30d_new_condition"
+if ($null -eq $realizedMonthlyReturnBandPct) {
+  $monthlyNowBandText = "n/a"
+  $monthlyNowBandSource = "n/a"
+  $rolling30BandText = "n/a"
+  $rolling30BandSource = "n/a"
+}
+
+$monthlyNowText = $monthlyNowBandText
+$monthlyNowSource = $monthlyNowBandSource
+$rolling30Text = $rolling30BandText
+$rolling30Source = $rolling30BandSource
+$rolling30ResolvedTrades = [int]$realizedRollingTradesBand
+$observedDaysNow = [int]$realizedObservedDaysBand
+$openPositionsNow = [int]$realizedOpenPositionsBand
+$resolvedPositionsNow = [int]$realizedResolvedPositionsBand
+if ($null -eq $realizedMonthlyReturnBandPct) {
+  $monthlyNowText = $monthlyNowAllText
+  $monthlyNowSource = $monthlyNowAllSource
+  $rolling30Text = $rolling30AllText
+  $rolling30Source = $rolling30AllSource
+  $rolling30ResolvedTrades = [int]$realizedRollingTradesAll
+  $observedDaysNow = [int]$realizedObservedDaysAll
+  $openPositionsNow = [int]$realizedOpenPositionsAll
+  $resolvedPositionsNow = [int]$realizedResolvedPositionsAll
+}
+
+if ($monthlyNowText -eq "n/a") {
   $monthlyNowText = "n/a"
   $monthlyNowSource = "n/a"
   try {
@@ -994,16 +1205,34 @@ $lines = @(
   ("- " + (Format-Metric "Guarded" $oosGuard))
   ""
   "Forward measured (realized):"
-  ("- rolling_30d_monthly_return: {0}" -f $realizedMonthlyReturnText)
+  ("- rolling_30d_monthly_return: {0}" -f $rolling30Text)
+  ("- rolling_30d_monthly_return_source: {0}" -f $rolling30Source)
   ("- monthly_return_now: {0}" -f $monthlyNowText)
   ("- monthly_return_now_source: {0}" -f $monthlyNowSource)
+  ("- rolling_30d_monthly_return_new_condition: {0}" -f $rolling30BandText)
+  ("- rolling_30d_monthly_return_new_condition_source: {0}" -f $rolling30BandSource)
+  ("- monthly_return_now_new_condition: {0}" -f $monthlyNowBandText)
+  ("- monthly_return_now_new_condition_source: {0}" -f $monthlyNowBandSource)
+  ("- rolling_30d_monthly_return_all: {0}" -f $rolling30AllText)
+  ("- rolling_30d_monthly_return_all_source: {0}" -f $rolling30AllSource)
+  ("- monthly_return_now_all: {0}" -f $monthlyNowAllText)
+  ("- monthly_return_now_all_source: {0}" -f $monthlyNowAllSource)
+  ("- monthly_return_new_condition_entry_yes_range: [{0},{1}]" -f [double]$realizedFastYesMin, [double]$realizedFastYesMax)
   ("- realized_entry_source: {0}" -f $realizedEntrySource)
   ("- realized_entry_candidates: {0}" -f [int]$realizedEntryCandidates)
   ("- realized_entry_top_n: {0}" -f [int]$realizedEntryTopN)
-  ("- rolling_30d_resolved_trades: {0}" -f [int]$realizedRollingTrades)
-  ("- observed_days: {0}" -f [int]$realizedObservedDays)
-  ("- open_positions: {0}" -f [int]$realizedOpenPositions)
-  ("- resolved_positions: {0}" -f [int]$realizedResolvedPositions)
+  ("- rolling_30d_resolved_trades: {0}" -f [int]$rolling30ResolvedTrades)
+  ("- observed_days: {0}" -f [int]$observedDaysNow)
+  ("- open_positions: {0}" -f [int]$openPositionsNow)
+  ("- resolved_positions: {0}" -f [int]$resolvedPositionsNow)
+  ("- rolling_30d_resolved_trades_new_condition: {0}" -f [int]$realizedRollingTradesBand)
+  ("- observed_days_new_condition: {0}" -f [int]$realizedObservedDaysBand)
+  ("- open_positions_new_condition: {0}" -f [int]$realizedOpenPositionsBand)
+  ("- resolved_positions_new_condition: {0}" -f [int]$realizedResolvedPositionsBand)
+  ("- rolling_30d_resolved_trades_all: {0}" -f [int]$realizedRollingTradesAll)
+  ("- observed_days_all: {0}" -f [int]$realizedObservedDaysAll)
+  ("- open_positions_all: {0}" -f [int]$realizedOpenPositionsAll)
+  ("- resolved_positions_all: {0}" -f [int]$realizedResolvedPositionsAll)
   ""
   ("Screen candidates now: {0}" -f $screenRows.Count)
 )

@@ -4,6 +4,7 @@ param(
   [int]$JudgeMinDays = 25,
   [double]$JudgeExpectancyRatioThreshold = 0.9,
   [string]$JudgeDecisionDate = "2026-03-22",
+  [switch]$FailOnFinalNoGo,
   [switch]$SkipJudge,
   [switch]$Background,
   [switch]$NoBackground
@@ -120,14 +121,23 @@ if ($discordEnabled) {
 & $PythonExe @compareArgs 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
 
 if (-not $SkipJudge) {
-  "[$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))] judge min_days=$JudgeMinDays exp_ratio=$JudgeExpectancyRatioThreshold decision_date=$JudgeDecisionDate" | Out-File -FilePath $logFile -Append -Encoding utf8
-  & $PythonExe $judgeScript `
-    --history-file $compareHistoryFile `
-    --min-days ([string]$JudgeMinDays) `
-    --expectancy-ratio-threshold ([string]$JudgeExpectancyRatioThreshold) `
-    --decision-date ([string]$JudgeDecisionDate) `
-    --output-file $judgeLatestFile `
-    --output-json $judgeLatestJson 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+  "[$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))] judge min_days=$JudgeMinDays exp_ratio=$JudgeExpectancyRatioThreshold decision_date=$JudgeDecisionDate fail_on_final_no_go=$($FailOnFinalNoGo.IsPresent)" | Out-File -FilePath $logFile -Append -Encoding utf8
+  $judgeArgs = @(
+    $judgeScript,
+    "--history-file", $compareHistoryFile,
+    "--min-days", ([string]$JudgeMinDays),
+    "--expectancy-ratio-threshold", ([string]$JudgeExpectancyRatioThreshold),
+    "--decision-date", ([string]$JudgeDecisionDate),
+    "--output-file", $judgeLatestFile,
+    "--output-json", $judgeLatestJson
+  )
+  if ($FailOnFinalNoGo.IsPresent) {
+    $judgeArgs += "--fail-on-final-no-go"
+  }
+  & $PythonExe @judgeArgs 2>&1 | Out-File -FilePath $logFile -Append -Encoding utf8
+  if ($LASTEXITCODE -ne 0) {
+    throw "judge_simmer_ab_decision.py failed with exit code $LASTEXITCODE"
+  }
 }
 
 "[$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))] done" | Out-File -FilePath $logFile -Append -Encoding utf8
