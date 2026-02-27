@@ -235,3 +235,35 @@ def test_apply_strategy_register_kpi_key_check_keeps_fresh_when_keys_present(tmp
     mod._apply_strategy_register_kpi_key_check(rows)
 
     assert rows[0]["status"] == "FRESH"
+
+
+def test_apply_strategy_register_kpi_key_check_marks_invalid_when_source_is_not_realized(tmp_path):
+    p = tmp_path / "logs" / "strategy_register_latest.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """{
+  "no_longshot_status": {
+    "monthly_return_now_text": "+4.20%",
+    "monthly_return_now_source": "guarded_oos_annualized_fallback",
+    "monthly_return_now_new_condition_text": "+4.20%",
+    "monthly_return_now_all_text": "+3.10%"
+  },
+  "realized_30d_gate": {
+    "decision": "PENDING_30D"
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": True,
+        }
+    ]
+
+    mod._apply_strategy_register_kpi_key_check(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "invalid_monthly_source=" in str(rows[0].get("status_note") or "")

@@ -672,6 +672,7 @@ Automation health report (observe-only):
   - optional: `logs/simmer-ab-daily-report.log`（存在すれば鮮度判定）
   - optional: `logs/simmer-ab-decision-latest.json`（存在すれば鮮度判定、未作成なら `OPTIONAL_MISSING` で NO_GO にはしない）
   - `logs/strategy_register_latest.json` が fresh な場合、authority key（`no_longshot_status.monthly_return_now_text/source/new_condition/all`, `realized_30d_gate.decision`）の存在を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
+  - `monthly_return_now_text` が `n/a` 以外なのに `monthly_return_now_source` が `realized_rolling_30d` 系でない場合は `INVALID_CONTENT` で `NO_GO`
   - `logs/morning_status_daily_run.log` が fresh な場合、末尾付近に `kpi[post] no_longshot.monthly_return_now_text=` を含むことを必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
 - Soft-fail behavior:
   - `LastTaskResult=0xC000013A (3221225786)` または `267014` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する（`WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `WalletAutopsyDailyReport`, `SimmerABDailyReport`）。

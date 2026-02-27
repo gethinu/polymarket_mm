@@ -450,6 +450,7 @@ def _apply_strategy_register_kpi_key_check(artifact_rows: List[dict]) -> None:
         "no_longshot_status.monthly_return_now_all_text",
         "realized_30d_gate.decision",
     ]
+    na_tokens = {"n/a", "na", "none", "null", "-"}
 
     for row in artifact_rows:
         if not isinstance(row, dict):
@@ -493,6 +494,24 @@ def _apply_strategy_register_kpi_key_check(artifact_rows: List[dict]) -> None:
             else:
                 row["status"] = "OPTIONAL_INVALID_CONTENT"
             row["status_note"] = "missing_or_empty_keys=" + ",".join(missing)
+            return
+
+        ok_text, monthly_now_text_obj = _extract_nested(payload, "no_longshot_status.monthly_return_now_text")
+        ok_source, monthly_now_source_obj = _extract_nested(payload, "no_longshot_status.monthly_return_now_source")
+        monthly_now_text = str(monthly_now_text_obj or "").strip().lower() if ok_text else ""
+        monthly_now_source = str(monthly_now_source_obj or "").strip() if ok_source else ""
+        has_real_value = monthly_now_text not in na_tokens
+        source_ok = monthly_now_source.startswith("realized_rolling_30d")
+        if has_real_value and not source_ok:
+            if bool(row.get("required", True)):
+                row["status"] = "INVALID_CONTENT"
+            else:
+                row["status"] = "OPTIONAL_INVALID_CONTENT"
+            row["status_note"] = (
+                "invalid_monthly_source="
+                + monthly_now_source
+                + " expected_prefix=realized_rolling_30d"
+            )
         return
 
 
