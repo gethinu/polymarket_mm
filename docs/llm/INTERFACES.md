@@ -16,8 +16,10 @@ PowerShell task scripts (background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_clob_arb_monitor.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_observe.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_fade_observe_watchdog.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_arb_observe_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_fade_observe_watchdog_task.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_weather_24h_alarm.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/cancel_weather_24h_alarm.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_24h_postcheck.ps1`
@@ -866,6 +868,22 @@ Polymarket CLOB fade monitor (observe-only, multi-bot consensus simulation):
   - `day_*` は日次アンカー差分（`state.day_anchor_total_pnl` 基準）を比較するため、短期の地合い変化に追随しやすい。
   - メインbot側で `--control-file logs/clob_fade_runtime_control.json` を指定して連携
   - `out-control` 既存JSONの `overrides` は保持され、ルーターは `allowed_sides` のみ上書きする。`consensus_min_score` や `min_expected_edge_cents` を同居させて併用できる。
+
+Fade observe watchdog (observe-only availability helper):
+- One-shot watchdog runner (background by default):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_fade_observe_watchdog.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_fade_observe_watchdog.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_fade_observe_watchdog.ps1 -NoBackground -StateFile logs/fade_observe_supervisor_state.json -LogFile logs/fade_observe_watchdog.log`
+- Scheduled-task installer:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_fade_observe_watchdog_task.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_fade_observe_watchdog_task.ps1 -NoBackground -IntervalMinutes 1 -RunNow`
+- Key flags:
+  - runner: `-RepoRoot`, `-StateFile`, `-LogFile`, `-StartupCmd`, `-NoBackground`
+  - installer: `-TaskName`, `-RepoRoot`, `-IntervalMinutes`, `-DurationDays`, `-PowerShellExe`, `-RunNow`, `-NoBackground`
+- Behavior:
+  - runner は `logs/fade_observe_supervisor_state.json.supervisor_pid` と `--state-file` 一致の `bot_supervisor.py` 実プロセス走査で生存確認し、停止検知時は Startup フォルダの `polymarket_fade_observe_startup.cmd` を呼び出して復旧を試みる（最大 45 秒の再確認ループ）。
+  - installer は 反復トリガー（既定 1 分）+ ログオン時トリガーで task を登録し、principal は `S4U` -> `Interactive` -> default の順で登録を試行する。
+  - task action は `run_fade_observe_watchdog.ps1 -NoBackground` を hidden 実行し、Task Scheduler の多重起動抑止（`MultipleInstances=IgnoreNew`）を維持する。
 
 Polymarket NO-longshot toolkit (observe-only):
 - Active screener:

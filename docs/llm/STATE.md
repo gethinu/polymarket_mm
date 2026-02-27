@@ -65,6 +65,8 @@ Polymarket CLOB fade monitor (observe-only):
 - Optional fade-suite supervisor runtime files:
   - `logs/fade_observe_supervisor.log`
   - `logs/fade_observe_supervisor_state.json`
+- Optional fade watchdog runtime file:
+  - `logs/fade_observe_watchdog.log`
 
 Polymarket BTC 5m lag monitor (observe-only):
 - Log: `logs/btc5m-lag-observe.log`
