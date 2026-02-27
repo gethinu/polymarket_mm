@@ -10,6 +10,7 @@ from lib.clob_arb_eval import (
     compute_candidate,
     make_signature,
     process_impacted_event,
+    process_ws_raw_message,
     update_book_from_snapshot,
 )
 from lib.clob_arb_models import EventBasket, Leg, LocalBook, RunStats, RuntimeState
@@ -274,3 +275,102 @@ def test_collect_impacted_events_from_payload_empty_when_no_books():
     impacted = collect_impacted_events_from_payload(payload={"foo": "bar"}, books=books, token_to_events={})
     assert impacted == set()
     assert books == {}
+
+
+def test_process_ws_raw_message_ignores_invalid_json():
+    basket = EventBasket(
+        key="event-1",
+        title="Title",
+        strategy="buckets",
+        legs=[Leg(market_id="m1", question="q", label="yes", token_id="t1")],
+    )
+    event_map = {"event-1": basket}
+    stats = RunStats()
+    state = RuntimeState(day="2026-02-27")
+
+    updated = asyncio.run(
+        process_ws_raw_message(
+            raw="{bad-json",
+            books={},
+            token_to_events={},
+            event_map=event_map,
+            state=state,
+            args=SimpleNamespace(),
+            stats=stats,
+            min_eval_interval=0.0,
+            metrics_file=None,
+            observe_exec_edge_filter=False,
+            observe_exec_edge_min_usd=0.0,
+            observe_exec_edge_strike_limit=2,
+            observe_exec_edge_cooldown_sec=30.0,
+            observe_exec_edge_filter_strategies=set(),
+            observe_notify_min_interval=0.0,
+            last_observe_notify_ts=7.0,
+            logger=SimpleNamespace(info=lambda _msg: None),
+            append_jsonl_func=lambda _path, _row: None,
+            notify_func=lambda _logger, _msg: None,
+            live_execution_ctx={"state": None},
+        )
+    )
+
+    assert updated == 7.0
+
+
+def test_process_ws_raw_message_delegates_event_processing(monkeypatch):
+    b1 = EventBasket(
+        key="event-1",
+        title="E1",
+        strategy="buckets",
+        legs=[Leg(market_id="m1", question="q1", label="yes", token_id="t1")],
+    )
+    b2 = EventBasket(
+        key="event-2",
+        title="E2",
+        strategy="buckets",
+        legs=[Leg(market_id="m2", question="q2", label="yes", token_id="t2")],
+    )
+    event_map = {"event-1": b1, "event-2": b2}
+    stats = RunStats()
+    state = RuntimeState(day="2026-02-27")
+    calls = []
+
+    async def _fake_process_impacted_event(**kwargs):
+        calls.append(kwargs["basket"].key)
+        return float(kwargs["last_observe_notify_ts"]) + 1.0
+
+    monkeypatch.setattr(
+        eval_mod,
+        "collect_impacted_events_from_payload",
+        lambda **_kwargs: {"event-1", "event-2"},
+    )
+    monkeypatch.setattr(eval_mod, "process_impacted_event", _fake_process_impacted_event)
+
+    live_ctx = {"state": None}
+    updated = asyncio.run(
+        process_ws_raw_message(
+            raw="{}",
+            books={},
+            token_to_events={},
+            event_map=event_map,
+            state=state,
+            args=SimpleNamespace(),
+            stats=stats,
+            min_eval_interval=0.0,
+            metrics_file=None,
+            observe_exec_edge_filter=False,
+            observe_exec_edge_min_usd=0.0,
+            observe_exec_edge_strike_limit=2,
+            observe_exec_edge_cooldown_sec=30.0,
+            observe_exec_edge_filter_strategies=set(),
+            observe_notify_min_interval=0.0,
+            last_observe_notify_ts=0.0,
+            logger=SimpleNamespace(info=lambda _msg: None),
+            append_jsonl_func=lambda _path, _row: None,
+            notify_func=lambda _logger, _msg: None,
+            live_execution_ctx=live_ctx,
+        )
+    )
+
+    assert updated == 2.0
+    assert set(calls) == {"event-1", "event-2"}
+    assert live_ctx["state"] is state

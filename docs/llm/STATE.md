@@ -19,17 +19,22 @@ Bot supervisor:
 - State: `logs/bot_supervisor_state.json`
 - State JSON writes use temp-file atomic replace with retry on transient Windows sharing conflicts.
 
-No-longshot daily daemon (observe-only):
+No-longshot daily daemon (observe-first, live optional):
 - Log: `logs/no_longshot_daily_daemon.log`
 - State: `logs/no_longshot_daily_daemon_state.json`
 - Instance lock: `logs/no_longshot_daily_daemon.lock`
 - 既存の日次レポート出力（`logs/no_longshot_daily_*.txt/.json/.csv`）は `run_no_longshot_daily_report.ps1` 側の仕様を継承。
 - `no_longshot_daily_daemon.py` の `--realized-refresh-sec` が有効な場合、同 daemon が下記 realized tracker artifacts を日中にも更新する（observe-only）。
+- `run_no_longshot_daily_report.ps1` は `-LiveExecute -LiveConfirm YES` 明示時のみ `scripts/execute_no_longshot_live.py` を起動し、small-size live entry を実行する（既定は未実行）。
 - Forward realized tracker state/artifacts:
   - Ledger state JSON: `logs/no_longshot_forward_positions.json`
   - Realized daily series JSONL: `logs/no_longshot_realized_daily.jsonl`
   - Latest realized snapshot JSON: `logs/no_longshot_realized_latest.json`
   - Latest rolling-30d monthly return text: `logs/no_longshot_monthly_return_latest.txt`
+- Optional no-longshot live helper runtime files:
+  - Log: `logs/no_longshot_live.log`
+  - State: `logs/no_longshot_live_state.json`
+  - Execution log JSONL: `logs/no_longshot_live_executions.jsonl`
 
 Polymarket event-driven mispricing monitor (observe-only):
 - Log: `logs/event-driven-observe.log`
@@ -292,6 +297,7 @@ Polymarket strategy register snapshot (observe-only):
 - Snapshot JSON: `logs/strategy_register_latest.json`
 - Snapshot HTML: `logs/strategy_register_latest.html`
 - Snapshot JSON には `bankroll_policy`、`realized_30d_gate`、`realized_monthly_return` を含む（`realized_30d_gate.decision` は30日最終判定の互換フィールド）。
+- Snapshot JSON には `kpi_core`（`daily_realized_pnl_usd`, `monthly_return_now_text`, `max_drawdown_30d_text`）を含む。
 - `bankroll_policy` は `docs/llm/STRATEGY.md` の `## Bankroll Policy` から抽出され、`initial_bankroll_usd`、`allocation_mode`、`live_max_daily_risk_ratio`、`live_max_daily_risk_usd`、`default_adopted_allocations` を保持する。
 - `realized_30d_gate` は `decision_3stage`（7日暫定 / 14日中間 / 30日確定）、`decision_3stage_label_ja`、`stage_label_ja`、`stages`（`label_ja` 含む）、`next_stage`（`label_ja` 含む）を含む。
 - `realized_monthly_return` は `strategy_realized_pnl_daily.jsonl` を優先し、未存在時は累積 snapshot の差分系列をフォールバック利用して計算される。
@@ -329,9 +335,13 @@ Automation health report (observe-only):
   - `logs/no_longshot_daily_run.log`
   - `logs/morning_status_daily_run.log`
 - Optional freshness checks include:
+  - `logs/event_driven_daily_run.log`
+  - `logs/event_driven_daily_summary.txt`
+  - `logs/event_driven_profit_window_latest.json`
   - `logs/wallet_autopsy_daily_run.log`
   - `logs/simmer-ab-daily-report.log`
   - `logs/simmer-ab-decision-latest.json`
+  - `logs/bot_supervisor_state.json`
 
 ## Secrets
 

@@ -15,7 +15,6 @@ DEFAULT_STRATEGY_IDS: Sequence[str] = (
     "weather_clob_arb_buckets_observe",
     "no_longshot_daily_observe",
     "link_intake_walletseed_cohort_observe",
-    "gamma_eventpair_exec_edge_filter_observe",
     "hourly_updown_highprob_calibration_observe",
 )
 
@@ -798,7 +797,7 @@ def main() -> int:
     parser.add_argument(
         "--strategy-ids",
         default="",
-        help="Comma-separated strategy ids (default: ADOPTED from logs/strategy_register_latest.json, fallback fixed 5)",
+        help="Comma-separated strategy ids (default: ADOPTED from logs/strategy_register_latest.json, fallback fixed 4)",
     )
     parser.add_argument("--corr-threshold-abs", type=float, default=0.30, help="Absolute correlation threshold for low-correlation pair/set")
     parser.add_argument("--min-overlap-days", type=int, default=2, help="Minimum overlap days for correlation estimation")

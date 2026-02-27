@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -695,5 +696,69 @@ async def process_impacted_event(
                 fetch_simmer_positions_func=live_execution_ctx.get("fetch_simmer_positions_func"),
                 estimate_exec_cost_func=live_execution_ctx.get("estimate_exec_cost_func"),
             )
+
+    return last_observe_notify_ts
+
+
+async def process_ws_raw_message(
+    *,
+    raw: str,
+    books: Dict[str, LocalBook],
+    token_to_events: Dict[str, Set[str]],
+    event_map: Dict[str, EventBasket],
+    state,
+    args,
+    stats,
+    min_eval_interval: float,
+    metrics_file,
+    observe_exec_edge_filter: bool,
+    observe_exec_edge_min_usd: float,
+    observe_exec_edge_strike_limit: int,
+    observe_exec_edge_cooldown_sec: float,
+    observe_exec_edge_filter_strategies: Set[str],
+    observe_notify_min_interval: float,
+    last_observe_notify_ts: float,
+    logger,
+    append_jsonl_func: Callable[[object, dict], None],
+    notify_func: Callable[[object, str], None],
+    live_execution_ctx: Optional[Dict[str, Any]] = None,
+) -> float:
+    try:
+        payload = json.loads(raw)
+    except Exception:
+        return last_observe_notify_ts
+
+    impacted_events = collect_impacted_events_from_payload(
+        payload=payload,
+        books=books,
+        token_to_events=token_to_events,
+    )
+    if not impacted_events:
+        return last_observe_notify_ts
+
+    if isinstance(live_execution_ctx, dict):
+        live_execution_ctx["state"] = state
+
+    for event_key in impacted_events:
+        basket = event_map[event_key]
+        last_observe_notify_ts = await process_impacted_event(
+            basket=basket,
+            books=books,
+            args=args,
+            stats=stats,
+            min_eval_interval=min_eval_interval,
+            metrics_file=metrics_file,
+            observe_exec_edge_filter=observe_exec_edge_filter,
+            observe_exec_edge_min_usd=observe_exec_edge_min_usd,
+            observe_exec_edge_strike_limit=observe_exec_edge_strike_limit,
+            observe_exec_edge_cooldown_sec=observe_exec_edge_cooldown_sec,
+            observe_exec_edge_filter_strategies=observe_exec_edge_filter_strategies,
+            observe_notify_min_interval=observe_notify_min_interval,
+            last_observe_notify_ts=last_observe_notify_ts,
+            logger=logger,
+            append_jsonl_func=append_jsonl_func,
+            notify_func=notify_func,
+            live_execution_ctx=live_execution_ctx,
+        )
 
     return last_observe_notify_ts

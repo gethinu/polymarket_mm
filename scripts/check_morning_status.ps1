@@ -5,7 +5,7 @@ param(
   [string]$SnapshotJson = "logs/strategy_register_latest.json",
   [string]$HealthJson = "logs/automation_health_latest.json",
   [string]$UncorrelatedJson = "logs/uncorrelated_portfolio_proxy_analysis_latest.json",
-  [string]$UncorrelatedStrategyIds = "weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe",
+  [string]$UncorrelatedStrategyIds = "weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,hourly_updown_highprob_calibration_observe",
   [double]$UncorrelatedCorrThresholdAbs = 0.30,
   [int]$UncorrelatedMinOverlapDays = 2,
   [int]$UncorrelatedMinRealizedDaysForCorrelation = 7,

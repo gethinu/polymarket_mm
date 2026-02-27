@@ -25,7 +25,6 @@ DEFAULT_UNCORRELATED_STRATEGY_IDS = (
     "weather_clob_arb_buckets_observe,"
     "no_longshot_daily_observe,"
     "link_intake_walletseed_cohort_observe,"
-    "gamma_eventpair_exec_edge_filter_observe,"
     "hourly_updown_highprob_calibration_observe"
 )
 
@@ -280,7 +279,7 @@ def main() -> int:
         default=DEFAULT_UNCORRELATED_STRATEGY_IDS,
         help=(
             "Comma-separated strategy ids passed to report_uncorrelated_portfolio.py. "
-            "Default uses fixed 5-strategy diagnostic cohort."
+            "Default uses fixed 4-strategy diagnostic cohort."
         ),
     )
     p.add_argument(

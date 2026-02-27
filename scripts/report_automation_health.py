@@ -34,6 +34,7 @@ DEFAULT_TASKS = [
 ]
 DEFAULT_OPTIONAL_TASKS = [
     "WalletAutopsyDailyReport",
+    "EventDrivenDailyReport",
 ]
 
 DEFAULT_ARTIFACT_SPECS = [
@@ -45,6 +46,9 @@ DEFAULT_ARTIFACT_SPECS = [
     "logs/weather_mimic_pipeline_daily_run.log:30",
     "logs/no_longshot_daily_run.log:30",
     "logs/no_longshot_daily_summary.txt:30",
+    "?logs/event_driven_daily_run.log:30",
+    "?logs/event_driven_daily_summary.txt:30",
+    "?logs/event_driven_profit_window_latest.json:30",
     "?logs/wallet_autopsy_daily_run.log:30",
     "?logs/simmer-ab-daily-report.log:30",
     "logs/simmer-ab-daily-compare-latest.txt:30",
@@ -52,6 +56,7 @@ DEFAULT_ARTIFACT_SPECS = [
     "logs/morning_status_daily_run.log:30",
     "?logs/simmer-ab-decision-latest.json:30",
     "?logs/simmer_ab_supervisor_state.json:6",
+    "?logs/bot_supervisor_state.json:6",
 ]
 
 
@@ -336,6 +341,17 @@ def _is_fresh_artifact(artifact_rows: List[dict], suffix: str) -> bool:
     return False
 
 
+def _find_artifact_row(artifact_rows: List[dict], suffix: str) -> Optional[dict]:
+    target = str(suffix or "").replace("/", "\\").lower()
+    for row in artifact_rows:
+        if not isinstance(row, dict):
+            continue
+        path = str(row.get("path") or "").replace("/", "\\").lower()
+        if path.endswith(target):
+            return row
+    return None
+
+
 def _is_supervisor_job_enabled(job_name: str) -> bool:
     cfg = repo_root() / "configs" / "bot_supervisor.observe.json"
     if not cfg.exists():
@@ -364,6 +380,7 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
     wallet_autopsy_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\wallet_autopsy_daily_run.log")
     simmer_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\simmer-ab-daily-report.log")
     morning_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\morning_status_daily_run.log")
+    event_driven_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\event_driven_daily_run.log")
     interrupted_codes = {3221225786, 267014}
 
     for row in task_rows:
@@ -405,11 +422,15 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
         elif name == "SimmerABDailyReport" and simmer_log_fresh:
             row["status"] = "SOFT_FAIL_INTERRUPTED"
             row["status_note"] = f"last_result={code} indicates interrupted task host but simmer runner log is fresh"
+        elif name == "EventDrivenDailyReport" and event_driven_log_fresh:
+            row["status"] = "SOFT_FAIL_INTERRUPTED"
+            row["status_note"] = f"last_result={code} indicates interrupted task host but event-driven runner log is fresh"
 
 
 def _apply_supervisor_overrides(task_rows: List[dict]) -> None:
     no_longshot_daemon_enabled = _is_supervisor_job_enabled("no_longshot_daily_daemon")
     weather_daemon_enabled = _is_supervisor_job_enabled("weather_daily_daemon")
+    event_driven_enabled = _is_supervisor_job_enabled("event_driven")
     for row in task_rows:
         if not isinstance(row, dict):
             continue
@@ -422,6 +443,9 @@ def _apply_supervisor_overrides(task_rows: List[dict]) -> None:
         elif task_name in {"WeatherMimicPipelineDaily", "WeatherTop30ReadinessDaily"} and weather_daemon_enabled:
             row["status"] = "SUPPRESSED_BY_SUPERVISOR"
             row["status_note"] = f"{task_name} disabled while weather_daily_daemon is enabled"
+        elif task_name == "EventDrivenDailyReport" and event_driven_enabled:
+            row["status"] = "SUPPRESSED_BY_SUPERVISOR"
+            row["status_note"] = "EventDrivenDailyReport disabled while event_driven supervisor job is enabled"
 
 
 def _apply_duplicate_run_guard(task_rows: List[dict]) -> None:
@@ -899,6 +923,109 @@ def _apply_simmer_ab_supervisor_state_check(artifact_rows: List[dict]) -> None:
         return
 
 
+def _apply_bot_supervisor_state_check(artifact_rows: List[dict]) -> None:
+    target_suffix = r"logs\bot_supervisor_state.json"
+
+    def invalidate(row: dict, reason: str) -> None:
+        row["status"] = "INVALID_CONTENT"
+        row["status_note"] = reason
+
+    for row in artifact_rows:
+        if not isinstance(row, dict):
+            continue
+        path_text = str(row.get("path") or "").replace("/", "\\").lower()
+        if not path_text.endswith(target_suffix):
+            continue
+        status = str(row.get("status") or "").upper()
+        if status != "FRESH":
+            return
+
+        p = Path(str(row.get("path") or ""))
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            invalidate(row, f"json_parse_failed:{type(exc).__name__}")
+            return
+        if not isinstance(payload, dict):
+            invalidate(row, "invalid_json_root:not_object")
+            return
+
+        mode = str(payload.get("mode") or "").strip().lower()
+        supervisor_running = bool(payload.get("supervisor_running"))
+        supervisor_pid = int(payload.get("supervisor_pid") or 0)
+
+        if mode != "run":
+            invalidate(row, f"invalid_mode:{mode or '-'}")
+            return
+        if not supervisor_running:
+            invalidate(row, "supervisor_running=false")
+            return
+        if supervisor_pid <= 0 or not _pid_running(supervisor_pid):
+            invalidate(row, f"supervisor_pid_not_running:{supervisor_pid}")
+            return
+
+        # Keep this focused: enforce event-driven runtime only when canonical config enables it.
+        if not _is_supervisor_job_enabled("event_driven"):
+            return
+
+        jobs = payload.get("jobs")
+        if not isinstance(jobs, list):
+            invalidate(row, "invalid_jobs:not_list")
+            return
+        event_row = None
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            if str(job.get("name") or "").strip() != "event_driven":
+                continue
+            if not bool(job.get("enabled")):
+                continue
+            event_row = job
+            break
+        if not isinstance(event_row, dict):
+            invalidate(row, "event_driven_enabled_in_config_but_missing_in_state")
+            return
+
+        running = bool(event_row.get("running"))
+        pid = int(event_row.get("pid") or 0)
+        if not running:
+            invalidate(row, "event_driven_job_not_running")
+            return
+        if pid <= 0 or not _pid_running(pid):
+            invalidate(row, f"event_driven_job_pid_not_running:{pid}")
+            return
+        return
+
+
+def _apply_event_driven_supervisor_guard(task_rows: List[dict], artifact_rows: List[dict]) -> None:
+    if not _is_supervisor_job_enabled("event_driven"):
+        return
+
+    target_task: Optional[dict] = None
+    for row in task_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("task_name") or "") == "EventDrivenDailyReport":
+            target_task = row
+            break
+    if target_task is None:
+        return
+
+    if str(target_task.get("status") or "") != "SUPPRESSED_BY_SUPERVISOR":
+        return
+
+    state_row = _find_artifact_row(artifact_rows, r"logs\bot_supervisor_state.json")
+    if state_row is None:
+        target_task["status"] = "INVALID_CONTENT"
+        target_task["status_note"] = "EventDrivenDailyReport suppressed but bot_supervisor_state check is missing"
+        return
+
+    state_status = str(state_row.get("status") or "").upper()
+    if state_status != "FRESH":
+        target_task["status"] = "INVALID_CONTENT"
+        target_task["status_note"] = f"EventDrivenDailyReport suppressed but bot_supervisor_state status={state_status or '-'}"
+
+
 def _render_txt(payload: dict) -> str:
     lines: List[str] = []
     lines.append(f"Automation health @ {payload.get('generated_utc','')}")
@@ -998,8 +1125,10 @@ def main() -> int:
     _apply_morning_kpi_marker_check(art_rows)
     _apply_no_longshot_summary_mode_check(art_rows)
     _apply_simmer_ab_supervisor_state_check(art_rows)
+    _apply_bot_supervisor_state_check(art_rows)
     _apply_soft_fail_overrides(task_rows, art_rows)
     _apply_supervisor_overrides(task_rows)
+    _apply_event_driven_supervisor_guard(task_rows, art_rows)
     _apply_duplicate_run_guard(task_rows)
     _apply_morning_task_argument_guard(task_rows)
     _apply_simmer_ab_task_argument_guard(task_rows)

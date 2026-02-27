@@ -11,6 +11,10 @@ def test_default_optional_tasks_include_wallet_autopsy_daily_report():
     assert "WalletAutopsyDailyReport" in mod.DEFAULT_OPTIONAL_TASKS
 
 
+def test_default_optional_tasks_include_event_driven_daily_report():
+    assert "EventDrivenDailyReport" in mod.DEFAULT_OPTIONAL_TASKS
+
+
 def test_parse_artifact_specs_supports_optional_prefix():
     rows = mod._parse_artifact_specs(
         [
@@ -24,6 +28,13 @@ def test_parse_artifact_specs_supports_optional_prefix():
 
 def test_default_artifacts_include_optional_simmer_ab_supervisor_state():
     assert "?logs/simmer_ab_supervisor_state.json:6" in mod.DEFAULT_ARTIFACT_SPECS
+
+
+def test_default_artifacts_include_optional_event_driven_and_supervisor_state():
+    assert "?logs/event_driven_daily_run.log:30" in mod.DEFAULT_ARTIFACT_SPECS
+    assert "?logs/event_driven_daily_summary.txt:30" in mod.DEFAULT_ARTIFACT_SPECS
+    assert "?logs/event_driven_profit_window_latest.json:30" in mod.DEFAULT_ARTIFACT_SPECS
+    assert "?logs/bot_supervisor_state.json:6" in mod.DEFAULT_ARTIFACT_SPECS
 
 
 def test_default_artifacts_include_no_longshot_daily_summary():
@@ -117,6 +128,27 @@ def test_soft_fail_override_for_wallet_autopsy_daily_report():
     assert "wallet autopsy runner log is fresh" in str(task_rows[0].get("status_note") or "")
 
 
+def test_soft_fail_override_for_event_driven_daily_report():
+    task_rows = [
+        {
+            "task_name": "EventDrivenDailyReport",
+            "status": "LAST_RUN_FAILED",
+            "last_task_result": 267014,
+        }
+    ]
+    artifact_rows = [
+        {
+            "path": r"C:\Repos\polymarket_mm\logs\event_driven_daily_run.log",
+            "status": "FRESH",
+        }
+    ]
+
+    mod._apply_soft_fail_overrides(task_rows, artifact_rows)
+
+    assert task_rows[0]["status"] == "SOFT_FAIL_INTERRUPTED"
+    assert "event-driven runner log is fresh" in str(task_rows[0].get("status_note") or "")
+
+
 def test_duplicate_run_guard_marks_no_longshot_conflict(monkeypatch):
     task_rows = [
         {
@@ -152,6 +184,95 @@ def test_duplicate_run_guard_skips_when_task_is_suppressed(monkeypatch):
     mod._apply_duplicate_run_guard(task_rows)
 
     assert task_rows[0]["status"] == "SUPPRESSED_BY_SUPERVISOR"
+
+
+def test_supervisor_overrides_mark_event_driven_task_suppressed(monkeypatch):
+    rows = [
+        {
+            "task_name": "EventDrivenDailyReport",
+            "status": "DISABLED",
+        }
+    ]
+    monkeypatch.setattr(mod, "_is_supervisor_job_enabled", lambda name: name == "event_driven")
+
+    mod._apply_supervisor_overrides(rows)
+
+    assert rows[0]["status"] == "SUPPRESSED_BY_SUPERVISOR"
+    assert "event_driven supervisor job is enabled" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_bot_supervisor_state_check_keeps_fresh_when_event_driven_alive(tmp_path, monkeypatch):
+    p = tmp_path / "logs" / "bot_supervisor_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """{
+  "mode": "run",
+  "supervisor_running": true,
+  "supervisor_pid": 100,
+  "jobs": [
+    {"name":"event_driven","enabled":true,"running":true,"pid":101}
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": False,
+        }
+    ]
+    monkeypatch.setattr(mod, "_is_supervisor_job_enabled", lambda name: name == "event_driven")
+    monkeypatch.setattr(mod, "_pid_running", lambda pid: int(pid) in {100, 101})
+
+    mod._apply_bot_supervisor_state_check(rows)
+
+    assert rows[0]["status"] == "FRESH"
+
+
+def test_apply_bot_supervisor_state_check_marks_invalid_when_event_driven_missing(tmp_path, monkeypatch):
+    p = tmp_path / "logs" / "bot_supervisor_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """{
+  "mode": "run",
+  "supervisor_running": true,
+  "supervisor_pid": 100,
+  "jobs": []
+}
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": False,
+        }
+    ]
+    monkeypatch.setattr(mod, "_is_supervisor_job_enabled", lambda name: name == "event_driven")
+    monkeypatch.setattr(mod, "_pid_running", lambda pid: int(pid) == 100)
+
+    mod._apply_bot_supervisor_state_check(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "event_driven_enabled_in_config_but_missing_in_state" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_event_driven_supervisor_guard_marks_invalid_when_state_missing(monkeypatch):
+    task_rows = [
+        {
+            "task_name": "EventDrivenDailyReport",
+            "status": "SUPPRESSED_BY_SUPERVISOR",
+        }
+    ]
+    monkeypatch.setattr(mod, "_is_supervisor_job_enabled", lambda name: name == "event_driven")
+
+    mod._apply_event_driven_supervisor_guard(task_rows, artifact_rows=[])
+
+    assert task_rows[0]["status"] == "INVALID_CONTENT"
+    assert "bot_supervisor_state check is missing" in str(task_rows[0].get("status_note") or "")
 
 
 def test_apply_morning_kpi_marker_check_marks_invalid_when_missing(tmp_path):

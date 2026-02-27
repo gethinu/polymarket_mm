@@ -28,9 +28,8 @@ from lib.clob_arb_cli import parse_clob_arb_args
 from lib.clob_auth import build_clob_client_from_env
 from lib.clob_arb_eval import (
     _estimate_exec_cost_clob,
-    collect_impacted_events_from_payload,
     format_candidate_brief,
-    process_impacted_event,
+    process_ws_raw_message,
 )
 from lib.clob_arb_models import LocalBook, RunStats, RuntimeState
 from lib.clob_arb_execution import (
@@ -238,41 +237,28 @@ async def run(args) -> int:
                     logger.info(f"[{iso_now()}] heartbeat: no message in 30s")
                 continue
 
-            try:
-                payload = json.loads(raw)
-            except Exception:
-                continue
-
-            impacted_events = collect_impacted_events_from_payload(
-                payload=payload,
+            last_observe_notify_ts = await process_ws_raw_message(
+                raw=raw,
                 books=books,
                 token_to_events=token_to_events,
+                event_map=event_map,
+                state=state,
+                args=args,
+                stats=stats,
+                min_eval_interval=min_eval_interval,
+                metrics_file=metrics_file,
+                observe_exec_edge_filter=observe_exec_edge_filter,
+                observe_exec_edge_min_usd=observe_exec_edge_min_usd,
+                observe_exec_edge_strike_limit=observe_exec_edge_strike_limit,
+                observe_exec_edge_cooldown_sec=observe_exec_edge_cooldown_sec,
+                observe_exec_edge_filter_strategies=observe_exec_edge_filter_strategies,
+                observe_notify_min_interval=observe_notify_min_interval,
+                last_observe_notify_ts=last_observe_notify_ts,
+                logger=logger,
+                append_jsonl_func=append_jsonl,
+                notify_func=maybe_notify_discord,
+                live_execution_ctx=live_execution_ctx,
             )
-            if not impacted_events:
-                continue
-            live_execution_ctx["state"] = state
-
-            for event_key in impacted_events:
-                basket = event_map[event_key]
-                last_observe_notify_ts = await process_impacted_event(
-                    basket=basket,
-                    books=books,
-                    args=args,
-                    stats=stats,
-                    min_eval_interval=min_eval_interval,
-                    metrics_file=metrics_file,
-                    observe_exec_edge_filter=observe_exec_edge_filter,
-                    observe_exec_edge_min_usd=observe_exec_edge_min_usd,
-                    observe_exec_edge_strike_limit=observe_exec_edge_strike_limit,
-                    observe_exec_edge_cooldown_sec=observe_exec_edge_cooldown_sec,
-                    observe_exec_edge_filter_strategies=observe_exec_edge_filter_strategies,
-                    observe_notify_min_interval=observe_notify_min_interval,
-                    last_observe_notify_ts=last_observe_notify_ts,
-                    logger=logger,
-                    append_jsonl_func=append_jsonl,
-                    notify_func=maybe_notify_discord,
-                    live_execution_ctx=live_execution_ctx,
-                )
 
     save_state(state_file, state)
     maybe_emit_run_summary(

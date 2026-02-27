@@ -561,6 +561,10 @@ Polymarket strategy register snapshot (observe-only):
   - `python scripts/render_strategy_register_snapshot.py`
   - `python scripts/render_strategy_register_snapshot.py --strategy-md docs/llm/STRATEGY.md --readiness-glob "logs/*_top30_readiness_*latest.json" --realized-strategy-id weather_clob_arb_buckets_observe --out-json logs/strategy_register_latest.json --out-html logs/strategy_register_latest.html --pretty`
 - Snapshot payload includes:
+  - `kpi_core.daily_realized_pnl_usd`（最新1日の日次実現PnL）
+  - `kpi_core.monthly_return_now_text`（現時点の月次リターン表示）
+  - `kpi_core.max_drawdown_30d_text`（直近30日の最大ドローダウン）
+  - `kpi_core.source`（`strategy_register_latest.json` 固定）
   - `no_longshot_status.monthly_return_now_text`（新条件専用があれば優先表示）
   - `no_longshot_status.monthly_return_now_source`
   - `no_longshot_status.monthly_return_now_new_condition_text`（`YES in [RealizedFastYesMin, RealizedFastYesMax]`）
@@ -642,7 +646,7 @@ Morning strategy gate check (observe-only):
   - `--snapshot-json`（読み取る strategy register JSON。既定 `logs/strategy_register_latest.json`）
   - `--health-json`（読み取る automation health JSON。既定 `logs/automation_health_latest.json`）
   - `--uncorrelated-json`（読み取る uncorrelated portfolio JSON。既定 `logs/uncorrelated_portfolio_proxy_analysis_latest.json`）
-  - `--uncorrelated-strategy-ids`（uncorrelated算出に渡す戦略IDのカンマ区切り。既定は固定5戦略コホート `weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe`）
+  - `--uncorrelated-strategy-ids`（uncorrelated算出に渡す戦略IDのカンマ区切り。既定は固定4戦略コホート `weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,hourly_updown_highprob_calibration_observe`）
   - `--uncorrelated-corr-threshold-abs`（uncorrelated算出に渡す相関閾値。既定 `0.30`）
   - `--uncorrelated-min-overlap-days`（uncorrelated算出に渡す最小重複日数。既定 `2`）
   - `--uncorrelated-min-realized-days-for-correlation`（realized系列採用に必要な最小日数。既定 `7`）
@@ -699,14 +703,17 @@ Automation health report (observe-only):
 - Default task checks include:
   - `WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `SimmerABDailyReport`, `MorningStrategyStatusDaily`
   - optional: `WalletAutopsyDailyReport`（未導入なら `OPTIONAL_MISSING` で NO_GO にはしない）
+  - optional: `EventDrivenDailyReport`（未導入なら `OPTIONAL_MISSING` で NO_GO にはしない）
 - Default artifact checks include:
   - `logs/strategy_register_latest.json`, `logs/clob_arb_realized_daily.jsonl`, `logs/strategy_realized_pnl_daily.jsonl`
   - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`, `logs/no_longshot_daily_summary.txt`, `logs/morning_status_daily_run.log`
+  - optional: `logs/event_driven_daily_run.log`, `logs/event_driven_daily_summary.txt`, `logs/event_driven_profit_window_latest.json`（存在すれば鮮度判定）
   - `logs/simmer-ab-daily-compare-latest.txt`, `logs/simmer-ab-daily-compare-history.jsonl`（Simmer A/B 日次比較素材）
   - optional: `logs/wallet_autopsy_daily_run.log`（存在すれば鮮度判定）
   - optional: `logs/simmer-ab-daily-report.log`（存在すれば鮮度判定）
   - optional: `logs/simmer-ab-decision-latest.json`（存在すれば鮮度判定、未作成なら `OPTIONAL_MISSING` で NO_GO にはしない）
   - optional: `logs/simmer_ab_supervisor_state.json`（存在すれば鮮度判定。既定 max age 6h）
+  - optional: `logs/bot_supervisor_state.json`（存在すれば鮮度判定。既定 max age 6h）
   - `logs/strategy_register_latest.json` が fresh な場合、authority key（`no_longshot_status.monthly_return_now_text/source/new_condition/all`, `realized_30d_gate.decision`）の存在を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
   - `monthly_return_now_text` が `n/a` 以外なのに `monthly_return_now_source` が `realized_rolling_30d` 系でない場合は `INVALID_CONTENT` で `NO_GO`
   - `logs/no_longshot_daily_summary.txt` が fresh な場合、`- strict_realized_band_only: True` を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
@@ -714,14 +721,16 @@ Automation health report (observe-only):
   - `MorningStrategyStatusDaily` task action 引数は practical gate 運用必須（`-NoLongshotPracticalDecisionDate`, `-NoLongshotPracticalSlideDays`, `-NoLongshotPracticalMinResolvedTrades`）に加え Simmer interim gate 必須（`-SimmerAbInterimTarget`, `-FailOnSimmerAbInterimNoGo`, `-NoBackground`）かつ skip系フラグ（`-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipUncorrelatedPortfolio`, `-SkipImplementationLedger`, `-SkipSimmerAb`）未指定を必須確認する。switch は `:$false` を未有効扱いとし、値フォーマットは `NoLongshotPracticalDecisionDate=YYYY-MM-DD`, `NoLongshotPracticalSlideDays>=1`, `NoLongshotPracticalMinResolvedTrades>=1`, `SimmerAbInterimTarget=7d|14d` を必須確認する。task action が複数（`||`）の場合も `INVALID_CONTENT` とする（違反時は task `INVALID_CONTENT` で `NO_GO`）
   - `SimmerABDailyReport` task action 引数は判定運用必須（`-JudgeMinDays`, `-JudgeMinWindowHours`, `-JudgeExpectancyRatioThreshold`, `-JudgeDecisionDate`, `-FailOnFinalNoGo`, `-NoBackground`）かつ `-SkipJudge` 未指定を必須確認する。switch は `:$false` を未有効扱いとし、値フォーマットは `JudgeMinDays>=1`, `JudgeMinWindowHours>0`, `JudgeDecisionDate=YYYY-MM-DD` を必須確認する。task action が複数（`||`）の場合も `INVALID_CONTENT` とする（違反時は task `INVALID_CONTENT` で `NO_GO`）
   - `logs/simmer_ab_supervisor_state.json` が fresh な場合、`mode=run` / `supervisor_running=true` / `supervisor_pid` 生存 / enabled job の `running=true` かつ PID 生存を必須確認（不整合は `INVALID_CONTENT` で `NO_GO`）
+  - `logs/bot_supervisor_state.json` が fresh な場合、`mode=run` / `supervisor_running=true` / `supervisor_pid` 生存を必須確認し、`configs/bot_supervisor.observe.json` で `event_driven.enabled=true` のときは `event_driven` job の `running=true` かつ PID 生存も必須確認する（不整合は `INVALID_CONTENT` で `NO_GO`）
 - Soft-fail behavior:
-  - `LastTaskResult=0xC000013A (3221225786)` または `267014` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する（`WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `WalletAutopsyDailyReport`, `SimmerABDailyReport`）。
+  - `LastTaskResult=0xC000013A (3221225786)` または `267014` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する（`WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `WalletAutopsyDailyReport`, `SimmerABDailyReport`, `EventDrivenDailyReport`）。
   - `MorningStrategyStatusDaily` は `LastTaskResult=267014 (0x41306)` でも `logs/morning_status_daily_run.log` が fresh なら `SOFT_FAIL_INTERRUPTED` として扱う。
   - 再登録直後などの no-run sentinel 時刻（例: `0001` / `1601` / `1999-11-30`）は `NO_RUN_YET` として扱い、失敗扱いしない。
   - `state=Running` または `LastTaskResult=267009 (0x41301)` は `RUNNING` として扱い、失敗扱いしない。
   - `NoLongshotDailyReport` が `Disabled` でも、`configs/bot_supervisor.observe.json` で `no_longshot_daily_daemon.enabled=true` の場合は `SUPPRESSED_BY_SUPERVISOR` として `NO_GO` 判定から除外する。
   - `configs/bot_supervisor.observe.json` で `no_longshot_daily_daemon.enabled=true` かつ `NoLongshotDailyReport` が active（`Disabled` でも `SUPPRESSED_BY_SUPERVISOR` でもない）な場合は `DUPLICATE_RUN_RISK` として `NO_GO` 判定に含める（NoLongshot は task/daemon の片系運用のみ許可）。
   - `WeatherMimicPipelineDaily` / `WeatherTop30ReadinessDaily` が `Disabled` でも、`configs/bot_supervisor.observe.json` で `weather_daily_daemon.enabled=true` の場合は `SUPPRESSED_BY_SUPERVISOR` として `NO_GO` 判定から除外する。
+  - `EventDrivenDailyReport` が `Disabled` でも、`configs/bot_supervisor.observe.json` で `event_driven.enabled=true` の場合は `SUPPRESSED_BY_SUPERVISOR` として扱う。さらにこの場合は `logs/bot_supervisor_state.json` が `FRESH` であることを必須化し、未更新/不整合なら task を `INVALID_CONTENT` として `NO_GO` にする。
 
 Polymarket BTC 5m LMSR/Bayes monitor (observe-only):
 - Observe:
@@ -797,7 +806,7 @@ Polymarket strategy uncorrelated-portfolio reporter (observe-only):
 - Estimate cross-strategy correlation and provisional uncorrelated portfolio set from available logs:
   - `python scripts/report_uncorrelated_portfolio.py`
   - `python scripts/report_uncorrelated_portfolio.py --corr-threshold-abs 0.30 --min-overlap-days 2 --pretty`
-  - `python scripts/report_uncorrelated_portfolio.py --strategy-ids weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe --memo-out docs/memo_uncorrelated_portfolio_custom.txt`
+  - `python scripts/report_uncorrelated_portfolio.py --strategy-ids weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,hourly_updown_highprob_calibration_observe --memo-out docs/memo_uncorrelated_portfolio_custom.txt`
 - Key flags:
   - `--strategy-ids` (comma-separated target strategies; default is `ADOPTED` from `logs/strategy_register_latest.json`)
   - `--corr-threshold-abs` (absolute correlation threshold for low-correlation recommendation)
@@ -924,6 +933,7 @@ Polymarket NO-longshot toolkit (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -FailOnGapScanError`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -Discord`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -StrictRealizedBandOnly -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -StrictRealizedBandOnly -LiveExecute -LiveConfirm YES -LiveMaxOrders 1 -LiveOrderSizeShares 5 -LiveMaxDailyNotionalUsd 10 -LiveMaxEntryNoPrice 0.84`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -SkipRefresh -RunLogPath logs/no_longshot_daily_run_canon.log`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GuardMaxOpenPositions 16 -GuardMaxOpenPerCategory 3`
   - `NO_LONGSHOT_DAILY_DISCORD=1` でも通知有効（Webhookは `CLOBBOT_DISCORD_WEBHOOK_URL` または `DISCORD_WEBHOOK_URL`）
@@ -932,6 +942,8 @@ Polymarket NO-longshot toolkit (observe-only):
   - `-RealizedFastYesMin` / `-RealizedFastYesMax` / `-RealizedFastMaxHoursToEnd` / `-RealizedFastMaxPages` で fast 実測候補スクリーンの範囲を明示調整できる（例: `-RealizedFastYesMin 0.16` は概ね `entry_no_price <= 0.84` 相当）。
   - 既定では fast screen 取得失敗時も runner 全体を継続し、`primary_screen` へ自動フォールバック（Summaryの `fast screen status` に `failed` を記録）。
   - `-StrictRealizedBandOnly` を付けると fast screen 不在/失敗時も `primary_screen` へフォールバックしない（`fast_72h_lowyes` のみで評価）。
+  - `-LiveExecute -LiveConfirm YES` を明示すると、summary 生成後に `scripts/execute_no_longshot_live.py` を起動して no-longshot の小ロット live NO エントリーを実行する（既定は未実行）。
+  - live 実行時の runner key flags: `-LiveMaxOrders`, `-LiveOrderSizeShares`, `-LiveMaxDailyNotionalUsd`, `-LiveMaxOpenPositions`, `-LiveMaxEntryNoPrice`, `-LivePriceBufferCents`, `-LiveScreenSource`（`fast` / `primary`）, `-LiveStateFile`, `-LiveExecLogFile`。
   - Summary に `monthly_return_now` を追記（実測が未確定の間は Guarded OOS の `annualized_return` を月次換算したフォールバック値を表示）
   - `monthly_return_now` / `rolling_30d_monthly_return` は可能なら新条件専用（`YES in [RealizedFastYesMin, RealizedFastYesMax]`）を優先表示し、全体値は `monthly_return_now_all` / `rolling_30d_monthly_return_all` に併記する。
   - 新条件専用の補助キー: `monthly_return_now_new_condition`, `rolling_30d_monthly_return_new_condition`, `rolling_30d_resolved_trades_new_condition`（全体は `_all` 接尾辞）。
@@ -971,6 +983,11 @@ Polymarket NO-longshot toolkit (observe-only):
   - Summaryの `Logical gaps now` は `raw` / `filtered` / `unique_events` を併記し、表示上位はイベント単位で最良1件に圧縮。
   - Summaryの `Logical gaps threshold stats` で `target_unique_events(applied)` と `net>=0.50c/1.00c/2.00c` ごとの件数を併記し、しきい値調整の判断材料を可視化。
   - gap artifacts: `logs/no_longshot_daily_gap.csv`, `logs/no_longshot_daily_gap.json`
+- No-longshot live entry helper (live optional, default observe preview):
+  - `python scripts/execute_no_longshot_live.py --screen-csv logs/no_longshot_fast_screen_lowyes_latest.csv --state-file logs/no_longshot_live_state.json --exec-log-file logs/no_longshot_live_executions.jsonl`
+  - `python scripts/execute_no_longshot_live.py --screen-csv logs/no_longshot_fast_screen_lowyes_latest.csv --execute --confirm-live YES --max-new-orders 1 --order-size-shares 5 --max-daily-notional-usd 10 --max-entry-no-price 0.84`
+  - key flags: `--execute`, `--confirm-live`, `--screen-csv`, `--state-file`, `--exec-log-file`, `--max-new-orders`, `--order-size-shares`, `--max-daily-notional-usd`, `--max-open-positions`, `--max-entry-no-price`, `--price-buffer-cents`, `--api-timeout-sec`, `--clob-host`, `--chain-id`, `--pretty`
+  - 既定は observe preview（注文未送信）。live 注文は `--execute --confirm-live YES` の同時指定が必須。
 - Monthly return quick report (canonical snapshot reader):
   - `python scripts/report_no_longshot_monthly_return.py`
   - `python scripts/report_no_longshot_monthly_return.py --value-only`
@@ -985,13 +1002,14 @@ Polymarket NO-longshot toolkit (observe-only):
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-strict-realized-band-only --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-gap-outcome-tag prod --runner-gap-error-alert-rate-7d 0.2 --runner-gap-error-alert-min-runs-7d 5 --runner-fail-on-gap-scan-error --runner-fail-on-gap-error-rate-high --skip-refresh`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-live-execute --runner-live-confirm-live YES --runner-live-max-new-orders 1 --runner-live-order-size-shares 5 --runner-live-max-daily-notional-usd 10 --runner-live-max-entry-no-price 0.84 --skip-refresh`
   - key flags: `--run-at-hhmm`, `--poll-sec`, `--retry-delay-sec`, `--max-run-seconds`, `--max-consecutive-failures`, `--run-on-start`, `--skip-refresh/--no-skip-refresh`, `--discord`, `--log-file`, `--state-file`, `--lock-file`, `--allow-realized-entry-ingest`
-  - runner passthrough flags: `--runner-realized-fast-yes-min`, `--runner-realized-fast-yes-max`, `--runner-realized-fast-max-hours-to-end`, `--runner-realized-fast-max-pages`, `--runner-strict-realized-band-only`, `--runner-gap-outcome-tag`, `--runner-gap-error-alert-rate-7d`, `--runner-gap-error-alert-min-runs-7d`, `--runner-fail-on-gap-scan-error`, `--runner-fail-on-gap-error-rate-high`
+  - runner passthrough flags: `--runner-realized-fast-yes-min`, `--runner-realized-fast-yes-max`, `--runner-realized-fast-max-hours-to-end`, `--runner-realized-fast-max-pages`, `--runner-strict-realized-band-only`, `--runner-gap-outcome-tag`, `--runner-gap-error-alert-rate-7d`, `--runner-gap-error-alert-min-runs-7d`, `--runner-fail-on-gap-scan-error`, `--runner-fail-on-gap-error-rate-high`, `--runner-live-execute`, `--runner-live-confirm-live`, `--runner-live-max-new-orders`, `--runner-live-order-size-shares`, `--runner-live-max-daily-notional-usd`, `--runner-live-max-open-positions`, `--runner-live-max-entry-no-price`, `--runner-live-price-buffer-cents`, `--runner-live-screen-source`, `--runner-live-state-file`, `--runner-live-exec-log-file`
   - realized refresh key flags: `--python-exe`, `--realized-refresh-sec`, `--realized-timeout-sec`, `--realized-tool-path`, `--realized-screen-csv`, `--realized-positions-json`, `--realized-out-daily-jsonl`, `--realized-out-latest-json`, `--realized-out-monthly-txt`, `--realized-entry-top-n`, `--realized-per-trade-cost`, `--realized-api-timeout-sec`
   - `--realized-refresh-sec > 0` で daemon が `record_no_longshot_realized_daily.py` を定期実行し、`--realized-entry-top-n 0` なら resolve-only（新規エントリー追加なし）で rolling-30d 実測を同日更新できる
   - 安全策として、`--realized-refresh-sec > 0` かつ `--realized-entry-top-n > 0` で起動する場合は `--allow-realized-entry-ingest` が必須（指定なしは非0終了）
   - daemon は `--lock-file`（既定: `logs/no_longshot_daily_daemon.lock`）で単一起動を強制し、既存インスタンスが稼働中なら 2本目は非0終了する
-  - daemon は内部で `run_no_longshot_daily_report.ps1 -NoBackground` を呼び出し、observe-only 日次運用を supervisor 配下で継続する
+  - daemon は内部で `run_no_longshot_daily_report.ps1 -NoBackground` を呼び出し、observe-first 日次運用を supervisor 配下で継続する（liveは `--runner-live-execute --runner-live-confirm-live YES` 指定時のみ有効）。
 
 Polymarket event-driven mispricing monitor (observe-only):
 - Observe:

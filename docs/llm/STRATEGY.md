@@ -38,7 +38,7 @@ Primary keys:
   - Source: `logs/uncorrelated_portfolio_proxy_analysis_latest.json`, `docs/memo_uncorrelated_portfolio_latest.txt`
   - Explicit 5-strategy study (includes `gamma_eventpair_exec_edge_filter_observe`) estimated `portfolio_risk_proxy.risk_reduction_vs_avg_std=+12.1407%` with overlap `3` days and low confidence.
   - Same snapshot estimated `portfolio_monthly_proxy.improvement_vs_no_longshot_monthly_proxy=-5.8266%` (equal-weight pair proxy underperformed current no-longshot monthly proxy).
-  - Daily morning uncorrelated diagnostics use the same fixed 5-strategy cohort by default (`scripts/check_morning_status.py` `--uncorrelated-strategy-ids` default).
+  - Daily morning uncorrelated diagnostics use fixed 4-strategy cohort by default (`scripts/check_morning_status.py` `--uncorrelated-strategy-ids` default).
   - This does not override active allocation policy; operational allocation remains equal-weight across currently `ADOPTED` strategies only.
 
 ## Active Strategies
@@ -140,6 +140,31 @@ Primary keys:
 - Decision note: expanded-asset calibration run met sample and edge gates; promote to active observe calibration monitoring.
 - Operational gate: keep observe-only and revert to `REVIEW` when either `qualified_samples < 200` or `edge_empirical_minus_price <= 0` on the latest 7-day-equivalent calibration run.
 
+5. `event_driven_mispricing_observe`
+
+- Status: `ADOPTED` (as of 2026-02-26, revalidated 2026-02-27, observe-only).
+- Scope: event-driven Polymarket mispricing monitor (political/geopolitical/legal/regulatory/macropolicy classes), observe-only.
+- Runtime:
+  - `python scripts/polymarket_event_driven_observe.py --max-pages 12 --poll-sec 120 --min-edge-cents 0.8 --max-days-to-end 180 --top-n 20 --signal-cooldown-sec 7200 --signal-state-file logs/event-driven-observe-signal-state.json`
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --pretty`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitTargetMonthlyReturnPct 12`
+- Evidence snapshot (2026-02-27 daily refresh / profit-window latest):
+  - Source artifacts: `logs/event_driven_profit_window_latest.json`, `logs/event_driven_profit_window_latest.txt`
+  - `decision=GO`, `projected_monthly_return=+936.35%` (base capture `35%`, threshold `>=5.00c`)
+  - Quality gates met: `runs=436`, `episodes=114`, `unique_events=7`, `positive_ev_ratio=93.0%`
+- Evidence snapshot (2026-02-27 class/diversity probe):
+  - Source artifacts: `logs/event-driven-probe-postclass2-metrics.jsonl`, `logs/event-driven-probe-postclass2-signals.jsonl`
+  - `event_count=42`, `candidate_count=14`, `top_written=14`
+  - Signal classes: `election_politics`, `geopolitical`; emitted rows had `days_to_end` defined (`na_dte=0`)
+- Decision note: promoted to active observe operations after class expansion (`election_politics`, `macro_policy`) and end-date guard (`allow_missing_end_date=false` default) increased actionable diversity while preserving quality gates.
+- Operational gate:
+  - Keep observe-only and mark `REVIEW` when latest `logs/event_driven_profit_window_latest.json` has any of:
+    - `decision != GO`
+    - `summary.episodes < 8`
+    - `summary.unique_events < 4`
+    - `summary.positive_ev_ratio < 0.60`
+  - Keep default horizon hygiene (`allow_missing_end_date=false`; do not enable `--allow-missing-end-date` in production observe profile unless explicitly testing).
+
 ## Rejected Strategies
 
 1. `weather_clob_arb_yes_no_only`
@@ -176,6 +201,12 @@ Primary keys:
 - Evidence snapshot (2026-02-26 Kelly replay):
   - Source replay: `logs/clob-arb-kelly-replay-eventpair-long2-raw.json`, `logs/clob-arb-kelly-replay-eventpair-long2-exec.json`, `logs/clob-arb-kelly-replay-yesno-moneyline-raw.json`, `logs/clob-arb-kelly-replay-yesno-moneyline-exec.json`
   - Both event-pair and yes/no baselines reported negative mean edge with `full_kelly=0.0`.
+- Evidence snapshot (2026-02-27 strict revalidation probe, observe-only):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-tuned3m-20260227_233912.jsonl` (`rows_total=1865`, `reason_threshold=515`, `reason_observe_exec_filter_blocked=418`, `reason_candidate=932`)
+  - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-tuned3m-20260227_233912-gap5s.json`, `logs/clob-arb-kelly-replay-eventpair-tuned38m-20260227-gap5s.json`
+  - Monthly estimate (3m strict): `logs/clob-arb-eventpair-monthly-estimate-tuned3m-20260227_233912.json` (`weighted_monthly_trim_edgepct_le_25=+4.07%`, `sample_count=76`, `event_count=7`)
+  - Monthly estimate (38m combined strict): `logs/clob-arb-eventpair-monthly-estimate-tuned38m-20260227.json` (`weighted_monthly_trim_edgepct_le_25=+5.47%`, `sample_count=212`, `event_count=7`)
+  - Robustness note: all-event monthly outputs are unstable due to near-expiry markets (e.g. `event_id=196733`, `days_to_end<1`), so only outlier-trim estimate is used for comparison.
 - Evidence snapshot:
   - Consolidated decision: `logs/clob-arb-adoption-summary-20260226.json` (`decision=NO_GO`).
 - Tuning proposal (coverage gate update, observe-only):

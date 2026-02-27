@@ -27,7 +27,7 @@ param(
   [string]$ProfitThresholdsCents = "0.8,1,2,3,5",
   [string]$ProfitCaptureRatios = "0.25,0.35,0.50",
   [double]$ProfitTargetMonthlyReturnPct = 12,
-  [double]$ProfitAssumedBankrollUsd = 100,
+  [double]$ProfitAssumedBankrollUsd = [double]::NaN,
   [double]$ProfitMaxEvMultipleOfStake = 0.35,
   [switch]$SkipProfitWindow,
   [switch]$FailOnNoGo,
@@ -223,12 +223,16 @@ if (-not $SkipProfitWindow.IsPresent) {
     "--thresholds-cents", $ProfitThresholdsCents,
     "--capture-ratios", $ProfitCaptureRatios,
     "--target-monthly-return-pct", "$ProfitTargetMonthlyReturnPct",
-    "--assumed-bankroll-usd", "$ProfitAssumedBankrollUsd",
     "--max-ev-multiple-of-stake", "$ProfitMaxEvMultipleOfStake",
     "--out-json", $profitJson,
     "--out-txt", $profitTxt,
     "--pretty"
   )
+  if (-not [double]::IsNaN($ProfitAssumedBankrollUsd)) {
+    $profitArgs += @("--assumed-bankroll-usd", "$ProfitAssumedBankrollUsd")
+  } else {
+    Log "profit-window assumed bankroll omitted; using policy-resolved default"
+  }
   Log "profit-window build start"
   $profitOutput = & $PythonExe @profitArgs 2>&1
   if ($LASTEXITCODE -ne 0) {
