@@ -71,6 +71,7 @@
 | status | path |
 |---|---|
 | `M` | `configs/bot_supervisor.observe.json` |
+| `A` | `configs/bot_supervisor.simmer_ab.observe.json` |
 | `M` | `docs/llm/ARCHITECTURE.md` |
 | `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
@@ -78,18 +79,17 @@
 | `M` | `docs/llm/STATE.md` |
 | `M` | `scripts/compare_simmer_ab_daily.py` |
 | `M` | `scripts/install_no_longshot_daily_task.ps1` |
+| `A` | `scripts/install_simmer_ab_observe_task.ps1` |
 | `M` | `scripts/no_longshot_daily_daemon.py` |
 | `M` | `scripts/report_automation_health.py` |
 | `M` | `scripts/report_uncorrelated_portfolio.py` |
 | `M` | `scripts/run_no_longshot_daily_report.ps1` |
+| `A` | `scripts/run_simmer_ab_observe_supervisor.ps1` |
+| `A` | `scripts/set_no_longshot_daily_mode.ps1` |
+| `A` | `tests/test_compare_simmer_ab_daily.py` |
 | `M` | `tests/test_no_longshot_daily_daemon.py` |
 | `M` | `tests/test_report_automation_health.py` |
-| `??` | `configs/bot_supervisor.simmer_ab.observe.json` |
-| `??` | `scripts/install_simmer_ab_observe_task.ps1` |
-| `??` | `scripts/run_simmer_ab_observe_supervisor.ps1` |
-| `??` | `scripts/set_no_longshot_daily_mode.ps1` |
-| `??` | `tests/test_compare_simmer_ab_daily.py` |
-| `??` | `tests/test_report_uncorrelated_portfolio.py` |
+| `A` | `tests/test_report_uncorrelated_portfolio.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |
