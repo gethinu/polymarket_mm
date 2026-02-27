@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import lib.clob_arb_runtime as runtime
-from lib.clob_arb_models import EventBasket, Leg, RuntimeState
+from lib.clob_arb_models import EventBasket, Leg, RunStats, RuntimeState
 
 
 class _Logger:
@@ -14,7 +14,8 @@ class _Logger:
         self.messages.append(str(msg))
 
 
-def test_load_save_state_roundtrip(tmp_path):
+def test_load_save_state_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "day_key_local", lambda: "2026-02-26")
     path = tmp_path / "state.json"
     state = RuntimeState(day="2026-02-26", executions_today=3, notional_today=12.5)
     runtime.save_state(path, state)
@@ -228,3 +229,234 @@ def test_log_monitor_startup_emits_basics():
     assert any("Loaded baskets: 2" in m for m in logger.messages)
     assert any("Subscribed token IDs: 4" in m for m in logger.messages)
     assert any("Metrics: disabled" in m for m in logger.messages)
+
+
+def test_maybe_rollover_daily_state_resets_and_persists(monkeypatch, tmp_path):
+    monkeypatch.setattr(runtime, "day_key_local", lambda: "2026-02-27")
+    logger = _Logger()
+    saves = []
+    state_file = tmp_path / "state.json"
+    current = RuntimeState(day="2026-02-26", executions_today=2, halted=True, halt_reason="x")
+
+    updated = runtime.maybe_rollover_daily_state(
+        state=current,
+        state_file=state_file,
+        logger=logger,
+        save_state_func=lambda path, state: saves.append((path, state)),
+    )
+
+    assert updated.day == "2026-02-27"
+    assert updated.executions_today == 0
+    assert updated.halted is False
+    assert len(saves) == 1
+    assert saves[0][0] == state_file
+    assert any("daily counters reset" in m for m in logger.messages)
+
+
+def test_maybe_emit_periodic_summary_logs_and_resets(monkeypatch):
+    monkeypatch.setattr(runtime, "now_ts", lambda: 100.0)
+    logger = _Logger()
+    stats = RunStats()
+    stats.candidates_window = 3
+    stats.best_window = object()
+    stats.window_started_at = 60.0
+    stats.last_summary_ts = 80.0
+
+    runtime.maybe_emit_periodic_summary(
+        stats=stats,
+        summary_every=10.0,
+        logger=logger,
+        format_candidate_brief_func=lambda _c: "BEST",
+    )
+
+    assert any("summary(40s): candidates=3 | BEST" in m for m in logger.messages)
+    assert stats.candidates_window == 0
+    assert stats.best_window is None
+    assert stats.window_started_at == 100.0
+    assert stats.last_summary_ts == 100.0
+
+
+def test_run_timeout_and_recv_timeout_helpers(monkeypatch):
+    monkeypatch.setattr(runtime, "now_ts", lambda: 105.0)
+
+    assert runtime.run_timeout_reached(run_started_at=100.0, run_seconds=5.0) is True
+    assert runtime.run_timeout_reached(run_started_at=100.0, run_seconds=6.0) is False
+
+    assert runtime.compute_recv_timeout_seconds(run_started_at=100.0, run_seconds=0.0) == 30.0
+    assert runtime.compute_recv_timeout_seconds(run_started_at=100.0, run_seconds=4.0) is None
+    assert runtime.compute_recv_timeout_seconds(run_started_at=100.0, run_seconds=5.1) == 0.2
+    assert runtime.compute_recv_timeout_seconds(run_started_at=100.0, run_seconds=50.0) == 30.0
+
+
+def test_should_log_idle_heartbeat_and_run_summary(monkeypatch):
+    monkeypatch.setattr(runtime, "now_ts", lambda: 105.0)
+    logger = _Logger()
+
+    assert runtime.should_log_idle_heartbeat(run_started_at=100.0, run_seconds=0.0) is True
+    assert runtime.should_log_idle_heartbeat(run_started_at=100.0, run_seconds=6.0) is False
+    assert runtime.should_log_idle_heartbeat(run_started_at=100.0, run_seconds=20.0) is True
+
+    stats = RunStats()
+    stats.candidates_total = 7
+    stats.best_all = object()
+    runtime.maybe_emit_run_summary(
+        stats=stats,
+        summary_every=10.0,
+        logger=logger,
+        format_candidate_brief_func=lambda _c: "TOP",
+    )
+    assert any("run summary: candidates=7 | TOP" in m for m in logger.messages)
+
+
+def test_resolve_monitor_paths_defaults(tmp_path):
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    args = SimpleNamespace(log_file="", state_file="", metrics_file="")
+
+    out = runtime.resolve_monitor_paths(args=args, script_dir=script_dir)
+
+    assert args.log_file.endswith("logs\\clob-arb-monitor.log") or args.log_file.endswith(
+        "logs/clob-arb-monitor.log"
+    )
+    assert args.state_file.endswith("logs\\clob_arb_state.json") or args.state_file.endswith(
+        "logs/clob_arb_state.json"
+    )
+    assert args.metrics_file.endswith("logs\\clob-arb-monitor-metrics.jsonl") or args.metrics_file.endswith(
+        "logs/clob-arb-monitor-metrics.jsonl"
+    )
+    assert out["state_file"].name == "clob_arb_state.json"
+    assert out["metrics_file"] is not None
+    assert out["metrics_file"].parent.exists()
+
+
+def test_resolve_monitor_paths_metrics_off(tmp_path):
+    script_dir = tmp_path / "scripts"
+    script_dir.mkdir(parents=True, exist_ok=True)
+    args = SimpleNamespace(log_file="x.log", state_file="x.json", metrics_file="off")
+
+    out = runtime.resolve_monitor_paths(args=args, script_dir=script_dir)
+
+    assert args.metrics_file == ""
+    assert out["metrics_file"] is None
+    assert str(out["state_file"]).endswith("x.json")
+
+
+def test_compile_gamma_market_regexes_logs_invalid():
+    logger = _Logger()
+    args = SimpleNamespace(gamma_include_regex="(", gamma_exclude_regex="[a-z")
+
+    inc, exc = runtime.compile_gamma_market_regexes(args=args, logger=logger)
+
+    assert inc is None
+    assert exc is None
+    assert any("invalid gamma_include_regex" in m for m in logger.messages)
+    assert any("invalid gamma_exclude_regex" in m for m in logger.messages)
+
+
+def test_should_skip_halted_execute_run():
+    logger = _Logger()
+    args = SimpleNamespace(execute=True)
+    state = RuntimeState(day="2026-02-27", halted=True, halt_reason="cap")
+
+    out = runtime.should_skip_halted_execute_run(args=args, state=state, logger=logger)
+
+    assert out is True
+    assert any("state halted: cap" in m for m in logger.messages)
+    assert any("run skipped while halted" in m for m in logger.messages)
+
+
+def test_prepare_monitor_runtime_returns_exit_on_empty_universe():
+    logger = _Logger()
+    notices = []
+    args = _mk_args(
+        execute=False,
+        min_edge_cents=1.0,
+        shares=1.0,
+        winner_fee_rate=0.0,
+        fixed_cost=0.0,
+        strategy="both",
+        summary_every_sec=0,
+        metrics_log_all_candidates=False,
+        observe_exec_edge_filter=False,
+        notify_observe_signals=False,
+        max_subscribe_tokens=0,
+    )
+
+    out = runtime.prepare_monitor_runtime(
+        args=args,
+        logger=logger,
+        include_re=None,
+        exclude_re=None,
+        metrics_file=None,
+        notify_func=lambda _logger, msg: notices.append(str(msg)),
+        build_universe_baskets_func=lambda **_kw: ("weather", [], "empty"),
+        apply_subscription_token_cap_func=lambda **_kw: ([], ""),
+        build_subscription_maps_func=lambda _b: ({}, {}, []),
+        initialize_execution_backend_func=lambda **_kw: {"ok": True},
+        build_clob_client_func=lambda _args: object(),
+    )
+
+    assert out["ok"] is False
+    assert out["exit_code"] == 1
+    assert notices == ["empty"]
+
+
+def test_prepare_monitor_runtime_success_rebuilds_maps_after_backend_filter():
+    logger = _Logger()
+    notices = []
+    args = _mk_args(
+        execute=True,
+        min_edge_cents=1.0,
+        shares=1.0,
+        winner_fee_rate=0.0,
+        fixed_cost=0.0,
+        strategy="yes-no",
+        summary_every_sec=0,
+        metrics_log_all_candidates=False,
+        observe_exec_edge_filter=False,
+        notify_observe_signals=False,
+        max_subscribe_tokens=0,
+    )
+    baskets = [_mk_basket("a", "sm1"), _mk_basket("b", "sm2")]
+    calls = {"maps": 0}
+
+    def _maps(_baskets):
+        calls["maps"] += 1
+        token_to_events = {}
+        event_map = {}
+        token_ids = []
+        for b in _baskets:
+            token = b.legs[0].token_id
+            token_to_events[token] = {b.key}
+            event_map[b.key] = b
+            token_ids.append(token)
+        return token_to_events, event_map, token_ids
+
+    out = runtime.prepare_monitor_runtime(
+        args=args,
+        logger=logger,
+        include_re=None,
+        exclude_re=None,
+        metrics_file=None,
+        notify_func=lambda _logger, msg: notices.append(str(msg)),
+        build_universe_baskets_func=lambda **_kw: ("weather", baskets, ""),
+        apply_subscription_token_cap_func=lambda **_kw: (baskets, ""),
+        build_subscription_maps_func=_maps,
+        initialize_execution_backend_func=lambda **_kw: {
+            "ok": True,
+            "exec_backend": "simmer",
+            "client": None,
+            "simmer_api_key": "k",
+            "baskets": [baskets[0]],
+            "baskets_changed": True,
+        },
+        build_clob_client_func=lambda _args: object(),
+    )
+
+    assert out["ok"] is True
+    assert out["exec_backend"] == "simmer"
+    assert out["simmer_api_key"] == "k"
+    assert len(out["baskets"]) == 1
+    assert out["token_ids"] == [baskets[0].legs[0].token_id]
+    assert calls["maps"] == 2
+    assert any("CLOBBOT started (LIVE)" in n for n in notices)

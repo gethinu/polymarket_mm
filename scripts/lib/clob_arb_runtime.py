@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.parse
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Pattern, Set, Tuple
 from urllib.request import Request, urlopen
 
 from lib.clob_arb_models import EventBasket, RuntimeState
@@ -356,6 +357,252 @@ def build_monitor_loop_tuning(args) -> Dict[str, Any]:
         ),
         "observe_exec_edge_filter_strategies": observe_exec_edge_filter_strategies,
     }
+
+
+def resolve_monitor_paths(args, script_dir: Path) -> Dict[str, Any]:
+    if not getattr(args, "log_file", ""):
+        args.log_file = str(script_dir.parent / "logs" / "clob-arb-monitor.log")
+    if not getattr(args, "state_file", ""):
+        args.state_file = str(script_dir.parent / "logs" / "clob_arb_state.json")
+
+    metrics_file_raw = str(getattr(args, "metrics_file", "") or "").strip()
+    if not metrics_file_raw:
+        metrics_file_raw = str(script_dir.parent / "logs" / "clob-arb-monitor-metrics.jsonl")
+
+    metrics_file: Optional[Path]
+    if metrics_file_raw.lower() in {"off", "none", "null", "disable", "disabled", "0"}:
+        metrics_file = None
+        args.metrics_file = ""
+    else:
+        metrics_file = Path(metrics_file_raw)
+        metrics_file.parent.mkdir(parents=True, exist_ok=True)
+        args.metrics_file = str(metrics_file)
+
+    return {
+        "state_file": Path(str(args.state_file)),
+        "metrics_file": metrics_file,
+    }
+
+
+def compile_gamma_market_regexes(args, logger) -> Tuple[Optional[Pattern[str]], Optional[Pattern[str]]]:
+    include_re: Optional[Pattern[str]] = None
+    exclude_re: Optional[Pattern[str]] = None
+
+    include_raw = str(getattr(args, "gamma_include_regex", "") or "")
+    if include_raw:
+        try:
+            include_re = re.compile(include_raw, re.IGNORECASE)
+        except re.error as e:
+            logger.info(f"[{iso_now()}] warning: invalid gamma_include_regex: {e} (ignoring)")
+
+    exclude_raw = str(getattr(args, "gamma_exclude_regex", "") or "")
+    if exclude_raw:
+        try:
+            exclude_re = re.compile(exclude_raw, re.IGNORECASE)
+        except re.error as e:
+            logger.info(f"[{iso_now()}] warning: invalid gamma_exclude_regex: {e} (ignoring)")
+
+    return include_re, exclude_re
+
+
+def should_skip_halted_execute_run(*, args, state: RuntimeState, logger) -> bool:
+    if not bool(getattr(args, "execute", False)):
+        return False
+    if not bool(state.halted):
+        return False
+    logger.info(f"[{iso_now()}] state halted: {state.halt_reason}")
+    logger.info(
+        f"[{iso_now()}] run skipped while halted (will auto-reset next day or clear in state file)"
+    )
+    return True
+
+
+def prepare_monitor_runtime(
+    *,
+    args,
+    logger,
+    include_re,
+    exclude_re,
+    metrics_file: Optional[Path],
+    notify_func: Callable[[Any, str], None],
+    build_universe_baskets_func: Callable[..., Tuple[str, List[EventBasket], str]],
+    apply_subscription_token_cap_func: Callable[..., Tuple[List[EventBasket], str]],
+    build_subscription_maps_func: Callable[[List[EventBasket]], Tuple[Dict[str, Set[str]], Dict[str, EventBasket], List[str]]],
+    initialize_execution_backend_func: Callable[..., Dict[str, Any]],
+    build_clob_client_func: Callable[[Any], Any],
+) -> Dict[str, Any]:
+    universe, baskets, empty_notify = build_universe_baskets_func(
+        args=args,
+        logger=logger,
+        include_re=include_re,
+        exclude_re=exclude_re,
+    )
+    if not baskets:
+        if empty_notify:
+            notify_func(logger, empty_notify)
+        return {"ok": False, "exit_code": 1}
+
+    baskets, selection_empty_notify = apply_subscription_token_cap_func(
+        baskets=baskets,
+        universe=universe,
+        args=args,
+        logger=logger,
+    )
+    if not baskets:
+        if selection_empty_notify:
+            notify_func(logger, selection_empty_notify)
+        return {"ok": False, "exit_code": 1}
+
+    max_tokens = int(getattr(args, "max_subscribe_tokens", 0) or 0)
+    token_to_events, event_map, token_ids = build_subscription_maps_func(baskets)
+
+    log_monitor_startup(
+        logger=logger,
+        args=args,
+        universe=universe,
+        baskets_count=len(baskets),
+        token_ids_count=len(token_ids),
+        max_tokens=max_tokens,
+        metrics_file=metrics_file,
+    )
+    notify_func(
+        logger,
+        (
+            f"CLOBBOT started ({'LIVE' if args.execute else 'observe'}) | "
+            f"universe={universe} min_edge={args.min_edge_cents:.2f}c strategy={args.strategy}"
+        ),
+    )
+
+    exec_init = initialize_execution_backend_func(
+        args=args,
+        logger=logger,
+        baskets=baskets,
+        build_clob_client_func=build_clob_client_func,
+    )
+    if not bool(exec_init.get("ok", False)):
+        return {"ok": False, "exit_code": int(exec_init.get("exit_code", 1) or 0)}
+
+    exec_backend = str(exec_init.get("exec_backend", "none") or "none")
+    client = exec_init.get("client")
+    simmer_api_key = str(exec_init.get("simmer_api_key", "") or "")
+    baskets = exec_init.get("baskets", baskets)
+    if bool(exec_init.get("baskets_changed", False)):
+        token_to_events, event_map, token_ids = build_subscription_maps_func(baskets)
+
+    logger.info(f"Runtime baskets: {len(baskets)}")
+    logger.info(f"Runtime subscribed token IDs: {len(token_ids)}")
+
+    return {
+        "ok": True,
+        "exit_code": 0,
+        "universe": universe,
+        "baskets": baskets,
+        "token_to_events": token_to_events,
+        "event_map": event_map,
+        "token_ids": token_ids,
+        "exec_backend": exec_backend,
+        "client": client,
+        "simmer_api_key": simmer_api_key,
+    }
+
+
+def maybe_rollover_daily_state(
+    *,
+    state: RuntimeState,
+    state_file: Path,
+    logger,
+    save_state_func: Callable[[Path, RuntimeState], None],
+) -> RuntimeState:
+    today = day_key_local()
+    if state.day == today:
+        return state
+
+    next_state = RuntimeState(day=today)
+    save_state_func(state_file, next_state)
+    logger.info(f"[{iso_now()}] state: daily counters reset")
+    return next_state
+
+
+def maybe_emit_periodic_summary(
+    *,
+    stats,
+    summary_every: float,
+    logger,
+    format_candidate_brief_func: Callable[[Any], str],
+) -> None:
+    if summary_every <= 0:
+        return
+
+    now = now_ts()
+    if (now - stats.last_summary_ts) < summary_every:
+        return
+
+    window_sec = max(1, int(now - stats.window_started_at))
+    if stats.best_window:
+        logger.info(
+            f"[{iso_now()}] summary({window_sec}s): "
+            f"candidates={stats.candidates_window} | {format_candidate_brief_func(stats.best_window)}"
+        )
+    else:
+        logger.info(f"[{iso_now()}] summary({window_sec}s): candidates={stats.candidates_window} | none")
+
+    stats.candidates_window = 0
+    stats.best_window = None
+    stats.window_started_at = now
+    stats.last_summary_ts = now
+
+
+def run_timeout_reached(*, run_started_at: float, run_seconds: float) -> bool:
+    if not run_seconds:
+        return False
+    return (now_ts() - run_started_at) >= run_seconds
+
+
+def compute_recv_timeout_seconds(
+    *,
+    run_started_at: float,
+    run_seconds: float,
+    default_timeout_sec: float = 30.0,
+) -> Optional[float]:
+    timeout = float(default_timeout_sec)
+    if not run_seconds:
+        return timeout
+
+    remaining = run_seconds - (now_ts() - run_started_at)
+    if remaining <= 0:
+        return None
+    return min(timeout, max(0.2, float(remaining)))
+
+
+def should_log_idle_heartbeat(
+    *,
+    run_started_at: float,
+    run_seconds: float,
+    suppress_tail_window_sec: float = 2.0,
+) -> bool:
+    if not run_seconds:
+        return True
+    remaining = run_seconds - (now_ts() - run_started_at)
+    return remaining > suppress_tail_window_sec
+
+
+def maybe_emit_run_summary(
+    *,
+    stats,
+    summary_every: float,
+    logger,
+    format_candidate_brief_func: Callable[[Any], str],
+) -> None:
+    if summary_every <= 0:
+        return
+
+    if stats.best_all:
+        logger.info(
+            f"[{iso_now()}] run summary: candidates={stats.candidates_total} | "
+            f"{format_candidate_brief_func(stats.best_all)}"
+        )
+    else:
+        logger.info(f"[{iso_now()}] run summary: candidates={stats.candidates_total} | none")
 
 
 def log_monitor_startup(

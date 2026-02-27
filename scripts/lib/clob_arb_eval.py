@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from lib.clob_arb_models import Candidate, EventBasket, Leg, LocalBook
 from lib.runtime_common import iso_now, now_ts
@@ -421,6 +421,25 @@ def extract_book_items(payload) -> List[dict]:
     return out
 
 
+def collect_impacted_events_from_payload(
+    payload,
+    books: Dict[str, LocalBook],
+    token_to_events: Dict[str, Set[str]],
+) -> Set[str]:
+    changed_tokens: Set[str] = set()
+    for item in extract_book_items(payload):
+        token_id = update_book_from_snapshot(item, books)
+        if token_id:
+            changed_tokens.add(token_id)
+    if not changed_tokens:
+        return set()
+
+    impacted_events: Set[str] = set()
+    for token in changed_tokens:
+        impacted_events.update(token_to_events.get(token, set()))
+    return impacted_events
+
+
 def compute_candidate(
     basket: EventBasket,
     books: Dict[str, LocalBook],
@@ -569,3 +588,112 @@ def apply_observe_exec_edge_and_log_metrics(
             append_jsonl_func(metrics_file, metrics_row)
 
     return metrics_row, observe_exec_filtered
+
+
+async def process_impacted_event(
+    *,
+    basket: EventBasket,
+    books: Dict[str, LocalBook],
+    args,
+    stats,
+    min_eval_interval: float,
+    metrics_file,
+    observe_exec_edge_filter: bool,
+    observe_exec_edge_min_usd: float,
+    observe_exec_edge_strike_limit: int,
+    observe_exec_edge_cooldown_sec: float,
+    observe_exec_edge_filter_strategies: Set[str],
+    observe_notify_min_interval: float,
+    last_observe_notify_ts: float,
+    logger,
+    append_jsonl_func: Callable[[object, dict], None],
+    notify_func: Callable[[object, str], None],
+    live_execution_ctx: Optional[Dict[str, Any]] = None,
+) -> float:
+    now_eval = now_ts()
+    if min_eval_interval > 0 and (now_eval - basket.last_eval_ts) < min_eval_interval:
+        return last_observe_notify_ts
+
+    candidate = compute_candidate(
+        basket=basket,
+        books=books,
+        shares_per_leg=args.shares,
+        winner_fee_rate=args.winner_fee_rate,
+        fixed_cost=args.fixed_cost,
+    )
+    if not candidate:
+        return last_observe_notify_ts
+    basket.last_eval_ts = now_eval
+
+    stats.candidates_total += 1
+    stats.candidates_window += 1
+    if (stats.best_all is None) or (candidate.net_edge > stats.best_all.net_edge):
+        stats.best_all = candidate
+    if (stats.best_window is None) or (candidate.net_edge > stats.best_window.net_edge):
+        stats.best_window = candidate
+
+    _metrics_row, observe_exec_filtered = apply_observe_exec_edge_and_log_metrics(
+        candidate=candidate,
+        basket=basket,
+        books=books,
+        args=args,
+        metrics_file=metrics_file,
+        observe_exec_edge_filter=observe_exec_edge_filter,
+        observe_exec_edge_min_usd=observe_exec_edge_min_usd,
+        observe_exec_edge_strike_limit=observe_exec_edge_strike_limit,
+        observe_exec_edge_cooldown_sec=observe_exec_edge_cooldown_sec,
+        observe_exec_edge_filter_strategies=observe_exec_edge_filter_strategies,
+        append_jsonl_func=append_jsonl_func,
+        logger=logger,
+    )
+
+    if candidate.net_edge < (args.min_edge_cents / 100.0):
+        return last_observe_notify_ts
+    if observe_exec_filtered:
+        return last_observe_notify_ts
+
+    sig = make_signature(candidate)
+    now_alert = now_ts()
+    if sig == basket.last_signature and (now_alert - basket.last_alert_ts) < args.alert_cooldown_sec:
+        return last_observe_notify_ts
+
+    logger.info("")
+    logger.info(format_candidate(candidate))
+    basket.last_signature = sig
+    basket.last_alert_ts = now_alert
+
+    if not args.execute and bool(getattr(args, "notify_observe_signals", False)):
+        if observe_notify_min_interval <= 0 or (now_alert - last_observe_notify_ts) >= observe_notify_min_interval:
+            notify_func(
+                logger,
+                (
+                    f"OBSERVE SIGNAL {candidate.title} | "
+                    f"edge {candidate.edge_pct:.2%} (${candidate.net_edge:.4f}) | "
+                    f"cost ${candidate.basket_cost:.4f} | legs={len(candidate.leg_costs)}"
+                ),
+            )
+            last_observe_notify_ts = now_alert
+
+    if args.execute and isinstance(live_execution_ctx, dict):
+        execute_func = live_execution_ctx.get("execute_func")
+        if callable(execute_func):
+            await execute_func(
+                candidate=candidate,
+                basket=basket,
+                state=live_execution_ctx.get("state"),
+                args=args,
+                logger=logger,
+                books=books,
+                exec_backend=live_execution_ctx.get("exec_backend", "none"),
+                client=live_execution_ctx.get("client"),
+                simmer_api_key=live_execution_ctx.get("simmer_api_key", ""),
+                now_ts_value=now_alert,
+                notify_func=notify_func,
+                save_state_func=live_execution_ctx.get("save_state_func"),
+                state_file=live_execution_ctx.get("state_file"),
+                sdk_request_func=live_execution_ctx.get("sdk_request_func"),
+                fetch_simmer_positions_func=live_execution_ctx.get("fetch_simmer_positions_func"),
+                estimate_exec_cost_func=live_execution_ctx.get("estimate_exec_cost_func"),
+            )
+
+    return last_observe_notify_ts
