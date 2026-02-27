@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `31`
-- worktree_changes: `5`
+- commits_scanned: `33`
+- worktree_changes: `20`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,9 +20,9 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 17 | `2026-02-27 09:07` | `abe22853` | fix: enforce realized monthly source in automation health check |
+| `docs_llm` | 18 | `2026-02-27 09:09` | `a19a562f` | docs: refresh implementation ledger after ops commits |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
-| `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
+| `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 12 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
 | `security_or_ops` | 9 | `2026-02-27 09:07` | `abe22853` | fix: enforce realized monthly source in automation health check |
 | `simmer_clob` | 20 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
@@ -33,6 +33,8 @@
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-27 09:09` | `a19a562f` | `docs_llm` | docs: refresh implementation ledger after ops commits | `docs/llm/IMPLEMENTATION_LEDGER.md` |
+| `2026-02-27 09:08` | `05342527` | `misc` | docs: label uncorrelated memo scope for explicit cohorts | `docs/memo_uncorrelated_portfolio_20260227.txt`, `docs/memo_uncorrelated_portfolio_latest.txt`, `scripts/report_uncorrelated_portfolio.py` |
 | `2026-02-27 09:07` | `abe22853` | `docs_llm,security_or_ops` | fix: enforce realized monthly source in automation health check | `docs/llm/INTERFACES.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
 | `2026-02-27 09:07` | `5b977b58` | `docs_llm,no_longshot,security_or_ops,simmer_clob,strategy_register,task_automation,weather_pipeline` | feat: harden daily ops KPI reporting and task controls | `configs/bot_supervisor.observe.json`, `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, +36 |
 | `2026-02-27 09:06` | `60d600cc` | `simmer_clob` | refactor: extract clob arb monitor loop helpers | `scripts/lib/clob_arb_eval.py`, `scripts/lib/clob_arb_runtime.py`, `scripts/polymarket_clob_arb_realtime.py`, `tests/test_clob_arb_eval.py`, +1 |
@@ -68,11 +70,26 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
+| `M` | `configs/bot_supervisor.observe.json` |
+| `M` | `docs/llm/ARCHITECTURE.md` |
+| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `docs/memo_uncorrelated_portfolio_20260227.txt` |
-| `M` | `docs/memo_uncorrelated_portfolio_latest.txt` |
+| `M` | `docs/llm/INTERFACES.md` |
+| `M` | `docs/llm/STATE.md` |
+| `M` | `scripts/compare_simmer_ab_daily.py` |
+| `M` | `scripts/install_no_longshot_daily_task.ps1` |
+| `M` | `scripts/no_longshot_daily_daemon.py` |
+| `M` | `scripts/report_automation_health.py` |
 | `M` | `scripts/report_uncorrelated_portfolio.py` |
+| `M` | `scripts/run_no_longshot_daily_report.ps1` |
+| `M` | `tests/test_no_longshot_daily_daemon.py` |
+| `M` | `tests/test_report_automation_health.py` |
 | `??` | `configs/bot_supervisor.simmer_ab.observe.json` |
+| `??` | `scripts/install_simmer_ab_observe_task.ps1` |
+| `??` | `scripts/run_simmer_ab_observe_supervisor.ps1` |
+| `??` | `scripts/set_no_longshot_daily_mode.ps1` |
+| `??` | `tests/test_compare_simmer_ab_daily.py` |
+| `??` | `tests/test_report_uncorrelated_portfolio.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

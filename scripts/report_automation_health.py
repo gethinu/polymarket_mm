@@ -14,7 +14,9 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
+import io
 import json
 import os
 import re
@@ -46,6 +48,7 @@ DEFAULT_ARTIFACT_SPECS = [
     "?logs/simmer-ab-daily-report.log:30",
     "logs/morning_status_daily_run.log:30",
     "?logs/simmer-ab-decision-latest.json:30",
+    "?logs/simmer_ab_supervisor_state.json:6",
 ]
 
 
@@ -270,6 +273,43 @@ def _looks_like_no_run_time(last_run_text: str) -> bool:
         except Exception:
             pass
     return False
+
+
+def _pid_running(pid: int) -> bool:
+    if int(pid or 0) <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            cp = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            out = (cp.stdout or "").strip()
+            if (not out) or ("No tasks are running" in out):
+                return False
+            reader = csv.reader(io.StringIO(out))
+            for row in reader:
+                if len(row) < 2:
+                    continue
+                try:
+                    if int(str(row[1]).strip()) == int(pid):
+                        return True
+                except Exception:
+                    continue
+            return False
+        except Exception:
+            return False
+
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except OSError:
+        return False
+    except Exception:
+        return False
 
 
 def _is_fresh_artifact(artifact_rows: List[dict], suffix: str) -> bool:
@@ -539,6 +579,68 @@ def _apply_morning_kpi_marker_check(artifact_rows: List[dict]) -> None:
         return
 
 
+def _apply_simmer_ab_supervisor_state_check(artifact_rows: List[dict]) -> None:
+    target_suffix = r"logs\simmer_ab_supervisor_state.json"
+
+    def invalidate(row: dict, reason: str) -> None:
+        # Optional artifact means "missing is tolerated"; if present+fresh, content must be valid.
+        row["status"] = "INVALID_CONTENT"
+        row["status_note"] = reason
+
+    for row in artifact_rows:
+        if not isinstance(row, dict):
+            continue
+        path_text = str(row.get("path") or "").replace("/", "\\").lower()
+        if not path_text.endswith(target_suffix):
+            continue
+        status = str(row.get("status") or "").upper()
+        if status != "FRESH":
+            return
+
+        p = Path(str(row.get("path") or ""))
+        try:
+            payload = json.loads(p.read_text(encoding="utf-8"))
+        except Exception as exc:
+            invalidate(row, f"json_parse_failed:{type(exc).__name__}")
+            return
+        if not isinstance(payload, dict):
+            invalidate(row, "invalid_json_root:not_object")
+            return
+
+        supervisor_running = bool(payload.get("supervisor_running"))
+        supervisor_pid = int(payload.get("supervisor_pid") or 0)
+        mode = str(payload.get("mode") or "").strip().lower()
+        if mode != "run":
+            invalidate(row, f"invalid_mode:{mode or '-'}")
+            return
+        if not supervisor_running:
+            invalidate(row, "supervisor_running=false")
+            return
+        if supervisor_pid <= 0 or not _pid_running(supervisor_pid):
+            invalidate(row, f"supervisor_pid_not_running:{supervisor_pid}")
+            return
+
+        jobs = payload.get("jobs")
+        if not isinstance(jobs, list):
+            invalidate(row, "invalid_jobs:not_list")
+            return
+        enabled_jobs = [j for j in jobs if isinstance(j, dict) and bool(j.get("enabled"))]
+        if not enabled_jobs:
+            invalidate(row, "enabled_jobs=0")
+            return
+        for job in enabled_jobs:
+            name = str(job.get("name") or "-")
+            running = bool(job.get("running"))
+            pid = int(job.get("pid") or 0)
+            if not running:
+                invalidate(row, f"job_not_running:{name}")
+                return
+            if pid <= 0 or not _pid_running(pid):
+                invalidate(row, f"job_pid_not_running:{name}:{pid}")
+                return
+        return
+
+
 def _render_txt(payload: dict) -> str:
     lines: List[str] = []
     lines.append(f"Automation health @ {payload.get('generated_utc','')}")
@@ -636,6 +738,7 @@ def main() -> int:
     art_rows = _artifact_rows(parsed_specs)
     _apply_strategy_register_kpi_key_check(art_rows)
     _apply_morning_kpi_marker_check(art_rows)
+    _apply_simmer_ab_supervisor_state_check(art_rows)
     _apply_soft_fail_overrides(task_rows, art_rows)
     _apply_supervisor_overrides(task_rows)
     _apply_duplicate_run_guard(task_rows)

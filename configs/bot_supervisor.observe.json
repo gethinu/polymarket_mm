@@ -86,6 +86,7 @@
                                      "5",
                                      "--runner-fail-on-gap-scan-error",
                                      "--runner-fail-on-gap-error-rate-high",
+                                     "--runner-strict-realized-band-only",
                                      "--realized-refresh-sec",
                                      "900",
                                      "--realized-entry-top-n",

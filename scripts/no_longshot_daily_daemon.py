@@ -305,6 +305,8 @@ def run_daily_once(args, logger: Logger) -> Tuple[int, str]:
         cmd.append("-FailOnGapScanError")
     if args.runner_fail_on_gap_error_rate_high:
         cmd.append("-FailOnGapErrorRateHigh")
+    if args.runner_strict_realized_band_only:
+        cmd.append("-StrictRealizedBandOnly")
 
     logger.info(
         f"[{iso_now()}] no_longshot run start "
@@ -441,7 +443,7 @@ def parse_args():
     p.add_argument(
         "--runner-realized-fast-yes-min",
         type=float,
-        default=0.01,
+        default=0.16,
         help="Pass -RealizedFastYesMin to run_no_longshot_daily_report.ps1.",
     )
     p.add_argument(
@@ -482,6 +484,11 @@ def parse_args():
         "--runner-fail-on-gap-error-rate-high",
         action="store_true",
         help="Pass -FailOnGapErrorRateHigh to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-strict-realized-band-only",
+        action="store_true",
+        help="Pass -StrictRealizedBandOnly to run_no_longshot_daily_report.ps1.",
     )
     p.add_argument("--python-exe", default="python", help="Python executable for realized-refresh runner")
     p.add_argument(
@@ -635,7 +642,8 @@ def main() -> int:
         f"runner_gap_tag={str(args.runner_gap_outcome_tag).strip()} "
         f"runner_gap_alert_7d={float(args.runner_gap_error_alert_rate_7d):.4f}/{int(args.runner_gap_error_alert_min_runs_7d)} "
         f"runner_fail_on_gap_scan={bool(args.runner_fail_on_gap_scan_error)} "
-        f"runner_fail_on_gap_rate={bool(args.runner_fail_on_gap_error_rate_high)}"
+        f"runner_fail_on_gap_rate={bool(args.runner_fail_on_gap_error_rate_high)} "
+        f"runner_strict_band_only={bool(args.runner_strict_realized_band_only)}"
     )
     logger.info(f"[{iso_now()}] log={args.log_file}")
     logger.info(f"[{iso_now()}] state={args.state_file}")

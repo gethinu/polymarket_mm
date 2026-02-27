@@ -8,7 +8,9 @@ This repo intentionally keeps runtime outputs under `logs/` (gitignored).
 - Scheduled Task actions run hidden with `-NoBackground` so task instance state stays observable and `MultipleInstances=IgnoreNew` can prevent overlap.
 - Background launch mode does not introduce extra long-lived state files by itself.
 - `scripts/disable_repo_tasks.ps1` is an operational stop helper and does not create new long-lived state files.
+- `scripts/set_no_longshot_daily_mode.ps1` is an operational mode switch helper and does not create new long-lived state files.
 - Existing task outputs continue to use documented `logs/` files (for example `logs/clob-arb-monitor.log`, `logs/no_longshot_daily_run.log`, `logs/simmer-ab-daily-report.log`).
+- `run_no_longshot_daily_report.ps1` uses `logs/no_longshot_daily_run.lock` for single-instance enforcement (stale lock auto-cleanup).
 
 ## Files
 
@@ -107,6 +109,18 @@ Simmer ping-pong:
 - Optional canary supervisor runtime files:
   - `logs/simmer_canary_supervisor.log`
   - `logs/simmer_canary_supervisor_state.json`
+- Optional A/B collector supervisor config: `configs/bot_supervisor.simmer_ab.observe.json`
+- Optional A/B collector supervisor runtime files:
+  - `logs/simmer_ab_supervisor.log`
+  - `logs/simmer_ab_supervisor_state.json`
+  - `logs/simmer_ab_observe_supervisor.lock`
+- Optional A/B collector worker runtime files:
+  - `logs/simmer-ab-baseline.log`
+  - `logs/simmer-ab-candidate.log`
+  - `logs/simmer_ab_baseline_state.json`
+  - `logs/simmer_ab_candidate_state.json`
+  - `logs/simmer-ab-baseline-metrics.jsonl`
+  - `logs/simmer-ab-candidate-metrics.jsonl`
 - A/B helper outputs:
   - `logs/simmer-ab-daily-report.log`
   - `logs/simmer-ab-daily-compare-latest.txt`
@@ -285,6 +299,7 @@ Polymarket strategy uncorrelated-portfolio reporter (observe-only):
 - Output latest memo (docs artifact): `docs/memo_uncorrelated_portfolio_latest.txt`
 - 相関は strategy-level realized daily return を優先し、未整備戦略は observe proxy 日次系列をフォールバック利用する。
 - 戦略ごとの不足メトリクス（missing daily return / overlap不足 / proxy依存）を JSON/memo に明記する。
+- JSON `meta.strategy_scope_mode` は分析cohortの決定方法（`explicit_strategy_ids` / `adopted_from_strategy_register`）を示す。
 
 Polymarket strategy gate stage alarm (observe-only):
 - Alarm log: `logs/strategy_gate_alarm.log`

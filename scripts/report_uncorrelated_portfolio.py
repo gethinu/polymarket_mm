@@ -831,10 +831,12 @@ def main() -> int:
     if raw_ids:
         strategy_ids = [s.strip() for s in raw_ids.split(",") if s.strip()]
         scope_text = "explicit strategy_ids (observe-only diagnostic cohort)"
+        scope_mode = "explicit_strategy_ids"
     else:
         active = _active_strategy_ids(strategy_register)
         strategy_ids = active if active else list(DEFAULT_STRATEGY_IDS)
         scope_text = "ADOPTED observe-only strategies (from strategy register)"
+        scope_mode = "adopted_from_strategy_register"
 
     strategy_records, corr_series, missing_metrics = _build_strategy_records(
         strategy_ids,
@@ -856,6 +858,8 @@ def main() -> int:
             "observe_only": True,
             "source": "scripts/report_uncorrelated_portfolio.py",
             "strategy_register_source": str(strategy_register_path),
+            "strategy_scope_mode": scope_mode,
+            "strategy_scope_text": scope_text,
             "corr_threshold_abs": float(args.corr_threshold_abs),
             "min_overlap_days": max(2, int(args.min_overlap_days)),
             "min_realized_days_for_correlation": max(2, int(args.min_realized_days_for_correlation)),

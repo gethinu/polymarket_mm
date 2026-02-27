@@ -115,6 +115,9 @@ Polymarket CLOB:
 - `scripts/set_weather_daily_mode.ps1`
   - Observe-only mode switcher for weather daily execution path (`Task Scheduler` vs `weather_daily_daemon`)
   - Applies duplicate-run guard by toggling weather scheduled tasks alongside supervisor daemon enablement
+- `scripts/set_no_longshot_daily_mode.ps1`
+  - Observe-only mode switcher for no-longshot daily execution path (`Task Scheduler` vs `no_longshot_daily_daemon`)
+  - Applies duplicate-run guard by toggling `NoLongshotDailyReport` task alongside supervisor daemon enablement
 - `scripts/run_weather_24h_alarm_action.ps1`
   - One-shot alarm action (append log + marker + bounded notification)
 - `scripts/run_weather_24h_postcheck.ps1`
@@ -138,6 +141,12 @@ Simmer (virtual funds):
 - `scripts/optimize_simmer_pingpong_params.py`
   - Observe-metrics replay optimizer for large parameter sweeps
   - Supports variable risk scaling (`inverse_vol`) and walk-forward robustness ranking
+- `scripts/run_simmer_ab_observe_supervisor.ps1`
+  - Background-by-default runner for baseline/candidate A/B collectors via `bot_supervisor`
+  - Uses dedicated profile `configs/bot_supervisor.simmer_ab.observe.json`
+- `scripts/install_simmer_ab_observe_task.ps1`
+  - Installer for recurring A/B collector watchdog launch (Scheduled Task / fallback reuse)
+  - Supports fallback to startup-script handoff when task registration is blocked
 
 ## Notifications
 

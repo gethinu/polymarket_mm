@@ -119,3 +119,9 @@ No-longshot must use one mode only:
 - Daemon: `scripts/no_longshot_daily_daemon.py`
 
 If daemon is active, keep scheduled task disabled.
+
+Preferred mode switch command (enforces task/daemon/off consistently):
+
+- Task mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode task`
+- Daemon mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode daemon`
+- Off mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode off`

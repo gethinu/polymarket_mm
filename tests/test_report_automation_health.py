@@ -22,6 +22,10 @@ def test_parse_artifact_specs_supports_optional_prefix():
     assert rows[1] == ("logs/strategy_register_latest.json", 30.0, False)
 
 
+def test_default_artifacts_include_optional_simmer_ab_supervisor_state():
+    assert "?logs/simmer_ab_supervisor_state.json:6" in mod.DEFAULT_ARTIFACT_SPECS
+
+
 def test_parse_task_specs_supports_optional_prefix_and_dedupes():
     rows = mod._parse_task_specs(
         [
@@ -267,3 +271,89 @@ def test_apply_strategy_register_kpi_key_check_marks_invalid_when_source_is_not_
 
     assert rows[0]["status"] == "INVALID_CONTENT"
     assert "invalid_monthly_source=" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_simmer_ab_supervisor_state_check_keeps_fresh_when_alive(tmp_path, monkeypatch):
+    p = tmp_path / "logs" / "simmer_ab_supervisor_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """{
+  "mode": "run",
+  "supervisor_running": true,
+  "supervisor_pid": 100,
+  "jobs": [
+    {"name":"simmer_ab_baseline","enabled":true,"running":true,"pid":101},
+    {"name":"simmer_ab_candidate","enabled":true,"running":true,"pid":102}
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": False,
+        }
+    ]
+    monkeypatch.setattr(mod, "_pid_running", lambda pid: int(pid) in {100, 101, 102})
+
+    mod._apply_simmer_ab_supervisor_state_check(rows)
+
+    assert rows[0]["status"] == "FRESH"
+
+
+def test_apply_simmer_ab_supervisor_state_check_marks_invalid_when_supervisor_pid_dead(tmp_path, monkeypatch):
+    p = tmp_path / "logs" / "simmer_ab_supervisor_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """{
+  "mode": "run",
+  "supervisor_running": true,
+  "supervisor_pid": 999,
+  "jobs": [{"name":"simmer_ab_baseline","enabled":true,"running":true,"pid":101}]
+}
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": False,
+        }
+    ]
+    monkeypatch.setattr(mod, "_pid_running", lambda _pid: False)
+
+    mod._apply_simmer_ab_supervisor_state_check(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "supervisor_pid_not_running:" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_simmer_ab_supervisor_state_check_marks_invalid_when_enabled_job_not_running(tmp_path, monkeypatch):
+    p = tmp_path / "logs" / "simmer_ab_supervisor_state.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """{
+  "mode": "run",
+  "supervisor_running": true,
+  "supervisor_pid": 100,
+  "jobs": [{"name":"simmer_ab_baseline","enabled":true,"running":false,"pid":101}]
+}
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": False,
+        }
+    ]
+    monkeypatch.setattr(mod, "_pid_running", lambda _pid: True)
+
+    mod._apply_simmer_ab_supervisor_state_check(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "job_not_running:simmer_ab_baseline" in str(rows[0].get("status_note") or "")

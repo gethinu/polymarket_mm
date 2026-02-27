@@ -22,6 +22,7 @@ param(
   [double]$RealizedFastYesMin = 0.16,
   [double]$RealizedFastYesMax = 0.20,
   [double]$RealizedFastMaxHoursToEnd = 72.0,
+  [switch]$StrictRealizedBandOnly,
   [double]$ScreenMinLiquidity = 50000,
   [double]$ScreenMinVolume24h = 1000,
   [int]$GapMaxPages = 6,
@@ -124,6 +125,9 @@ $realizedDailyJsonl = Join-Path $logDir "no_longshot_realized_daily.jsonl"
 $realizedLatestJson = Join-Path $logDir "no_longshot_realized_latest.json"
 $realizedMonthlyTxt = Join-Path $logDir "no_longshot_monthly_return_latest.txt"
 $realizedEntryTopN = 0
+$runLock = Join-Path $logDir "no_longshot_daily_run.lock"
+$script:RunLockPath = ""
+$script:RunLockHeld = $false
 
 if (-not (Test-Path $logDir)) {
   New-Item -Path $logDir -ItemType Directory -Force | Out-Null
@@ -259,6 +263,106 @@ function Remove-FileSafe([string]$Path) {
     }
   } catch {
   }
+}
+
+function Get-LockOwnerPid([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path $Path)) {
+    return 0
+  }
+  $raw = ""
+  try {
+    $raw = [string](Get-Content -Path $Path -Raw -ErrorAction Stop)
+  } catch {
+    return 0
+  }
+  if ([string]::IsNullOrWhiteSpace($raw)) {
+    return 0
+  }
+  try {
+    $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+    if ($null -ne $obj -and $obj.PSObject.Properties["pid"] -and $null -ne $obj.pid) {
+      return [int]$obj.pid
+    }
+  } catch {
+  }
+  try {
+    return [int]$raw.Trim()
+  } catch {
+    return 0
+  }
+}
+
+function Test-PidRunning([int]$ProcessId) {
+  if ($ProcessId -le 0) {
+    return $false
+  }
+  try {
+    $p = Get-Process -Id $ProcessId -ErrorAction Stop
+    return $null -ne $p
+  } catch {
+    return $false
+  }
+}
+
+function Release-RunLock {
+  if (-not $script:RunLockHeld) {
+    return
+  }
+  try {
+    $ownerPid = Get-LockOwnerPid -Path $script:RunLockPath
+    if ($ownerPid -gt 0 -and $ownerPid -ne $PID) {
+      return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:RunLockPath) -and (Test-Path $script:RunLockPath)) {
+      Remove-Item -Path $script:RunLockPath -Force -ErrorAction SilentlyContinue
+    }
+  } catch {
+  }
+  $script:RunLockHeld = $false
+}
+
+function Acquire-RunLock([string]$Path) {
+  if ([string]::IsNullOrWhiteSpace($Path)) {
+    return $false
+  }
+  for ($attempt = 0; $attempt -lt 2; $attempt++) {
+    try {
+      $fs = [System.IO.File]::Open(
+        $Path,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None
+      )
+      try {
+        $payload = [ordered]@{
+          pid         = [int]$PID
+          acquired_at = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+        } | ConvertTo-Json -Depth 4
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($payload + "`n")
+        $fs.Write($bytes, 0, $bytes.Length)
+      } finally {
+        $fs.Dispose()
+      }
+      $script:RunLockPath = $Path
+      $script:RunLockHeld = $true
+      return $true
+    } catch [System.IO.IOException] {
+      $ownerPid = Get-LockOwnerPid -Path $Path
+      if ($ownerPid -gt 0 -and $ownerPid -ne $PID -and (Test-PidRunning -ProcessId $ownerPid)) {
+        return $false
+      }
+      try {
+        if (Test-Path $Path) {
+          Remove-Item -Path $Path -Force -ErrorAction Stop
+        }
+      } catch {
+        return $false
+      }
+    } catch {
+      return $false
+    }
+  }
+  return $false
 }
 
 function Read-GapCounts([string]$SummaryPath) {
@@ -505,7 +609,17 @@ trap {
     Log ("fatal: {0}" -f $_.Exception.Message)
   } catch {
   }
+  try {
+    Release-RunLock
+  } catch {
+  }
   exit 1
+}
+
+if (-not (Acquire-RunLock -Path $runLock)) {
+  $ts = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
+  Write-Host ("[{0}] skip: another no-longshot daily run is active lock={1}" -f $ts, $runLock)
+  exit 4
 }
 
 Log "bootstrap init"
@@ -520,7 +634,7 @@ if (-not $discordRequested) {
   }
 }
 
-Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_scan=$($FailOnGapScanError.IsPresent) fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested"
+Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd strict_realized_band_only=$($StrictRealizedBandOnly.IsPresent) gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_scan=$($FailOnGapScanError.IsPresent) fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested"
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
@@ -918,17 +1032,9 @@ $realizedObservedDaysBand = 0
 $realizedOpenPositionsBand = 0
 $realizedResolvedPositionsBand = 0
 $realizedRollingTradesBand = 0
-$realizedScreenCsv = $screenCsv
-$realizedEntrySource = "primary_screen"
+$realizedScreenCsv = $fastScreenCsv
+$realizedEntrySource = "fast_72h_lowyes"
 $realizedEntryCandidates = 0
-if (Test-Path $screenCsv) {
-  try {
-    $baseRows = Import-Csv -Path $screenCsv
-    $realizedEntryCandidates = [int]$baseRows.Count
-  } catch {
-    $realizedEntryCandidates = 0
-  }
-}
 if ($fastScreenOk -and (Test-Path $fastScreenCsv)) {
   try {
     $fastRows = Import-Csv -Path $fastScreenCsv
@@ -936,11 +1042,58 @@ if ($fastScreenOk -and (Test-Path $fastScreenCsv)) {
       $realizedScreenCsv = $fastScreenCsv
       $realizedEntrySource = "fast_72h_lowyes"
       $realizedEntryCandidates = [int]$fastRows.Count
+    } elseif ($StrictRealizedBandOnly.IsPresent) {
+      $realizedEntrySource = "strict_band_only_empty_fast_screen"
+      $realizedEntryCandidates = 0
+      Log "strict realized band-only: fast screen has no rows; keeping fast-only source with zero entry candidates"
+    } else {
+      $realizedScreenCsv = $screenCsv
+      $realizedEntrySource = "primary_screen"
+      if (Test-Path $screenCsv) {
+        try {
+          $baseRows = Import-Csv -Path $screenCsv
+          $realizedEntryCandidates = [int]$baseRows.Count
+        } catch {
+          $realizedEntryCandidates = 0
+        }
+      }
     }
   } catch {
+    if ($StrictRealizedBandOnly.IsPresent) {
+      $realizedEntrySource = "strict_band_only_fast_screen_parse_failed"
+      $realizedEntryCandidates = 0
+      Log "strict realized band-only: fast screen parse failed; keeping fast-only source with zero entry candidates"
+    } else {
+      $realizedScreenCsv = $screenCsv
+      $realizedEntrySource = "primary_screen"
+      if (Test-Path $screenCsv) {
+        try {
+          $baseRows = Import-Csv -Path $screenCsv
+          $realizedEntryCandidates = [int]$baseRows.Count
+        } catch {
+          $realizedEntryCandidates = 0
+        }
+      }
+    }
   }
 } elseif (-not $fastScreenOk) {
-  Log "fast screen unavailable -> fallback to primary screen"
+  if ($StrictRealizedBandOnly.IsPresent) {
+    $realizedEntrySource = "strict_band_only_fast_screen_unavailable"
+    $realizedEntryCandidates = 0
+    Log "strict realized band-only: fast screen unavailable; no fallback to primary screen"
+  } else {
+    $realizedScreenCsv = $screenCsv
+    $realizedEntrySource = "primary_screen"
+    if (Test-Path $screenCsv) {
+      try {
+        $baseRows = Import-Csv -Path $screenCsv
+        $realizedEntryCandidates = [int]$baseRows.Count
+      } catch {
+        $realizedEntryCandidates = 0
+      }
+    }
+    Log "fast screen unavailable -> fallback to primary screen"
+  }
 }
 if (Test-Path $realizedTool) {
   Log "update realized monthly tracker source=$realizedEntrySource candidates=$realizedEntryCandidates"
@@ -1172,6 +1325,7 @@ $lines = @(
   ("- fast screen max pages: {0}" -f [int]$realizedFastMaxPages)
   ("- fast screen yes range: [{0},{1}]" -f [double]$realizedFastYesMin, [double]$realizedFastYesMax)
   ("- fast screen max hours to end: {0}" -f [double]$realizedFastMaxHoursToEnd)
+  ("- strict_realized_band_only: {0}" -f [bool]$StrictRealizedBandOnly.IsPresent)
   ("- fast screen status: {0}" -f $fastScreenStatus)
   ("- gap max pages: {0}" -f [int]$GapMaxPages)
   ("- gap fallback max pages: {0}" -f [int]$GapFallbackMaxPages)
@@ -1288,12 +1442,15 @@ if ($discordRequested) {
 
 if ($FailOnGapScanError.IsPresent -and $gapScanHadError) {
   Log ("fail: gap scan had errors stage={0}" -f $gapScanStage)
+  Release-RunLock
   exit 3
 }
 
 if ($FailOnGapErrorRateHigh.IsPresent -and $gapErrorRateAlert7d) {
   Log ("fail: gap error rate high for tag={0} over 7d ({1})" -f $gapErrorStatsTag, $gapErrorRuns7dText)
+  Release-RunLock
   exit 2
 }
 
+Release-RunLock
 exit 0

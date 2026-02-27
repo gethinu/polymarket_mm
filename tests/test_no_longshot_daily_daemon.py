@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import no_longshot_daily_daemon as mod
 
 
@@ -30,6 +31,7 @@ def _mk_run_args(repo_root: Path, script_path: str, **overrides):
         "discord": False,
         "runner_fail_on_gap_scan_error": True,
         "runner_fail_on_gap_error_rate_high": True,
+        "runner_strict_realized_band_only": True,
         "max_run_seconds": 1800,
     }
     base.update(overrides)
@@ -59,6 +61,7 @@ def _mk_main_args(tmp_path: Path, **overrides):
         "runner_gap_error_alert_min_runs_7d": 5,
         "runner_fail_on_gap_scan_error": False,
         "runner_fail_on_gap_error_rate_high": False,
+        "runner_strict_realized_band_only": False,
         "python_exe": "python",
         "realized_refresh_sec": 0.0,
         "realized_timeout_sec": 240.0,
@@ -114,6 +117,7 @@ def test_run_daily_once_passes_gap_guard_flags(monkeypatch, tmp_path: Path):
     assert "-GapErrorAlertMinRuns7d" in cmd and "5" in cmd
     assert "-FailOnGapScanError" in cmd
     assert "-FailOnGapErrorRateHigh" in cmd
+    assert "-StrictRealizedBandOnly" in cmd
     assert captured["cwd"] == str(repo_root.resolve())
     assert captured["shell"] is False
 
@@ -131,6 +135,7 @@ def test_run_daily_once_omits_optional_flags_when_disabled(monkeypatch, tmp_path
         discord=False,
         runner_fail_on_gap_scan_error=False,
         runner_fail_on_gap_error_rate_high=False,
+        runner_strict_realized_band_only=False,
     )
     captured = {}
 
@@ -153,6 +158,7 @@ def test_run_daily_once_omits_optional_flags_when_disabled(monkeypatch, tmp_path
     assert "-Discord" not in cmd
     assert "-FailOnGapScanError" not in cmd
     assert "-FailOnGapErrorRateHigh" not in cmd
+    assert "-StrictRealizedBandOnly" not in cmd
 
 
 def test_main_refuses_invalid_gap_error_alert_rate(monkeypatch, tmp_path: Path):
@@ -171,3 +177,21 @@ def test_main_refuses_invalid_gap_outcome_tag(monkeypatch, tmp_path: Path):
     args = _mk_main_args(tmp_path, runner_gap_outcome_tag="bad tag")
     monkeypatch.setattr(mod, "parse_args", lambda: args)
     assert mod.main() == 2
+
+
+def test_parse_args_default_fast_band_and_strict_flag(monkeypatch):
+    monkeypatch.setattr(
+        mod.sys,
+        "argv",
+        [
+            "no_longshot_daily_daemon.py",
+            "--run-at-hhmm",
+            "00:05",
+            "--repo-root",
+            "C:\\Repos\\polymarket_mm",
+        ],
+    )
+    args = mod.parse_args()
+    assert args.runner_realized_fast_yes_min == pytest.approx(0.16)
+    assert args.runner_realized_fast_yes_max == pytest.approx(0.20)
+    assert bool(args.runner_strict_realized_band_only) is False

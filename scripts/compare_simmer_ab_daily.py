@@ -221,8 +221,63 @@ def _append_history(path: str, payload: dict) -> None:
         return
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8", errors="replace") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+    existing: list[dict] = []
+    if p.exists():
+        with p.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                s = str(line or "").strip()
+                if not s:
+                    continue
+                try:
+                    o = json.loads(s)
+                    if isinstance(o, dict):
+                        existing.append(o)
+                except Exception:
+                    continue
+
+    def _window_key(row: dict) -> tuple[str, str] | None:
+        since = str(row.get("since") or "").strip()
+        until = str(row.get("until") or "").strip()
+        if not since or not until:
+            return None
+        return (since, until)
+
+    def _row_rank(row: dict) -> tuple[dt.datetime, dt.datetime]:
+        ts = _parse_ts(str(row.get("ts") or "")) if str(row.get("ts") or "").strip() else None
+        until = _parse_ts(str(row.get("until") or "")) if str(row.get("until") or "").strip() else None
+        return (ts or dt.datetime.min, until or dt.datetime.min)
+
+    by_window: dict[tuple[str, str], dict] = {}
+    pass_through: list[dict] = []
+    for row in existing:
+        key = _window_key(row)
+        if key is None:
+            pass_through.append(row)
+            continue
+        prev = by_window.get(key)
+        if prev is None or _row_rank(row) >= _row_rank(prev):
+            by_window[key] = row
+
+    key = _window_key(payload)
+    if key is None:
+        pass_through.append(payload)
+    else:
+        by_window[key] = payload
+
+    normalized = list(by_window.values())
+    normalized.sort(
+        key=lambda r: (
+            str(r.get("until") or ""),
+            str(r.get("since") or ""),
+            str(r.get("ts") or ""),
+        )
+    )
+    out_rows = pass_through + normalized
+
+    with p.open("w", encoding="utf-8", errors="replace", newline="\n") as f:
+        for row in out_rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def main() -> int:
