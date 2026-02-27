@@ -31,7 +31,7 @@ Do not hand-edit KPI values in markdown files.
 Run in this order before making status claims:
 
 1. Refresh no-longshot daily summary:
-   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -SkipRefresh`
+   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -SkipRefresh -StrictRealizedBandOnly -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedFastMaxPages 120`
 2. Refresh realized snapshot used by register:
    - `python scripts/record_simmer_realized_daily.py --pretty`
 3. Rebuild strategy register snapshot:

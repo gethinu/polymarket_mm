@@ -421,6 +421,7 @@ def test_apply_morning_task_argument_guard_marks_invalid_when_forbidden_skip_pre
     mod._apply_morning_task_argument_guard(rows)
 
     assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "missing_required_flags=" in str(rows[0].get("status_note") or "")
     assert "forbidden_flags=-skipgatealarm" in str(rows[0].get("status_note") or "")
 
 
@@ -446,10 +447,40 @@ def test_apply_morning_task_argument_guard_keeps_ok_when_required_present_and_no
             "task_name": "MorningStrategyStatusDaily",
             "exists": True,
             "status": "OK",
-            "action_arguments": "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground -NoLongshotPracticalDecisionDate 2026-03-02 -NoLongshotPracticalSlideDays 3 -NoLongshotPracticalMinResolvedTrades 30",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget 7d "
+                "-FailOnSimmerAbInterimNoGo"
+            ),
         }
     ]
 
     mod._apply_morning_task_argument_guard(rows)
 
     assert rows[0]["status"] == "OK"
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_interim_flags_missing():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "-simmerabinterimtarget" in note
+    assert "-failonsimmerabinterimnogo" in note

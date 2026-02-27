@@ -93,7 +93,7 @@ Primary keys:
   - Source summary: `logs/no_longshot_daily_summary.txt`
   - `strict_realized_band_only=True`, `realized_entry_source=fast_72h_lowyes`
   - `rolling_30d_monthly_return=+9.17%`, `rolling_30d_resolved_trades=20`（new-condition）
-- Decision note: keep this strategy in observe-only; run with fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent) and keep monthly-return claims anchored to latest realized artifacts.
+- Decision note: keep this strategy in observe-only; run with fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent) and keep monthly-return claims anchored to latest realized artifacts (`logs/strategy_register_latest.json` authority keys in this file's "Current KPI" section).
 - Operational gate: treat `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` as authority for monthly return; keep quality review active until resolved sample size is non-trivial, and mark `REVIEW` if the latest summary fast band drifts from `[0.16,0.2]`.
 - Capital gate checkpoint (fixed on 2026-02-27):
   - Core threshold: `no_longshot_status.rolling_30d_resolved_trades >= 30`（new-condition basis）

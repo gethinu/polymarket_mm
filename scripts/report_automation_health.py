@@ -449,6 +449,8 @@ def _apply_morning_task_argument_guard(task_rows: List[dict]) -> None:
         "-nolongshotpracticaldecisiondate",
         "-nolongshotpracticalslidedays",
         "-nolongshotpracticalminresolvedtrades",
+        "-simmerabinterimtarget",
+        "-failonsimmerabinterimnogo",
     ]
     forbidden_flags = [
         "-norefresh",

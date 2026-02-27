@@ -15,6 +15,8 @@ param(
   [int]$NoLongshotPracticalSlideDays = 3,
   [int]$NoLongshotPracticalMinResolvedTrades = 30,
   [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",
+  [ValidateSet("7d", "14d")]
+  [string]$SimmerAbInterimTarget = "7d",
   [double]$SimmerAbMaxStaleHours = 30.0,
   [string]$DiscordWebhookEnv = "CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS",
   [switch]$NoRefresh,
@@ -28,7 +30,8 @@ param(
   [switch]$FailOnGateNotReady,
   [switch]$FailOnStageNotFinal,
   [switch]$FailOnHealthNoGo,
-  [switch]$FailOnSimmerAbFinalNoGo
+  [switch]$FailOnSimmerAbFinalNoGo,
+  [switch]$FailOnSimmerAbInterimNoGo
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,6 +59,7 @@ $argsList = @(
   "--no-longshot-practical-slide-days", [string]([Math]::Max(1, [int]$NoLongshotPracticalSlideDays)),
   "--no-longshot-practical-min-resolved-trades", [string]([Math]::Max(1, [int]$NoLongshotPracticalMinResolvedTrades)),
   "--simmer-ab-decision-json", $SimmerAbDecisionJson,
+  "--simmer-ab-interim-target", $SimmerAbInterimTarget,
   "--simmer-ab-max-stale-hours", ([string]$SimmerAbMaxStaleHours)
 )
 
@@ -77,6 +81,7 @@ if ($FailOnGateNotReady.IsPresent) { $argsList += "--fail-on-gate-not-ready" }
 if ($FailOnStageNotFinal.IsPresent) { $argsList += "--fail-on-stage-not-final" }
 if ($FailOnHealthNoGo.IsPresent) { $argsList += "--fail-on-health-no-go" }
 if ($FailOnSimmerAbFinalNoGo.IsPresent) { $argsList += "--fail-on-simmer-ab-final-no-go" }
+if ($FailOnSimmerAbInterimNoGo.IsPresent) { $argsList += "--fail-on-simmer-ab-interim-no-go" }
 
 & python @argsList
 exit $LASTEXITCODE
