@@ -47,6 +47,8 @@ DEFAULT_ARTIFACT_SPECS = [
     "logs/no_longshot_daily_summary.txt:30",
     "?logs/wallet_autopsy_daily_run.log:30",
     "?logs/simmer-ab-daily-report.log:30",
+    "logs/simmer-ab-daily-compare-latest.txt:30",
+    "logs/simmer-ab-daily-compare-history.jsonl:30",
     "logs/morning_status_daily_run.log:30",
     "?logs/simmer-ab-decision-latest.json:30",
     "?logs/simmer_ab_supervisor_state.json:6",

@@ -123,6 +123,7 @@ Simmer ping-pong:
   - `logs/simmer-ab-candidate-metrics.jsonl`
 - A/B helper outputs:
   - `logs/simmer-ab-daily-report.log`
+  - `logs/simmer-ab-daily-report.lock`
   - `logs/simmer-ab-daily-compare-latest.txt`
   - `logs/simmer-ab-daily-compare-history.jsonl`
   - `logs/simmer-ab-decision-latest.txt`

@@ -73,6 +73,30 @@ def _window_days(row: dict) -> float:
     return max(1e-9, float(sec / 86400.0))
 
 
+def _window_hours(row: dict) -> float:
+    since = _parse_ts(str(row.get("since") or ""))
+    until = _parse_ts(str(row.get("until") or ""))
+    if since is None or until is None or until <= since:
+        return 0.0
+    sec = (until - since).total_seconds()
+    return max(0.0, float(sec / 3600.0))
+
+
+def _filter_rows_by_min_window_hours(rows: list[dict], min_window_hours: float) -> tuple[list[dict], int]:
+    min_h = max(0.0, float(min_window_hours))
+    if min_h <= 0.0:
+        return list(rows), 0
+    kept: list[dict] = []
+    excluded = 0
+    for row in rows:
+        h = _window_hours(row)
+        if h >= min_h:
+            kept.append(row)
+        else:
+            excluded += 1
+    return kept, excluded
+
+
 def _expectancy_gate(base: float, cand: float, ratio: float) -> bool:
     if base > 0:
         return cand >= (base * ratio)
@@ -154,8 +178,13 @@ def judge(
     expectancy_ratio_threshold: float,
     decision_date: dt.date,
     today: dt.date,
+    min_window_hours: float = 20.0,
 ) -> dict:
-    daily_rows = _choose_daily_rows(rows)
+    eligible_rows, excluded_short_window_rows = _filter_rows_by_min_window_hours(
+        rows=rows,
+        min_window_hours=float(min_window_hours),
+    )
+    daily_rows = _choose_daily_rows(eligible_rows)
     decidable_rows = [r for r in daily_rows if bool(r.get("data_sufficient"))]
 
     base_turnovers: list[float] = []
@@ -272,16 +301,20 @@ def judge(
             )
 
     all_since, all_until = _coverage(rows)
+    eligible_since, eligible_until = _coverage(eligible_rows)
     dec_since, dec_until = _coverage(decidable_rows)
 
     return {
         "decision": "GO" if go else "NO_GO",
         "summary": {
             "raw_rows": int(len(rows)),
+            "eligible_rows": int(len(eligible_rows)),
+            "excluded_short_window_rows": int(excluded_short_window_rows),
             "daily_rows": int(len(daily_rows)),
             "data_sufficient_days": int(len(decidable_rows)),
             "min_days_required": int(min_days),
             "min_days_pass": bool(min_days_pass),
+            "min_window_hours": float(max(0.0, float(min_window_hours))),
             "decision_date": decision_date.isoformat(),
             "today_local": today.isoformat(),
             "decision_timing_status": timing_status,
@@ -290,6 +323,7 @@ def judge(
             "decision_stage": decision_stage,
             "final_decision_ready": bool(final_decision_ready),
             "coverage_all": {"since": all_since, "until": all_until},
+            "coverage_eligible": {"since": eligible_since, "until": eligible_until},
             "coverage_data_sufficient": {"since": dec_since, "until": dec_until},
             "interim_milestones": {
                 "tentative_7d": interim_7d,
@@ -351,14 +385,25 @@ def render_text(result: dict) -> str:
     lines.append(
         "Rows: "
         f"raw={int(summary.get('raw_rows') or 0)} "
+        f"eligible={int(summary.get('eligible_rows') or 0)} "
         f"daily={int(summary.get('daily_rows') or 0)} "
         f"data_sufficient_days={int(summary.get('data_sufficient_days') or 0)} "
         f"(min_days={int(summary.get('min_days_required') or 0)})"
     )
     lines.append(
+        "Window Filter: "
+        f"min_window_hours={_as_float(summary.get('min_window_hours'), 0.0):.2f} "
+        f"excluded_short_rows={int(summary.get('excluded_short_window_rows') or 0)}"
+    )
+    lines.append(
         "Coverage(all): "
         f"{str((summary.get('coverage_all') or {}).get('since') or 'N/A')} "
         f"-> {str((summary.get('coverage_all') or {}).get('until') or 'N/A')}"
+    )
+    lines.append(
+        "Coverage(eligible): "
+        f"{str((summary.get('coverage_eligible') or {}).get('since') or 'N/A')} "
+        f"-> {str((summary.get('coverage_eligible') or {}).get('until') or 'N/A')}"
     )
     lines.append(
         "Coverage(data_sufficient): "
@@ -458,6 +503,12 @@ def main() -> int:
         help="Final decision date in YYYY-MM-DD (default: 2026-03-22).",
     )
     p.add_argument(
+        "--min-window-hours",
+        type=float,
+        default=20.0,
+        help="Minimum compare window hours to include in decision aggregation (default: 20.0).",
+    )
+    p.add_argument(
         "--today",
         default="",
         help="Override local today date in YYYY-MM-DD for simulation/testing.",
@@ -490,6 +541,7 @@ def main() -> int:
         expectancy_ratio_threshold=float(args.expectancy_ratio_threshold),
         decision_date=decision_date,
         today=today,
+        min_window_hours=max(0.0, float(args.min_window_hours)),
     )
     text = render_text(result)
     print(text)

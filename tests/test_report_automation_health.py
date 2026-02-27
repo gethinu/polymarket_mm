@@ -30,6 +30,11 @@ def test_default_artifacts_include_no_longshot_daily_summary():
     assert "logs/no_longshot_daily_summary.txt:30" in mod.DEFAULT_ARTIFACT_SPECS
 
 
+def test_default_artifacts_include_required_simmer_ab_daily_compare_files():
+    assert "logs/simmer-ab-daily-compare-latest.txt:30" in mod.DEFAULT_ARTIFACT_SPECS
+    assert "logs/simmer-ab-daily-compare-history.jsonl:30" in mod.DEFAULT_ARTIFACT_SPECS
+
+
 def test_parse_task_specs_supports_optional_prefix_and_dedupes():
     rows = mod._parse_task_specs(
         [

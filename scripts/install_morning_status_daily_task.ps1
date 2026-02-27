@@ -47,7 +47,8 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground [-TaskName MorningStrategyStatusDaily] [-StartTime 08:05] [-StrategyId weather_clob_arb_buckets_observe] [-FailOnStageNotFinal] [-FailOnSimmerAbFinalNoGo] [-FailOnSimmerAbInterimNoGo] [-SimmerAbInterimTarget 7d|14d] [-SimmerAbMaxStaleHours 30] [-NoLongshotPracticalDecisionDate 2026-03-02] [-NoLongshotPracticalSlideDays 3] [-NoLongshotPracticalMinResolvedTrades 30] [-SkipImplementationLedger] [-SkipUncorrelatedPortfolio] [-UncorrelatedStrategyIds weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe] [-UncorrelatedCorrThresholdAbs 0.30] [-DiscordWebhookEnv CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground [-TaskName MorningStrategyStatusDaily] [-StartTime 08:05] [-StrategyId weather_clob_arb_buckets_observe] [-FailOnStageNotFinal] [-FailOnSimmerAbFinalNoGo] [-SimmerAbInterimTarget 7d|14d] [-SimmerAbMaxStaleHours 30] [-NoLongshotPracticalDecisionDate 2026-03-02] [-NoLongshotPracticalSlideDays 3] [-NoLongshotPracticalMinResolvedTrades 30] [-SkipImplementationLedger] [-SkipUncorrelatedPortfolio] [-UncorrelatedStrategyIds weather_clob_arb_buckets_observe,no_longshot_daily_observe,link_intake_walletseed_cohort_observe,gamma_eventpair_exec_edge_filter_observe,hourly_updown_highprob_calibration_observe] [-UncorrelatedCorrThresholdAbs 0.30] [-DiscordWebhookEnv CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS] [-RunNow]"
+  Write-Host "  note: installer always enforces -FailOnSimmerAbInterimNoGo on task action/run-now."
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -?"
 }
 
@@ -155,6 +156,8 @@ $argList = @(
   "-SimmerAbInterimTarget", $SimmerAbInterimTarget,
   "-SimmerAbMaxStaleHours", "$SimmerAbMaxStaleHours"
 )
+# Enforce interim fail gate by default to avoid task-argument drift.
+$argList += "-FailOnSimmerAbInterimNoGo"
 if (-not [string]::IsNullOrWhiteSpace($uncorrelatedStrategyIds)) {
   $argList += "-UncorrelatedStrategyIds"
   $argList += $uncorrelatedStrategyIds
@@ -177,7 +180,6 @@ if ($FailOnGateNotReady.IsPresent) { $argList += "-FailOnGateNotReady" }
 if ($FailOnStageNotFinal.IsPresent) { $argList += "-FailOnStageNotFinal" }
 if ($FailOnHealthNoGo.IsPresent) { $argList += "-FailOnHealthNoGo" }
 if ($FailOnSimmerAbFinalNoGo.IsPresent) { $argList += "-FailOnSimmerAbFinalNoGo" }
-if ($FailOnSimmerAbInterimNoGo.IsPresent) { $argList += "-FailOnSimmerAbInterimNoGo" }
 $actionArgs = ($argList -join " ")
 
 $action = New-ScheduledTaskAction -Execute $PowerShellExe -Argument $actionArgs
@@ -247,6 +249,8 @@ if ($RunNow.IsPresent) {
     "-SimmerAbInterimTarget", $SimmerAbInterimTarget,
     "-SimmerAbMaxStaleHours", "$SimmerAbMaxStaleHours"
   )
+  # Keep run-now behavior aligned with scheduled task action defaults.
+  $runArgs += "-FailOnSimmerAbInterimNoGo"
   if (-not [string]::IsNullOrWhiteSpace($uncorrelatedStrategyIds)) {
     $runArgs += "-UncorrelatedStrategyIds"
     $runArgs += $uncorrelatedStrategyIds
@@ -269,7 +273,6 @@ if ($RunNow.IsPresent) {
   if ($FailOnStageNotFinal.IsPresent) { $runArgs += "-FailOnStageNotFinal" }
   if ($FailOnHealthNoGo.IsPresent) { $runArgs += "-FailOnHealthNoGo" }
   if ($FailOnSimmerAbFinalNoGo.IsPresent) { $runArgs += "-FailOnSimmerAbFinalNoGo" }
-  if ($FailOnSimmerAbInterimNoGo.IsPresent) { $runArgs += "-FailOnSimmerAbInterimNoGo" }
 
   Write-Host "RunNow: executing runner directly (observe-only) ..."
   & $PowerShellExe @runArgs

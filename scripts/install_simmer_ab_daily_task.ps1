@@ -8,6 +8,7 @@ param(
   [int]$JudgeMinDays = 25,
   [double]$JudgeExpectancyRatioThreshold = 0.9,
   [string]$JudgeDecisionDate = "2026-03-22",
+  [double]$JudgeMinWindowHours = 20.0,
   [Alias("h")]
   [switch]$Help,
   [switch]$FailOnFinalNoGo,
@@ -21,7 +22,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground [-TaskName SimmerABDailyReport] [-StartTime 00:05] [-JudgeMinDays 25] [-JudgeExpectancyRatioThreshold 0.9] [-JudgeDecisionDate 2026-03-22] [-FailOnFinalNoGo] [-SkipJudge] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground [-TaskName SimmerABDailyReport] [-StartTime 00:05] [-JudgeMinDays 25] [-JudgeMinWindowHours 20] [-JudgeExpectancyRatioThreshold 0.9] [-JudgeDecisionDate 2026-03-22] [-FailOnFinalNoGo] [-SkipJudge] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_simmer_ab_daily_task.ps1 -NoBackground -?"
 }
 
@@ -117,6 +118,7 @@ $argList = @(
   "-RepoRoot", (Quote-Arg $RepoRoot),
   "-PythonExe", (Quote-Arg $PythonExe),
   "-JudgeMinDays", "$JudgeMinDays",
+  "-JudgeMinWindowHours", "$JudgeMinWindowHours",
   "-JudgeExpectancyRatioThreshold", "$JudgeExpectancyRatioThreshold",
   "-JudgeDecisionDate", "$JudgeDecisionDate"
 )
@@ -176,6 +178,7 @@ if ($RunNow.IsPresent) {
     "-RepoRoot", $RepoRoot,
     "-PythonExe", $PythonExe,
     "-JudgeMinDays", "$JudgeMinDays",
+    "-JudgeMinWindowHours", "$JudgeMinWindowHours",
     "-JudgeExpectancyRatioThreshold", "$JudgeExpectancyRatioThreshold",
     "-JudgeDecisionDate", "$JudgeDecisionDate"
   )

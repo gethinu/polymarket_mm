@@ -283,6 +283,89 @@ def test_interim_milestones_reached_and_go_when_conditions_pass():
     assert m14["decision"] == "GO"
 
 
+def test_short_window_data_sufficient_row_is_excluded_by_default_filter():
+    rows = [
+        _row(
+            since="2026-03-10 00:00:00",
+            until="2026-03-11 00:00:00",
+            ts="2026-03-11 00:05:00",
+            data_sufficient=False,
+            base_turnover=0.0,
+            cand_turnover=0.0,
+            base_hold_sec=0.0,
+            cand_hold_sec=0.0,
+            base_expectancy=0.0,
+            cand_expectancy=0.0,
+            base_errors=0,
+            cand_errors=0,
+            base_halts=0,
+            cand_halts=0,
+        ),
+        _row(
+            since="2026-03-11 08:58:30",
+            until="2026-03-11 09:01:30",
+            ts="2026-03-11 09:01:30",
+            data_sufficient=True,
+            base_turnover=100.0,
+            cand_turnover=120.0,
+            base_hold_sec=60.0,
+            cand_hold_sec=10.0,
+            base_expectancy=1.0,
+            cand_expectancy=1.0,
+            base_errors=0,
+            cand_errors=0,
+            base_halts=0,
+            cand_halts=0,
+        ),
+    ]
+
+    result = mod.judge(
+        rows=rows,
+        min_days=1,
+        expectancy_ratio_threshold=0.9,
+        decision_date=dt.date(2026, 3, 22),
+        today=dt.date(2026, 3, 21),
+    )
+
+    assert result["summary"]["excluded_short_window_rows"] == 1
+    assert result["summary"]["data_sufficient_days"] == 0
+    assert result["decision"] == "NO_GO"
+
+
+def test_short_window_data_sufficient_row_can_be_included_when_filter_disabled():
+    rows = [
+        _row(
+            since="2026-03-11 08:58:30",
+            until="2026-03-11 09:01:30",
+            ts="2026-03-11 09:01:30",
+            data_sufficient=True,
+            base_turnover=100.0,
+            cand_turnover=120.0,
+            base_hold_sec=60.0,
+            cand_hold_sec=10.0,
+            base_expectancy=1.0,
+            cand_expectancy=1.0,
+            base_errors=0,
+            cand_errors=0,
+            base_halts=0,
+            cand_halts=0,
+        )
+    ]
+
+    result = mod.judge(
+        rows=rows,
+        min_days=1,
+        expectancy_ratio_threshold=0.9,
+        decision_date=dt.date(2026, 3, 22),
+        today=dt.date(2026, 3, 21),
+        min_window_hours=0.0,
+    )
+
+    assert result["summary"]["excluded_short_window_rows"] == 0
+    assert result["summary"]["data_sufficient_days"] == 1
+    assert result["decision"] == "GO"
+
+
 def test_cli_fail_on_final_no_go_exit_code(tmp_path: Path):
     history_path = tmp_path / "history.jsonl"
     rows = [

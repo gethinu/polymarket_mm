@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `36`
-- worktree_changes: `7`
+- commits_scanned: `38`
+- worktree_changes: `17`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,21 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 21 | `2026-02-27 20:33` | `cffff419` | feat: harden morning gates and no-longshot mode controls |
+| `docs_llm` | 23 | `2026-02-27 20:44` | `fd41b84e` | feat: enforce simmer interim gate in morning checks |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
-| `no_longshot` | 14 | `2026-02-27 20:33` | `cffff419` | feat: harden morning gates and no-longshot mode controls |
-| `security_or_ops` | 11 | `2026-02-27 20:33` | `cffff419` | feat: harden morning gates and no-longshot mode controls |
-| `simmer_clob` | 22 | `2026-02-27 20:33` | `cffff419` | feat: harden morning gates and no-longshot mode controls |
-| `strategy_register` | 8 | `2026-02-27 20:33` | `cffff419` | feat: harden morning gates and no-longshot mode controls |
+| `no_longshot` | 15 | `2026-02-27 20:37` | `00ba4dfe` | test: extend no-longshot mode switcher daemon/off coverage |
+| `security_or_ops` | 12 | `2026-02-27 20:44` | `fd41b84e` | feat: enforce simmer interim gate in morning checks |
+| `simmer_clob` | 23 | `2026-02-27 20:44` | `fd41b84e` | feat: enforce simmer interim gate in morning checks |
+| `strategy_register` | 9 | `2026-02-27 20:44` | `fd41b84e` | feat: enforce simmer interim gate in morning checks |
 | `task_automation` | 16 | `2026-02-27 20:33` | `cffff419` | feat: harden morning gates and no-longshot mode controls |
 | `weather_pipeline` | 6 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-27 20:44` | `fd41b84e` | `docs_llm,security_or_ops,simmer_clob,strategy_register` | feat: enforce simmer interim gate in morning checks | `docs/llm/CANON.md`, `docs/llm/STRATEGY.md`, `scripts/check_morning_status.ps1`, `scripts/report_automation_health.py`, +1 |
+| `2026-02-27 20:37` | `00ba4dfe` | `docs_llm,no_longshot` | test: extend no-longshot mode switcher daemon/off coverage | `docs/llm/IMPLEMENTATION_LEDGER.md`, `tests/test_set_no_longshot_daily_mode_ps1.py` |
 | `2026-02-27 20:33` | `cffff419` | `docs_llm,no_longshot,security_or_ops,simmer_clob,strategy_register,task_automation` | feat: harden morning gates and no-longshot mode controls | `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, +15 |
 | `2026-02-27 12:27` | `8c5b329e` | `docs_llm` | 20260227_2 | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `2026-02-27 12:26` | `b2e0f847` | `docs_llm,no_longshot,security_or_ops,simmer_clob,task_automation` | 20260227 | `configs/bot_supervisor.observe.json`, `configs/bot_supervisor.simmer_ab.observe.json`, `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, +16 |
@@ -74,12 +76,22 @@
 | status | path |
 |---|---|
 | `M` | `configs/bot_supervisor.observe.json` |
-| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/STRATEGY.md` |
-| `M` | `scripts/check_morning_status.ps1` |
-| `M` | `tests/test_set_no_longshot_daily_mode_ps1.py` |
+| `M` | `docs/llm/STATE.md` |
+| `M` | `scripts/install_morning_status_daily_task.ps1` |
+| `M` | `scripts/install_weather_profit_window_weekly_task.ps1` |
+| `M` | `scripts/judge_simmer_ab_decision.py` |
+| `M` | `scripts/report_automation_health.py` |
+| `M` | `scripts/run_simmer_ab_daily_report.ps1` |
+| `M` | `scripts/run_weather_arb_profit_window.ps1` |
+| `M` | `tests/test_check_morning_status.py` |
+| `M` | `tests/test_judge_simmer_ab_decision.py` |
+| `M` | `tests/test_report_automation_health.py` |
+| `??` | `scripts/install_fade_observe_watchdog_task.ps1` |
+| `??` | `scripts/run_fade_observe_watchdog.ps1` |
+| `??` | `tests/test_check_morning_status_ps1.py` |
+| `??` | `tests/test_morning_status_daily_ps1.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |
