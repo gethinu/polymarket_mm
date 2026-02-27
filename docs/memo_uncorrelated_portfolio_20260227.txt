@@ -1,7 +1,7 @@
 memo_uncorrelated_portfolio_20260227
 
 Date: 2026-02-27
-Scope: ADOPTED observe-only strategies
+Scope: explicit strategy_ids (observe-only diagnostic cohort)
 References: docs/llm/SPEC.md, docs/llm/STRATEGY.md, docs/llm/STATE.md
 Method: realized daily series preferred; observe proxy fallback when realized series are insufficient
 
@@ -17,7 +17,7 @@ Analyzed strategies:
 weather_clob_arb_buckets_observe
 - realized_daily.available: True
 - realized_daily.metric: realized_pnl_usd / bankroll_usd
-- realized_daily.days: 3
+- realized_daily.days: 4
 - realized_daily.source: C:\Repos\polymarket_mm\logs\strategy_realized_pnl_daily.jsonl
 - observe_proxy_daily.available: True
 - observe_proxy_daily.metric: daily_median_edge_pct_from_summary_lines

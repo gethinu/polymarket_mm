@@ -666,6 +666,7 @@ def _build_memo(
     risk_proxy: Optional[dict],
     missing_metrics: Dict[str, List[str]],
     date_yyyymmdd: str,
+    scope_text: str,
 ) -> str:
     if len(date_yyyymmdd) == 8:
         date_iso = f"{date_yyyymmdd[0:4]}-{date_yyyymmdd[4:6]}-{date_yyyymmdd[6:8]}"
@@ -675,7 +676,7 @@ def _build_memo(
     lines.append(f"memo_uncorrelated_portfolio_{date_yyyymmdd}")
     lines.append("")
     lines.append(f"Date: {date_iso}")
-    lines.append("Scope: ADOPTED observe-only strategies")
+    lines.append(f"Scope: {scope_text}")
     lines.append("References: docs/llm/SPEC.md, docs/llm/STRATEGY.md, docs/llm/STATE.md")
     lines.append("Method: realized daily series preferred; observe proxy fallback when realized series are insufficient")
     lines.append("")
@@ -829,9 +830,11 @@ def main() -> int:
     raw_ids = str(args.strategy_ids or "").strip()
     if raw_ids:
         strategy_ids = [s.strip() for s in raw_ids.split(",") if s.strip()]
+        scope_text = "explicit strategy_ids (observe-only diagnostic cohort)"
     else:
         active = _active_strategy_ids(strategy_register)
         strategy_ids = active if active else list(DEFAULT_STRATEGY_IDS)
+        scope_text = "ADOPTED observe-only strategies (from strategy register)"
 
     strategy_records, corr_series, missing_metrics = _build_strategy_records(
         strategy_ids,
@@ -882,6 +885,7 @@ def main() -> int:
             risk_proxy=risk_proxy,
             missing_metrics=missing_metrics,
             date_yyyymmdd=date_tag,
+            scope_text=scope_text,
         )
         memo_path.parent.mkdir(parents=True, exist_ok=True)
         memo_path.write_text(memo_txt, encoding="utf-8")
