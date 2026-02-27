@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `39`
-- worktree_changes: `13`
+- commits_scanned: `40`
+- worktree_changes: `9`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,20 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 24 | `2026-02-27 20:54` | `62752b4b` | feat: harden simmer daily judge and morning interim gates |
+| `docs_llm` | 25 | `2026-02-27 22:13` | `c2f07a53` | feat: add fade observe watchdog auto-recovery task |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 15 | `2026-02-27 20:37` | `00ba4dfe` | test: extend no-longshot mode switcher daemon/off coverage |
 | `security_or_ops` | 13 | `2026-02-27 20:54` | `62752b4b` | feat: harden simmer daily judge and morning interim gates |
-| `simmer_clob` | 24 | `2026-02-27 20:54` | `62752b4b` | feat: harden simmer daily judge and morning interim gates |
+| `simmer_clob` | 25 | `2026-02-27 22:13` | `c2f07a53` | feat: add fade observe watchdog auto-recovery task |
 | `strategy_register` | 10 | `2026-02-27 20:54` | `62752b4b` | feat: harden simmer daily judge and morning interim gates |
-| `task_automation` | 17 | `2026-02-27 20:54` | `62752b4b` | feat: harden simmer daily judge and morning interim gates |
+| `task_automation` | 18 | `2026-02-27 22:13` | `c2f07a53` | feat: add fade observe watchdog auto-recovery task |
 | `weather_pipeline` | 6 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-27 22:13` | `c2f07a53` | `docs_llm,simmer_clob,task_automation` | feat: add fade observe watchdog auto-recovery task | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `scripts/install_fade_observe_watchdog_task.ps1`, +1 |
 | `2026-02-27 20:54` | `62752b4b` | `docs_llm,security_or_ops,simmer_clob,strategy_register,task_automation` | feat: harden simmer daily judge and morning interim gates | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `scripts/install_morning_status_daily_task.ps1`, +7 |
 | `2026-02-27 20:44` | `fd41b84e` | `docs_llm,security_or_ops,simmer_clob,strategy_register` | feat: enforce simmer interim gate in morning checks | `docs/llm/CANON.md`, `docs/llm/STRATEGY.md`, `scripts/check_morning_status.ps1`, `scripts/report_automation_health.py`, +1 |
 | `2026-02-27 20:37` | `00ba4dfe` | `docs_llm,no_longshot` | test: extend no-longshot mode switcher daemon/off coverage | `docs/llm/IMPLEMENTATION_LEDGER.md`, `tests/test_set_no_longshot_daily_mode_ps1.py` |
@@ -76,17 +77,13 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `configs/bot_supervisor.observe.json` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/STATE.md` |
 | `M` | `docs/llm/STRATEGY.md` |
 | `M` | `scripts/install_weather_profit_window_weekly_task.ps1` |
 | `M` | `scripts/report_automation_health.py` |
 | `M` | `scripts/run_weather_arb_profit_window.ps1` |
 | `M` | `tests/test_report_automation_health.py` |
-| `??` | `scripts/install_fade_observe_watchdog_task.ps1` |
-| `??` | `scripts/run_fade_observe_watchdog.ps1` |
 | `??` | `tests/test_check_morning_status_ps1.py` |
 | `??` | `tests/test_morning_status_daily_ps1.py` |
 

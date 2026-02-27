@@ -10,6 +10,7 @@ param(
   [double]$ObserveShares = 5.0,
   [ValidateSet("buckets", "yes-no", "both")]
   [string]$ObserveStrategy = "buckets",
+  [string]$ObserveMutexName = "Global\PolymarketWeatherArbObserveProfitWindow",
   [double]$ReportHours = 24.0,
   [double]$AssumedBankrollUsd = [double]::NaN,
   [double]$TargetMonthlyReturnPct = 15.0,
@@ -124,6 +125,7 @@ $argList = @(
   "-ObserveMinEdgeCents", "$ObserveMinEdgeCents",
   "-ObserveShares", "$ObserveShares",
   "-ObserveStrategy", $ObserveStrategy,
+  "-ObserveMutexName", $ObserveMutexName,
   "-ReportHours", "$ReportHours",
   "-TargetMonthlyReturnPct", "$TargetMonthlyReturnPct"
 )
@@ -189,6 +191,7 @@ if ($RunNow.IsPresent) {
     "-ObserveMinEdgeCents", "$ObserveMinEdgeCents",
     "-ObserveShares", "$ObserveShares",
     "-ObserveStrategy", $ObserveStrategy,
+    "-ObserveMutexName", $ObserveMutexName,
     "-ReportHours", "$ReportHours",
     "-TargetMonthlyReturnPct", "$TargetMonthlyReturnPct"
   )

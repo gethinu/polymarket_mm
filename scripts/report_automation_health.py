@@ -447,11 +447,13 @@ def _apply_duplicate_run_guard(task_rows: List[dict]) -> None:
 
 def _apply_morning_task_argument_guard(task_rows: List[dict]) -> None:
     target_name = "MorningStrategyStatusDaily"
-    required_flags = [
+    required_value_flags = [
         "-nolongshotpracticaldecisiondate",
         "-nolongshotpracticalslidedays",
         "-nolongshotpracticalminresolvedtrades",
         "-simmerabinterimtarget",
+    ]
+    required_switch_flags = [
         "-failonsimmerabinterimnogo",
     ]
     forbidden_flags = [
@@ -479,10 +481,73 @@ def _apply_morning_task_argument_guard(task_rows: List[dict]) -> None:
             row["status_note"] = "missing_action_arguments"
             return
 
-        args = args_raw.lower()
-        missing = [f for f in required_flags if f not in args]
-        forbidden = [f for f in forbidden_flags if f in args]
-        if not missing and not forbidden:
+        def _has_flag_token(flag: str) -> bool:
+            return bool(re.search(rf"(?i)(?:^|\s){re.escape(flag)}(?::|\s|$)", args_raw))
+
+        def _switch_enabled(flag: str) -> bool:
+            pattern = rf"(?i)(?:^|\s){re.escape(flag)}(?:\s*:\s*(\$?true|\$?false))?(?=\s|$)"
+            for m in re.finditer(pattern, args_raw):
+                raw = str(m.group(1) or "").strip().lower().lstrip("$")
+                if not raw or raw == "true":
+                    return True
+                if raw == "false":
+                    continue
+                return True
+            return False
+
+        missing = [f for f in required_value_flags if not _has_flag_token(f)]
+        missing += [f for f in required_switch_flags if not _switch_enabled(f)]
+        forbidden = [f for f in forbidden_flags if _switch_enabled(f)]
+
+        invalid_values: List[str] = []
+
+        m_practical_date = re.search(
+            r"(?i)(?:^|\s)-nolongshotpracticaldecisiondate(?:\s+|:)(\"[^\"]+\"|'[^']+'|[^\s|]+)",
+            args_raw,
+        )
+        if m_practical_date:
+            raw_date = str(m_practical_date.group(1) or "").strip().strip("\"'")
+            try:
+                dt.datetime.strptime(raw_date, "%Y-%m-%d")
+            except Exception:
+                invalid_values.append("nolongshotpracticaldecisiondate_not_yyyy-mm-dd")
+
+        m_slide_days = re.search(
+            r"(?i)(?:^|\s)-nolongshotpracticalslidedays(?:\s+|:)(\"[^\"]+\"|'[^']+'|[^\s|]+)",
+            args_raw,
+        )
+        if m_slide_days:
+            try:
+                if int(str(m_slide_days.group(1) or "").strip().strip("\"'")) < 1:
+                    invalid_values.append("nolongshotpracticalslidedays<1")
+            except Exception:
+                invalid_values.append("nolongshotpracticalslidedays_not_int")
+
+        m_min_resolved = re.search(
+            r"(?i)(?:^|\s)-nolongshotpracticalminresolvedtrades(?:\s+|:)(\"[^\"]+\"|'[^']+'|[^\s|]+)",
+            args_raw,
+        )
+        if m_min_resolved:
+            try:
+                if int(str(m_min_resolved.group(1) or "").strip().strip("\"'")) < 1:
+                    invalid_values.append("nolongshotpracticalminresolvedtrades<1")
+            except Exception:
+                invalid_values.append("nolongshotpracticalminresolvedtrades_not_int")
+
+        interim_target_value: Optional[str] = None
+        if _has_flag_token("-simmerabinterimtarget"):
+            m = re.search(
+                r"(?i)(?:^|\s)-simmerabinterimtarget(?:\s+|:)(\"[^\"]+\"|'[^']+'|[^\s|]+)",
+                args_raw,
+            )
+            if m:
+                candidate = str(m.group(1) or "").strip().strip("\"'")
+                interim_target_value = "" if candidate.startswith("-") else candidate
+            else:
+                interim_target_value = ""
+        invalid_interim_target = bool(interim_target_value is not None and interim_target_value.lower() not in {"7d", "14d"})
+
+        if not missing and not forbidden and not invalid_values and not invalid_interim_target:
             return
 
         notes: List[str] = []
@@ -490,6 +555,103 @@ def _apply_morning_task_argument_guard(task_rows: List[dict]) -> None:
             notes.append("missing_required_flags=" + ",".join(missing))
         if forbidden:
             notes.append("forbidden_flags=" + ",".join(forbidden))
+        if invalid_values:
+            notes.append("invalid_values=" + ",".join(invalid_values))
+        if invalid_interim_target:
+            shown = interim_target_value if interim_target_value else "<missing>"
+            notes.append(f"invalid_simmer_ab_interim_target={shown}; allowed=7d,14d")
+        row["status"] = "INVALID_CONTENT"
+        row["status_note"] = "; ".join(notes)
+        return
+
+
+def _apply_simmer_ab_task_argument_guard(task_rows: List[dict]) -> None:
+    target_name = "SimmerABDailyReport"
+    required_value_flags = [
+        "-judgemindays",
+        "-judgeminwindowhours",
+        "-judgeexpectancyratiothreshold",
+        "-judgedecisiondate",
+    ]
+    required_switch_flags = [
+        "-failonfinalnogo",
+        "-nobackground",
+    ]
+    forbidden_switch_flags = [
+        "-skipjudge",
+    ]
+
+    for row in task_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("task_name") or "") != target_name:
+            continue
+        if not bool(row.get("exists")):
+            return
+        status = str(row.get("status") or "").upper()
+        if status in {"MISSING", "OPTIONAL_MISSING", "ERROR"}:
+            return
+        args_raw = str(row.get("action_arguments") or "").strip()
+        if not args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "missing_action_arguments"
+            return
+
+        def _has_flag_token(flag: str) -> bool:
+            return bool(re.search(rf"(?i)(?:^|\s){re.escape(flag)}(?::|\s|$)", args_raw))
+
+        def _switch_enabled(flag: str) -> bool:
+            pattern = rf"(?i)(?:^|\s){re.escape(flag)}(?:\s*:\s*(\$?true|\$?false))?(?=\s|$)"
+            for m in re.finditer(pattern, args_raw):
+                raw = str(m.group(1) or "").strip().lower().lstrip("$")
+                if not raw or raw == "true":
+                    return True
+                if raw == "false":
+                    continue
+                return True
+            return False
+
+        missing = [f for f in required_value_flags if not _has_flag_token(f)]
+        missing += [f for f in required_switch_flags if not _switch_enabled(f)]
+        forbidden = [f for f in forbidden_switch_flags if _switch_enabled(f)]
+
+        # Parse key numeric/date values when present to catch malformed action strings.
+        invalid_values: List[str] = []
+
+        m_min_days = re.search(r"(?i)(?:^|\s)-judgemindays(?:\s+|:)([^\s|]+)", args_raw)
+        if m_min_days:
+            try:
+                if int(str(m_min_days.group(1)).strip().strip("\"'")) < 1:
+                    invalid_values.append("judgemindays<1")
+            except Exception:
+                invalid_values.append("judgemindays_not_int")
+
+        m_min_window = re.search(r"(?i)(?:^|\s)-judgeminwindowhours(?:\s+|:)([^\s|]+)", args_raw)
+        if m_min_window:
+            try:
+                if float(str(m_min_window.group(1)).strip().strip("\"'")) <= 0.0:
+                    invalid_values.append("judgeminwindowhours<=0")
+            except Exception:
+                invalid_values.append("judgeminwindowhours_not_number")
+
+        m_decision_date = re.search(r"(?i)(?:^|\s)-judgedecisiondate(?:\s+|:)([^\s|]+)", args_raw)
+        if m_decision_date:
+            raw_date = str(m_decision_date.group(1)).strip().strip("\"'")
+            try:
+                dt.datetime.strptime(raw_date, "%Y-%m-%d")
+            except Exception:
+                invalid_values.append("judgedecisiondate_not_yyyy-mm-dd")
+
+        if not missing and not forbidden and not invalid_values:
+            return
+
+        notes: List[str] = []
+        if missing:
+            notes.append("missing_required_flags=" + ",".join(missing))
+        if forbidden:
+            notes.append("forbidden_flags=" + ",".join(forbidden))
+        if invalid_values:
+            notes.append("invalid_values=" + ",".join(invalid_values))
         row["status"] = "INVALID_CONTENT"
         row["status_note"] = "; ".join(notes)
         return
@@ -831,6 +993,7 @@ def main() -> int:
     _apply_supervisor_overrides(task_rows)
     _apply_duplicate_run_guard(task_rows)
     _apply_morning_task_argument_guard(task_rows)
+    _apply_simmer_ab_task_argument_guard(task_rows)
 
     reasons: List[str] = []
     bad_task = [

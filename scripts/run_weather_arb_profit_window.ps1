@@ -13,6 +13,7 @@ param(
   [string]$ObserveStrategy = "buckets",
   [double]$ObserveSummaryEverySec = 30.0,
   [int]$ObserveMaxSubscribeTokens = 400,
+  [string]$ObserveMutexName = "Global\PolymarketWeatherArbObserveProfitWindow",
   [string]$ObserveLogFile = "logs/clob-arb-weather-profit-observe.log",
   [string]$ObserveStateFile = "logs/clob_arb_weather_profit_state.json",
 
@@ -223,6 +224,7 @@ if (-not $SkipObserve.IsPresent) {
     "-Strategy", $ObserveStrategy,
     "-SummaryEverySec", (To-Arg $ObserveSummaryEverySec),
     "-MaxSubscribeTokens", (To-Arg $ObserveMaxSubscribeTokens),
+    "-MutexName", $ObserveMutexName,
     "-LogFile", $obsLogPath,
     "-StateFile", $obsStatePath
   )

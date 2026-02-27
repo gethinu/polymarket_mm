@@ -468,6 +468,53 @@ def test_apply_morning_task_argument_guard_keeps_ok_when_required_present_and_no
     assert rows[0]["status"] == "OK"
 
 
+def test_apply_morning_task_argument_guard_keeps_ok_when_forbidden_switch_is_explicit_false():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget 7d "
+                "-FailOnSimmerAbInterimNoGo "
+                "-SkipGateAlarm:$false"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "OK"
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_required_switch_explicit_false():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget 7d "
+                "-FailOnSimmerAbInterimNoGo:$false"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "-failonsimmerabinterimnogo" in note
+
+
 def test_apply_morning_task_argument_guard_marks_invalid_when_interim_flags_missing():
     rows = [
         {
@@ -489,3 +536,224 @@ def test_apply_morning_task_argument_guard_marks_invalid_when_interim_flags_miss
     note = str(rows[0].get("status_note") or "")
     assert "-simmerabinterimtarget" in note
     assert "-failonsimmerabinterimnogo" in note
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_interim_target_value_invalid():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget 30d "
+                "-FailOnSimmerAbInterimNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "invalid_simmer_ab_interim_target=30d" in note
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_interim_target_value_missing():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026-03-02 "
+                "-NoLongshotPracticalSlideDays 3 "
+                "-NoLongshotPracticalMinResolvedTrades 30 "
+                "-SimmerAbInterimTarget "
+                "-FailOnSimmerAbInterimNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "invalid_simmer_ab_interim_target=<missing>" in note
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_practical_values_malformed():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate 2026/03/02 "
+                "-NoLongshotPracticalSlideDays 0 "
+                "-NoLongshotPracticalMinResolvedTrades abc "
+                "-SimmerAbInterimTarget 7d "
+                "-FailOnSimmerAbInterimNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "invalid_values=" in note
+    assert "nolongshotpracticaldecisiondate_not_yyyy-mm-dd" in note
+    assert "nolongshotpracticalslidedays<1" in note
+    assert "nolongshotpracticalminresolvedtrades_not_int" in note
+
+
+def test_apply_morning_task_argument_guard_keeps_ok_with_colon_style_values():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground "
+                "-NoLongshotPracticalDecisionDate:2026-03-02 "
+                "-NoLongshotPracticalSlideDays:3 "
+                "-NoLongshotPracticalMinResolvedTrades:30 "
+                "-SimmerAbInterimTarget:14d "
+                "-FailOnSimmerAbInterimNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "OK"
+
+
+def test_apply_simmer_ab_task_argument_guard_marks_invalid_when_required_missing():
+    rows = [
+        {
+            "task_name": "SimmerABDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground -JudgeMinDays 25",
+        }
+    ]
+
+    mod._apply_simmer_ab_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "missing_required_flags=" in note
+    assert "-judgeminwindowhours" in note
+    assert "-judgeexpectancyratiothreshold" in note
+    assert "-judgedecisiondate" in note
+    assert "-failonfinalnogo" in note
+
+
+def test_apply_simmer_ab_task_argument_guard_marks_invalid_when_skipjudge_present():
+    rows = [
+        {
+            "task_name": "SimmerABDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground "
+                "-JudgeMinDays 25 -JudgeMinWindowHours 20 -JudgeExpectancyRatioThreshold 0.9 "
+                "-JudgeDecisionDate 2026-03-22 -FailOnFinalNoGo -SkipJudge"
+            ),
+        }
+    ]
+
+    mod._apply_simmer_ab_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "forbidden_flags=-skipjudge" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_simmer_ab_task_argument_guard_keeps_ok_when_required_present():
+    rows = [
+        {
+            "task_name": "SimmerABDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground "
+                "-JudgeMinDays 25 -JudgeMinWindowHours 20 -JudgeExpectancyRatioThreshold 0.9 "
+                "-JudgeDecisionDate 2026-03-22 -FailOnFinalNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_simmer_ab_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "OK"
+
+
+def test_apply_simmer_ab_task_argument_guard_keeps_ok_when_skipjudge_is_explicit_false():
+    rows = [
+        {
+            "task_name": "SimmerABDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground "
+                "-JudgeMinDays 25 -JudgeMinWindowHours 20 -JudgeExpectancyRatioThreshold 0.9 "
+                "-JudgeDecisionDate 2026-03-22 -FailOnFinalNoGo -SkipJudge:$false"
+            ),
+        }
+    ]
+
+    mod._apply_simmer_ab_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "OK"
+
+
+def test_apply_simmer_ab_task_argument_guard_marks_invalid_when_required_switch_explicit_false():
+    rows = [
+        {
+            "task_name": "SimmerABDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground "
+                "-JudgeMinDays 25 -JudgeMinWindowHours 20 -JudgeExpectancyRatioThreshold 0.9 "
+                "-JudgeDecisionDate 2026-03-22 -FailOnFinalNoGo:$false"
+            ),
+        }
+    ]
+
+    mod._apply_simmer_ab_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "-failonfinalnogo" in note
+
+
+def test_apply_simmer_ab_task_argument_guard_marks_invalid_when_numeric_or_date_values_malformed():
+    rows = [
+        {
+            "task_name": "SimmerABDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_simmer_ab_daily_report.ps1 -NoBackground "
+                "-JudgeMinDays abc -JudgeMinWindowHours 0 -JudgeExpectancyRatioThreshold 0.9 "
+                "-JudgeDecisionDate 2026/03/22 -FailOnFinalNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_simmer_ab_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "invalid_values=" in note
+    assert "judgemindays_not_int" in note
+    assert "judgeminwindowhours<=0" in note
+    assert "judgedecisiondate_not_yyyy-mm-dd" in note

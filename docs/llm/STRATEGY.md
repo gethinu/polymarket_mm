@@ -92,12 +92,12 @@ Primary keys:
 - Evidence snapshot (2026-02-27 strict-band checkpoint):
   - Source summary: `logs/no_longshot_daily_summary.txt`
   - `strict_realized_band_only=True`, `realized_entry_source=fast_72h_lowyes`
-  - `rolling_30d_monthly_return=+9.17%`, `rolling_30d_resolved_trades=20`（new-condition）
-- Decision note: keep this strategy in observe-only; run with fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent) and keep monthly-return claims anchored to latest realized artifacts (`logs/strategy_register_latest.json` authority keys in this file's "Current KPI" section).
+  - `rolling_30d_monthly_return=+9.89%`, `rolling_30d_resolved_trades=21`（new-condition）
+- Decision note: keep this strategy in observe-only; run with fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent). Latest canonical monthly return snapshot (`logs/strategy_register_latest.json`, refreshed on 2026-02-27): new-condition `+9.89%` (`no_longshot_status.monthly_return_now_new_condition_text`) vs all-pop comparator `-14.82%` (`no_longshot_status.monthly_return_now_all_text`).
 - Operational gate: treat `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` as authority for monthly return; keep quality review active until resolved sample size is non-trivial, and mark `REVIEW` if the latest summary fast band drifts from `[0.16,0.2]`.
 - Capital gate checkpoint (fixed on 2026-02-27):
   - Core threshold: `no_longshot_status.rolling_30d_resolved_trades >= 30`（new-condition basis）
-  - Current: `20`（need `10` more）
+  - Current: `21`（need `9` more）
   - Recent pace reference (new-condition resolved): `2026-02-25=9`, `2026-02-26=11`（`10/day`）
   - Fixed practical judgment date: `2026-03-02`（conservative half-speed assumption `5/day` + 1-day buffer）
   - If threshold is still unmet on `2026-03-02`, keep observe-only and slide judgment date by `+3` calendar days.
