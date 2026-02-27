@@ -91,9 +91,11 @@ Polymarket CLOB:
 - `scripts/check_strategy_gate_alarm.py`
   - Observe-only gate transition checker for strategy register 3-stage decision
   - Emits one-shot transition alarms and persists last-seen stage under `logs/`
+  - Also tracks no-longshot practical gate (`rolling_30d_resolved_trades>=30`) with fixed judgment date roll-forward control
 - `scripts/check_morning_status.py` (+ `scripts/check_morning_status.ps1`)
   - Observe-only one-command morning check for realized refresh + gate/readiness/health summary
   - Supports fail-fast guards for gate finalization and automation health decisions
+  - Prints no-longshot practical gate status (`decision_date`, `remaining_days`, threshold progress)
 - `scripts/run_morning_status_daily.ps1`
   - Background-by-default daily runner wrapper for morning status checks
 - `scripts/install_morning_status_daily_task.ps1`

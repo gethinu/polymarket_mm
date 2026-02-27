@@ -125,6 +125,29 @@ def _coverage(rows: list[dict]) -> tuple[str, str]:
     )
 
 
+def _interim_milestone_status(
+    *,
+    data_sufficient_days: int,
+    target_days: int,
+    conditions_pass: bool,
+) -> dict:
+    days = max(0, int(data_sufficient_days))
+    target = max(1, int(target_days))
+    reached = days >= target
+    if not reached:
+        decision = "PENDING"
+    else:
+        decision = "GO" if bool(conditions_pass) else "NO_GO"
+    return {
+        "target_days": int(target),
+        "data_sufficient_days": int(days),
+        "remaining_days": int(max(0, target - days)),
+        "reached": bool(reached),
+        "conditions_pass": bool(conditions_pass),
+        "decision": str(decision),
+    }
+
+
 def judge(
     rows: list[dict],
     min_days: int,
@@ -194,6 +217,16 @@ def judge(
     min_days_pass = int(len(decidable_rows)) >= int(min_days)
     conditions_pass = c1_turnover and c2_hold and c3_expectancy and c4_stability
     go = min_days_pass and conditions_pass
+    interim_7d = _interim_milestone_status(
+        data_sufficient_days=int(len(decidable_rows)),
+        target_days=7,
+        conditions_pass=conditions_pass,
+    )
+    interim_14d = _interim_milestone_status(
+        data_sufficient_days=int(len(decidable_rows)),
+        target_days=14,
+        conditions_pass=conditions_pass,
+    )
 
     days_until_decision = int((decision_date - today).days)
     if today < decision_date:
@@ -258,6 +291,10 @@ def judge(
             "final_decision_ready": bool(final_decision_ready),
             "coverage_all": {"since": all_since, "until": all_until},
             "coverage_data_sufficient": {"since": dec_since, "until": dec_until},
+            "interim_milestones": {
+                "tentative_7d": interim_7d,
+                "intermediate_14d": interim_14d,
+            },
         },
         "conditions": {
             "turnover_day_ge_baseline": {
@@ -343,6 +380,17 @@ def render_text(result: dict) -> str:
         f"{'YES' if bool(summary.get('final_decision_ready')) else 'NO'} "
         f"(decision_stage={str(summary.get('decision_stage') or 'UNKNOWN')})"
     )
+    interim = summary.get("interim_milestones") if isinstance(summary.get("interim_milestones"), dict) else {}
+    m7 = interim.get("tentative_7d") if isinstance(interim.get("tentative_7d"), dict) else {}
+    m14 = interim.get("intermediate_14d") if isinstance(interim.get("intermediate_14d"), dict) else {}
+    if m7 or m14:
+        lines.append(
+            "Interim Milestones: "
+            f"7d={str(m7.get('decision') or 'UNKNOWN')} "
+            f"({int(m7.get('data_sufficient_days') or 0)}/{int(m7.get('target_days') or 7)}) "
+            f"14d={str(m14.get('decision') or 'UNKNOWN')} "
+            f"({int(m14.get('data_sufficient_days') or 0)}/{int(m14.get('target_days') or 14)})"
+        )
     lines.append(
         "Condition 1 turnover/day >= baseline: "
         f"{'PASS' if bool(c1.get('pass')) else 'FAIL'} "

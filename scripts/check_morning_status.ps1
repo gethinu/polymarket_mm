@@ -11,6 +11,9 @@ param(
   [int]$UncorrelatedMinRealizedDaysForCorrelation = 7,
   [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
   [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
+  [string]$NoLongshotPracticalDecisionDate = "2026-03-02",
+  [int]$NoLongshotPracticalSlideDays = 3,
+  [int]$NoLongshotPracticalMinResolvedTrades = 30,
   [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",
   [double]$SimmerAbMaxStaleHours = 30.0,
   [string]$DiscordWebhookEnv = "CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS",
@@ -49,6 +52,9 @@ $argsList = @(
   "--uncorrelated-min-realized-days-for-correlation", [string]$UncorrelatedMinRealizedDaysForCorrelation,
   "--gate-alarm-state-json", $GateAlarmStateJson,
   "--gate-alarm-log-file", $GateAlarmLogFile,
+  "--no-longshot-practical-decision-date", $NoLongshotPracticalDecisionDate,
+  "--no-longshot-practical-slide-days", [string]([Math]::Max(1, [int]$NoLongshotPracticalSlideDays)),
+  "--no-longshot-practical-min-resolved-trades", [string]([Math]::Max(1, [int]$NoLongshotPracticalMinResolvedTrades)),
   "--simmer-ab-decision-json", $SimmerAbDecisionJson,
   "--simmer-ab-max-stale-hours", ([string]$SimmerAbMaxStaleHours)
 )

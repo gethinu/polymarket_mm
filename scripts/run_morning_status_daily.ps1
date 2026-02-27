@@ -13,7 +13,12 @@ param(
   [int]$UncorrelatedMinRealizedDaysForCorrelation = 7,
   [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
   [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
+  [string]$NoLongshotPracticalDecisionDate = "2026-03-02",
+  [int]$NoLongshotPracticalSlideDays = 3,
+  [int]$NoLongshotPracticalMinResolvedTrades = 30,
   [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",
+  [ValidateSet("7d", "14d")]
+  [string]$SimmerAbInterimTarget = "7d",
   [double]$SimmerAbMaxStaleHours = 30.0,
   [string]$DiscordWebhookEnv = "CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS",
   [switch]$NoRefresh,
@@ -28,6 +33,7 @@ param(
   [switch]$FailOnStageNotFinal,
   [switch]$FailOnHealthNoGo,
   [switch]$FailOnSimmerAbFinalNoGo,
+  [switch]$FailOnSimmerAbInterimNoGo,
   [switch]$Background,
   [switch]$NoBackground
 )
@@ -157,7 +163,11 @@ $args = @(
   "--uncorrelated-min-realized-days-for-correlation", "$UncorrelatedMinRealizedDaysForCorrelation",
   "--gate-alarm-state-json", $GateAlarmStateJson,
   "--gate-alarm-log-file", $GateAlarmLogFile,
+  "--no-longshot-practical-decision-date", $NoLongshotPracticalDecisionDate,
+  "--no-longshot-practical-slide-days", ([string]([Math]::Max(1, [int]$NoLongshotPracticalSlideDays))),
+  "--no-longshot-practical-min-resolved-trades", ([string]([Math]::Max(1, [int]$NoLongshotPracticalMinResolvedTrades))),
   "--simmer-ab-decision-json", $SimmerAbDecisionJson,
+  "--simmer-ab-interim-target", $SimmerAbInterimTarget,
   "--simmer-ab-max-stale-hours", ([string]$SimmerAbMaxStaleHours)
 )
 
@@ -183,10 +193,11 @@ if ($FailOnGateNotReady.IsPresent) { $args += "--fail-on-gate-not-ready" }
 if ($FailOnStageNotFinal.IsPresent) { $args += "--fail-on-stage-not-final" }
 if ($FailOnHealthNoGo.IsPresent) { $args += "--fail-on-health-no-go" }
 if ($FailOnSimmerAbFinalNoGo.IsPresent) { $args += "--fail-on-simmer-ab-final-no-go" }
+if ($FailOnSimmerAbInterimNoGo.IsPresent) { $args += "--fail-on-simmer-ab-interim-no-go" }
 
 $discordWebhookEnvLog = if ($DiscordGateAlarm.IsPresent -and -not [string]::IsNullOrWhiteSpace($DiscordWebhookEnv)) { $DiscordWebhookEnv } else { "-" }
-Log ("start strategy_id={0} min_days={1} no_refresh={2} skip_health={3} skip_gate_alarm={4} skip_uncorrelated_portfolio={5} skip_implementation_ledger={6} skip_simmer_ab={7} skip_process_scan={8} fail_simmer_final_no_go={9} simmer_max_stale_h={10} uncorrelated_strategy_ids={11} uncorrelated_corr_th={12} uncorrelated_min_overlap={13} uncorrelated_min_realized={14} discord_webhook_env={15}" -f `
-  $StrategyId, $MinRealizedDays, $NoRefresh.IsPresent, $SkipHealth.IsPresent, $SkipGateAlarm.IsPresent, $SkipUncorrelatedPortfolio.IsPresent, $SkipImplementationLedger.IsPresent, $SkipSimmerAb.IsPresent, $SkipProcessScan.IsPresent, $FailOnSimmerAbFinalNoGo.IsPresent, $SimmerAbMaxStaleHours, $uncorrelatedStrategyIds, $UncorrelatedCorrThresholdAbs, $UncorrelatedMinOverlapDays, $UncorrelatedMinRealizedDaysForCorrelation, $discordWebhookEnvLog)
+Log ("start strategy_id={0} min_days={1} no_refresh={2} skip_health={3} skip_gate_alarm={4} skip_uncorrelated_portfolio={5} skip_implementation_ledger={6} skip_simmer_ab={7} skip_process_scan={8} fail_simmer_final_no_go={9} fail_simmer_interim_no_go={10} simmer_interim_target={11} simmer_max_stale_h={12} uncorrelated_strategy_ids={13} uncorrelated_corr_th={14} uncorrelated_min_overlap={15} uncorrelated_min_realized={16} no_longshot_practical_date={17} no_longshot_practical_slide_days={18} no_longshot_practical_min_resolved={19} discord_webhook_env={20}" -f `
+  $StrategyId, $MinRealizedDays, $NoRefresh.IsPresent, $SkipHealth.IsPresent, $SkipGateAlarm.IsPresent, $SkipUncorrelatedPortfolio.IsPresent, $SkipImplementationLedger.IsPresent, $SkipSimmerAb.IsPresent, $SkipProcessScan.IsPresent, $FailOnSimmerAbFinalNoGo.IsPresent, $FailOnSimmerAbInterimNoGo.IsPresent, $SimmerAbInterimTarget, $SimmerAbMaxStaleHours, $uncorrelatedStrategyIds, $UncorrelatedCorrThresholdAbs, $UncorrelatedMinOverlapDays, $UncorrelatedMinRealizedDaysForCorrelation, $NoLongshotPracticalDecisionDate, $NoLongshotPracticalSlideDays, $NoLongshotPracticalMinResolvedTrades, $discordWebhookEnvLog)
 
 $prevPyUtf8 = [Environment]::GetEnvironmentVariable("PYTHONUTF8", "Process")
 $prevPyIoEncoding = [Environment]::GetEnvironmentVariable("PYTHONIOENCODING", "Process")

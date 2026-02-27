@@ -68,8 +68,8 @@ Primary keys:
 - Status: `ADOPTED` (as of 2026-02-25, revalidated 2026-02-26, observe-only).
 - Scope: Polymarket no-longshot daily monitor + logical-gap scan + forward realized tracker, observe-only.
 - Runtime:
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedFastMaxPages 120`
-  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh --realized-refresh-sec 900 --realized-entry-top-n 0 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -StrictRealizedBandOnly -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedFastMaxPages 120`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh --realized-refresh-sec 900 --realized-entry-top-n 0 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --runner-strict-realized-band-only`
 - Evidence snapshot (2026-02-25 daily summary):
   - Source summary: `logs/no_longshot_daily_summary.txt`
   - Read latest keys: `monthly_return_now`, `rolling_30d_monthly_return`, `monthly_return_now_source`
@@ -89,8 +89,18 @@ Primary keys:
 - Evidence snapshot (2026-02-25 guarded OOS):
   - Source JSON: `logs/no_longshot_daily_oos_guarded.json`
   - `walkforward_oos.capital_return`: `+9.3882%` (`n=36`, span `49.6d`, annualized `+93.59%`, `LOW_CONF span<90d`)
+- Evidence snapshot (2026-02-27 strict-band checkpoint):
+  - Source summary: `logs/no_longshot_daily_summary.txt`
+  - `strict_realized_band_only=True`, `realized_entry_source=fast_72h_lowyes`
+  - `rolling_30d_monthly_return=+9.17%`, `rolling_30d_resolved_trades=20`（new-condition）
 - Decision note: keep this strategy in observe-only; run with fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent) and keep monthly-return claims anchored to latest realized artifacts.
 - Operational gate: treat `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` as authority for monthly return; keep quality review active until resolved sample size is non-trivial, and mark `REVIEW` if the latest summary fast band drifts from `[0.16,0.2]`.
+- Capital gate checkpoint (fixed on 2026-02-27):
+  - Core threshold: `no_longshot_status.rolling_30d_resolved_trades >= 30`（new-condition basis）
+  - Current: `20`（need `10` more）
+  - Recent pace reference (new-condition resolved): `2026-02-25=9`, `2026-02-26=11`（`10/day`）
+  - Fixed practical judgment date: `2026-03-02`（conservative half-speed assumption `5/day` + 1-day buffer）
+  - If threshold is still unmet on `2026-03-02`, keep observe-only and slide judgment date by `+3` calendar days.
 
 3. `link_intake_walletseed_cohort_observe`
 - Status: `ADOPTED` (as of 2026-02-25, observe-only).

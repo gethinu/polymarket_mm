@@ -44,6 +44,7 @@ DEFAULT_ARTIFACT_SPECS = [
     "logs/weather_top30_readiness_daily_run.log:30",
     "logs/weather_mimic_pipeline_daily_run.log:30",
     "logs/no_longshot_daily_run.log:30",
+    "logs/no_longshot_daily_summary.txt:30",
     "?logs/wallet_autopsy_daily_run.log:30",
     "?logs/simmer-ab-daily-report.log:30",
     "logs/morning_status_daily_run.log:30",
@@ -155,17 +156,26 @@ def _run_task_query(task_names: List[str]) -> List[dict]:
         "foreach($n in $names){"
         "  $t=Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue;"
         "  if($null -eq $t){"
-        "    $rows += [PSCustomObject]@{task_name=$n;exists=$false;state='MISSING';last_run_time='';next_run_time='';last_task_result=$null};"
+        "    $rows += [PSCustomObject]@{task_name=$n;exists=$false;state='MISSING';last_run_time='';next_run_time='';last_task_result=$null;action_arguments=''};"
         "    continue;"
         "  }"
         "  $i=Get-ScheduledTaskInfo -TaskName $n -ErrorAction SilentlyContinue;"
+        "  $actionArgs='';"
+        "  if($t -and $t.Actions){"
+        "    $tmp=@();"
+        "    foreach($a in @($t.Actions)){"
+        "      if($null -ne $a -and $a.Arguments){$tmp += [string]$a.Arguments}"
+        "    }"
+        "    if($tmp.Count -gt 0){$actionArgs=($tmp -join ' || ')}"
+        "  }"
         "  $rows += [PSCustomObject]@{"
         "    task_name=$n;"
         "    exists=$true;"
         "    state=[string]$t.State;"
         "    last_run_time=if($i){[string]$i.LastRunTime}else{''};"
         "    next_run_time=if($i){[string]$i.NextRunTime}else{''};"
-        "    last_task_result=if($i){$i.LastTaskResult}else{$null}"
+        "    last_task_result=if($i){$i.LastTaskResult}else{$null};"
+        "    action_arguments=$actionArgs"
         "  };"
         "};"
         "$rows | ConvertTo-Json -Depth 4 -Compress"
@@ -219,6 +229,7 @@ def _run_task_query(task_names: List[str]) -> List[dict]:
                 "last_run_time": _normalize_ps_time(str(r.get("last_run_time") or "")),
                 "next_run_time": _normalize_ps_time(str(r.get("next_run_time") or "")),
                 "last_task_result": r.get("last_task_result"),
+                "action_arguments": str(r.get("action_arguments") or ""),
                 "error": str(r.get("error") or ""),
             }
         )
@@ -432,6 +443,54 @@ def _apply_duplicate_run_guard(task_rows: List[dict]) -> None:
         return
 
 
+def _apply_morning_task_argument_guard(task_rows: List[dict]) -> None:
+    target_name = "MorningStrategyStatusDaily"
+    required_flags = [
+        "-nolongshotpracticaldecisiondate",
+        "-nolongshotpracticalslidedays",
+        "-nolongshotpracticalminresolvedtrades",
+    ]
+    forbidden_flags = [
+        "-norefresh",
+        "-skiphealth",
+        "-skipgatealarm",
+        "-skipuncorrelatedportfolio",
+        "-skipimplementationledger",
+        "-skipsimmerab",
+    ]
+
+    for row in task_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("task_name") or "") != target_name:
+            continue
+        if not bool(row.get("exists")):
+            return
+        status = str(row.get("status") or "").upper()
+        if status in {"MISSING", "OPTIONAL_MISSING", "ERROR"}:
+            return
+        args_raw = str(row.get("action_arguments") or "").strip()
+        if not args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "missing_action_arguments"
+            return
+
+        args = args_raw.lower()
+        missing = [f for f in required_flags if f not in args]
+        forbidden = [f for f in forbidden_flags if f in args]
+        if not missing and not forbidden:
+            return
+
+        notes: List[str] = []
+        if missing:
+            notes.append("missing_required_flags=" + ",".join(missing))
+        if forbidden:
+            notes.append("forbidden_flags=" + ",".join(forbidden))
+        row["status"] = "INVALID_CONTENT"
+        row["status_note"] = "; ".join(notes)
+        return
+
+
 def _artifact_rows(specs: List[Tuple[str, float, bool]]) -> List[dict]:
     now = now_utc()
     out: List[dict] = []
@@ -576,6 +635,30 @@ def _apply_morning_kpi_marker_check(artifact_rows: List[dict]) -> None:
             else:
                 row["status"] = "OPTIONAL_INVALID_CONTENT"
             row["status_note"] = f"missing marker: {marker}"
+        return
+
+
+def _apply_no_longshot_summary_mode_check(artifact_rows: List[dict]) -> None:
+    target_suffix = r"logs\no_longshot_daily_summary.txt"
+    required_marker = "- strict_realized_band_only: True"
+
+    for row in artifact_rows:
+        if not isinstance(row, dict):
+            continue
+        path_text = str(row.get("path") or "").replace("/", "\\").lower()
+        if not path_text.endswith(target_suffix):
+            continue
+        status = str(row.get("status") or "").upper()
+        # Freshness check handles missing/stale cases; content check applies only to currently fresh summary.
+        if status != "FRESH":
+            return
+        p = Path(str(row.get("path") or ""))
+        if not _has_morning_kpi_marker(p, marker=required_marker, tail_lines=400):
+            if bool(row.get("required", True)):
+                row["status"] = "INVALID_CONTENT"
+            else:
+                row["status"] = "OPTIONAL_INVALID_CONTENT"
+            row["status_note"] = f"missing marker: {required_marker}"
         return
 
 
@@ -738,17 +821,20 @@ def main() -> int:
     art_rows = _artifact_rows(parsed_specs)
     _apply_strategy_register_kpi_key_check(art_rows)
     _apply_morning_kpi_marker_check(art_rows)
+    _apply_no_longshot_summary_mode_check(art_rows)
     _apply_simmer_ab_supervisor_state_check(art_rows)
     _apply_soft_fail_overrides(task_rows, art_rows)
     _apply_supervisor_overrides(task_rows)
     _apply_duplicate_run_guard(task_rows)
+    _apply_morning_task_argument_guard(task_rows)
 
     reasons: List[str] = []
     bad_task = [
         r
         for r in task_rows
         if bool(r.get("required", True))
-        and str(r.get("status")) in {"MISSING", "ERROR", "LAST_RUN_FAILED", "DISABLED", "DUPLICATE_RUN_RISK"}
+        and str(r.get("status"))
+        in {"MISSING", "ERROR", "LAST_RUN_FAILED", "DISABLED", "DUPLICATE_RUN_RISK", "INVALID_CONTENT"}
     ]
     optional_missing_tasks = [r for r in task_rows if str(r.get("status")) == "OPTIONAL_MISSING"]
     stale_art = [r for r in art_rows if str(r.get("status")) in {"MISSING", "STALE", "INVALID_CONTENT"}]

@@ -605,6 +605,7 @@ Polymarket strategy gate stage alarm (observe-only):
 - Detect 3-stage gate transitions and `capital_gate_core` transitions from strategy snapshot and emit one alarm event:
   - `python scripts/check_strategy_gate_alarm.py`
   - `python scripts/check_strategy_gate_alarm.py --snapshot-json logs/strategy_register_latest.json --state-json logs/strategy_gate_alarm_state.json --log-file logs/strategy_gate_alarm.log --strategy-id weather_clob_arb_buckets_observe --discord`
+  - `python scripts/check_strategy_gate_alarm.py --no-longshot-practical-decision-date 2026-03-02 --no-longshot-practical-slide-days 3 --no-longshot-practical-min-resolved-trades 30`
   - `python scripts/check_strategy_gate_alarm.py --snapshot-json logs/strategy_register_latest.json --state-json logs/strategy_gate_alarm_state.json --log-file logs/strategy_gate_alarm.log --strategy-id weather_clob_arb_buckets_observe --discord --discord-webhook-env CLOBBOT_DISCORD_WEBHOOK_URL_CHECK_MORNING_STATUS`
 - Key flags:
   - `--snapshot-json`（入力スナップショットJSON。既定は `logs/strategy_register_latest.json`）
@@ -612,9 +613,13 @@ Polymarket strategy gate stage alarm (observe-only):
   - `--log-file`（アラーム追記ログ。既定は `logs/strategy_gate_alarm.log`）
   - `--strategy-id`（通知対象戦略ID。既定 `weather_clob_arb_buckets_observe`）
   - `--capital-min-resolved-trades`（`capital_gate_core=ELIGIBLE_REVIEW` に必要な `rolling_30d_resolved_trades` 下限。既定 `30`）
+  - `--no-longshot-practical-decision-date`（no-longshot practical判定の初期日付。既定 `2026-03-02`）
+  - `--no-longshot-practical-slide-days`（判定日到達時にthreshold未達なら次回判定日を何日スライドするか。既定 `3`）
+  - `--no-longshot-practical-min-resolved-trades`（no-longshot practical判定のresolved閾値。既定 `30`）
   - `--discord`（Webhook設定時に遷移アラームをDiscord通知）
   - `--discord-webhook-env`（Discord webhook URL を読む環境変数名。指定時はこの変数のみを参照）
   - `--pretty`
+  - practical gate は `rolling_30d_resolved_trades` の即時到達（`>=threshold`）と、判定日未達時の自動スライドを state/log に記録する。
 
 Morning strategy gate check (observe-only):
 - Run one command to refresh and print concise gate status:
@@ -640,16 +645,25 @@ Morning strategy gate check (observe-only):
   - `--uncorrelated-min-realized-days-for-correlation`（realized系列採用に必要な最小日数。既定 `7`）
   - `--gate-alarm-state-json`（gateアラーム状態JSON。既定 `logs/strategy_gate_alarm_state.json`）
   - `--gate-alarm-log-file`（gateアラーム追記ログ。既定 `logs/strategy_gate_alarm.log`）
+  - `--no-longshot-practical-decision-date`（no-longshot practical判定初期日付。既定 `2026-03-02`）
+  - `--no-longshot-practical-slide-days`（判定日未達時スライド日数。既定 `3`）
+  - `--no-longshot-practical-min-resolved-trades`（no-longshot practical resolved閾値。既定 `30`）
   - `--discord-gate-alarm`（gate遷移検知時にDiscord通知）
   - `--discord-webhook-env`（`--discord-gate-alarm` 時に `check_strategy_gate_alarm.py --discord-webhook-env` へ透過）
   - `--skip-simmer-ab`（`logs/simmer-ab-decision-latest.json` 読み取りを省略）
   - `--simmer-ab-decision-json`（Simmer A/B 判定JSON。既定 `logs/simmer-ab-decision-latest.json`）
+  - `--simmer-ab-interim-target`（`--fail-on-simmer-ab-interim-no-go` で評価する中間ゲート。`7d` / `14d`、既定 `7d`）
   - `--simmer-ab-max-stale-hours`（Simmer判定JSON鮮度の許容上限時間。既定 `30`）
   - `--fail-on-simmer-ab-final-no-go`（Simmer判定が `decision_stage=FINAL` かつ `decision!=GO` の場合、または判定JSON欠損時に非0終了）
+  - `--fail-on-simmer-ab-interim-no-go`（選択した中間ゲートが `reached=true` かつ `decision!=GO` の場合に非0終了）
   - `--fail-on-gate-not-ready`（`realized_30d_gate.decision != READY_FOR_JUDGMENT` で非0終了）
   - `--fail-on-stage-not-final`（`realized_30d_gate.decision_3stage != READY_FINAL` で非0終了）
   - `--fail-on-health-no-go`（`automation_health.decision != GO` で非0終了）
   - `--skip-process-scan`（refresh時の process scan を省略）
+  - health JSON に `logs/simmer_ab_supervisor_state.json` artifact 行がある場合、標準出力に `simmer_ab_supervisor_health=<status> age_hours=<...> max_allowed=<...>` を追記
+  - gate alarm state に practical 情報があれば、標準出力に `no_longshot_practical_gate=<status> decision_date=<...> remaining_days=<...> resolved=<n>/<threshold>` を追記
+  - `logs/simmer-ab-decision-latest.json` に `summary.interim_milestones` がある場合、標準出力に `simmer_ab_interim=7d:<decision> (...) 14d:<decision> (...)` を追記
+  - `--fail-on-simmer-ab-interim-no-go` 指定時は `simmer_ab_interim_gate=PASS|WAIT|FAIL` を出力（`FAIL` で exit code 7）
 
 Morning status daily runner (observe-only):
 - PowerShell runner (background by default):
@@ -662,12 +676,12 @@ Morning status daily runner (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_morning_status_daily_task.ps1 -NoBackground -StartTime 08:05 -FailOnSimmerAbFinalNoGo -RunNow`
 - Key flags:
-  - runner: `-StrategyId`, `-MinRealizedDays`, `-SnapshotJson`, `-HealthJson`, `-UncorrelatedJson`, `-UncorrelatedStrategyIds`, `-UncorrelatedCorrThresholdAbs`, `-UncorrelatedMinOverlapDays`, `-UncorrelatedMinRealizedDaysForCorrelation`, `-GateAlarmStateJson`, `-GateAlarmLogFile`, `-SimmerAbDecisionJson`, `-SimmerAbMaxStaleHours`
+  - runner: `-StrategyId`, `-MinRealizedDays`, `-SnapshotJson`, `-HealthJson`, `-UncorrelatedJson`, `-UncorrelatedStrategyIds`, `-UncorrelatedCorrThresholdAbs`, `-UncorrelatedMinOverlapDays`, `-UncorrelatedMinRealizedDaysForCorrelation`, `-GateAlarmStateJson`, `-GateAlarmLogFile`, `-NoLongshotPracticalDecisionDate`, `-NoLongshotPracticalSlideDays`, `-NoLongshotPracticalMinResolvedTrades`, `-SimmerAbDecisionJson`, `-SimmerAbInterimTarget`, `-SimmerAbMaxStaleHours`
   - runner: `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipUncorrelatedPortfolio`, `-SkipImplementationLedger`, `-SkipSimmerAb`, `-SkipProcessScan`, `-DiscordGateAlarm`, `-DiscordWebhookEnv`
-  - runner: `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-FailOnSimmerAbFinalNoGo`, `-NoBackground`
+  - runner: `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-FailOnSimmerAbFinalNoGo`, `-FailOnSimmerAbInterimNoGo`, `-NoBackground`
   - runner は `scripts/check_morning_status.py` を実行し、結果を `logs/morning_status_daily_run.log` に追記する（既定refresh時は `logs/uncorrelated_portfolio_proxy_analysis_latest.json` と `docs/llm/IMPLEMENTATION_LEDGER.md` も再生成）
   - runner は実行後に `scripts/report_no_longshot_monthly_return.py --json` を参照し、`logs/morning_status_daily_run.log` へ canonical 月利キー（`no_longshot.monthly_return_now_text/source` 等）を1行追記する
-  - installer: `-TaskName`, `-StartTime`, `-StrategyId`, `-MinRealizedDays`, `-UncorrelatedJson`, `-UncorrelatedStrategyIds`, `-UncorrelatedCorrThresholdAbs`, `-UncorrelatedMinOverlapDays`, `-UncorrelatedMinRealizedDaysForCorrelation`, `-SimmerAbDecisionJson`, `-SimmerAbMaxStaleHours`, `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipUncorrelatedPortfolio`, `-SkipImplementationLedger`, `-SkipSimmerAb`, `-SkipProcessScan`, `-DiscordGateAlarm`, `-DiscordWebhookEnv`, `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-FailOnSimmerAbFinalNoGo`, `-RunNow`
+  - installer: `-TaskName`, `-StartTime`, `-StrategyId`, `-MinRealizedDays`, `-UncorrelatedJson`, `-UncorrelatedStrategyIds`, `-UncorrelatedCorrThresholdAbs`, `-UncorrelatedMinOverlapDays`, `-UncorrelatedMinRealizedDaysForCorrelation`, `-NoLongshotPracticalDecisionDate`, `-NoLongshotPracticalSlideDays`, `-NoLongshotPracticalMinResolvedTrades`, `-SimmerAbDecisionJson`, `-SimmerAbInterimTarget`, `-SimmerAbMaxStaleHours`, `-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipUncorrelatedPortfolio`, `-SkipImplementationLedger`, `-SkipSimmerAb`, `-SkipProcessScan`, `-DiscordGateAlarm`, `-DiscordWebhookEnv`, `-FailOnGateNotReady`, `-FailOnStageNotFinal`, `-FailOnHealthNoGo`, `-FailOnSimmerAbFinalNoGo`, `-FailOnSimmerAbInterimNoGo`, `-RunNow`
   - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
 
 Automation health report (observe-only):
@@ -683,14 +697,16 @@ Automation health report (observe-only):
   - optional: `WalletAutopsyDailyReport`（未導入なら `OPTIONAL_MISSING` で NO_GO にはしない）
 - Default artifact checks include:
   - `logs/strategy_register_latest.json`, `logs/clob_arb_realized_daily.jsonl`, `logs/strategy_realized_pnl_daily.jsonl`
-  - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`, `logs/morning_status_daily_run.log`
+  - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`, `logs/no_longshot_daily_summary.txt`, `logs/morning_status_daily_run.log`
   - optional: `logs/wallet_autopsy_daily_run.log`（存在すれば鮮度判定）
   - optional: `logs/simmer-ab-daily-report.log`（存在すれば鮮度判定）
   - optional: `logs/simmer-ab-decision-latest.json`（存在すれば鮮度判定、未作成なら `OPTIONAL_MISSING` で NO_GO にはしない）
   - optional: `logs/simmer_ab_supervisor_state.json`（存在すれば鮮度判定。既定 max age 6h）
   - `logs/strategy_register_latest.json` が fresh な場合、authority key（`no_longshot_status.monthly_return_now_text/source/new_condition/all`, `realized_30d_gate.decision`）の存在を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
   - `monthly_return_now_text` が `n/a` 以外なのに `monthly_return_now_source` が `realized_rolling_30d` 系でない場合は `INVALID_CONTENT` で `NO_GO`
+  - `logs/no_longshot_daily_summary.txt` が fresh な場合、`- strict_realized_band_only: True` を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
   - `logs/morning_status_daily_run.log` が fresh な場合、末尾付近に `kpi[post] no_longshot.monthly_return_now_text=` を含むことを必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
+  - `MorningStrategyStatusDaily` task action 引数は practical gate 運用必須（`-NoLongshotPracticalDecisionDate`, `-NoLongshotPracticalSlideDays`, `-NoLongshotPracticalMinResolvedTrades`）かつ skip系フラグ（`-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipUncorrelatedPortfolio`, `-SkipImplementationLedger`, `-SkipSimmerAb`）未指定を必須確認（違反時は task `INVALID_CONTENT` で `NO_GO`）
   - `logs/simmer_ab_supervisor_state.json` が fresh な場合、`mode=run` / `supervisor_running=true` / `supervisor_pid` 生存 / enabled job の `running=true` かつ PID 生存を必須確認（不整合は `INVALID_CONTENT` で `NO_GO`）
 - Soft-fail behavior:
   - `LastTaskResult=0xC000013A (3221225786)` または `267014` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する（`WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `WalletAutopsyDailyReport`, `SimmerABDailyReport`）。
@@ -1052,6 +1068,7 @@ Simmer ($SIM) ping-pong demo:
   - `python scripts/judge_simmer_ab_decision.py --history-file logs/simmer-ab-daily-compare-history.jsonl --min-days 25`
   - `python scripts/judge_simmer_ab_decision.py --history-file logs/simmer-ab-daily-compare-history.jsonl --min-days 25 --decision-date 2026-03-22`
   - data-sufficient rows（`INSUFFICIENT`除外）を日次集約し、4条件の Pass/Fail と `GO/NO_GO`、推奨アクションを出力
+  - 出力JSON `summary.interim_milestones` に 7日暫定 (`tentative_7d`) / 14日中間 (`intermediate_14d`) の進捗と `PENDING|GO|NO_GO` を含む
   - key flags: `--history-file`, `--min-days`, `--expectancy-ratio-threshold`, `--decision-date`, `--today`, `--fail-on-final-no-go`, `--output-file`, `--output-json`
 - A/B daily helper: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_simmer_ab_daily_report.ps1`
   - compare実行後に `judge_simmer_ab_decision.py` を呼び、`logs/simmer-ab-decision-latest.txt/.json` を更新

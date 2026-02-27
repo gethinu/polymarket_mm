@@ -274,6 +274,7 @@ Morning status daily runner (observe-only):
   - `logs/strategy_gate_alarm.log`, `logs/strategy_gate_alarm_state.json`
   - `logs/automation_health_latest.json`, `logs/automation_health_latest.txt`
   - `docs/llm/IMPLEMENTATION_LEDGER.md`（`--skip-implementation-ledger` 指定時は更新しない）
+- no-longshot practical gate 進捗（判定日/残日数/threshold到達）も `logs/strategy_gate_alarm_state.json` から参照する。
 
 Polymarket CLOB realized PnL daily capture (observe-only):
 - Daily series JSONL: `logs/clob_arb_realized_daily.jsonl`
@@ -308,6 +309,13 @@ Polymarket strategy gate stage alarm (observe-only):
   - `decision_3stage` transition info (strategy gate)
   - `capital_gate_core` transition info (`HOLD` / `ELIGIBLE_REVIEW`)
   - `rolling_30d_resolved_trades` and `capital_min_resolved_trades`
+  - no-longshot practical gate info:
+    - `no_longshot_practical_status`
+    - `no_longshot_practical_active_decision_date`
+    - `no_longshot_practical_remaining_days`
+    - `no_longshot_practical_threshold_met`
+    - `no_longshot_practical_rollover_count`
+    - `no_longshot_practical_last_rollover_on`
 
 Automation health report (observe-only):
 - Latest health JSON: `logs/automation_health_latest.json`

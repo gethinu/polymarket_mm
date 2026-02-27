@@ -96,6 +96,8 @@ def test_judge_provisional_go_when_all_conditions_pass():
     assert result["decision"] == "GO"
     assert result["summary"]["decision_stage"] == "PROVISIONAL"
     assert result["summary"]["min_days_pass"] is True
+    assert result["summary"]["interim_milestones"]["tentative_7d"]["decision"] == "PENDING"
+    assert result["summary"]["interim_milestones"]["intermediate_14d"]["decision"] == "PENDING"
     assert result["conditions"]["turnover_day_ge_baseline"]["pass"] is True
     assert result["conditions"]["median_hold_shorter_than_baseline"]["pass"] is True
     assert result["conditions"]["expectancy_not_worse_than_10pct"]["pass"] is True
@@ -239,6 +241,46 @@ def test_judge_prefers_data_sufficient_row_per_day():
     assert result["summary"]["daily_rows"] == 1
     assert result["summary"]["data_sufficient_days"] == 1
     assert result["decision"] == "GO"
+
+
+def test_interim_milestones_reached_and_go_when_conditions_pass():
+    rows = []
+    for i in range(14):
+        day0 = dt.datetime(2026, 3, 1) + dt.timedelta(days=i)
+        day1 = day0 + dt.timedelta(days=1)
+        rows.append(
+            _row(
+                since=day0.strftime("%Y-%m-%d %H:%M:%S"),
+                until=day1.strftime("%Y-%m-%d %H:%M:%S"),
+                ts=(day1 + dt.timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S"),
+                data_sufficient=True,
+                base_turnover=10.0,
+                cand_turnover=12.0,
+                base_hold_sec=60.0,
+                cand_hold_sec=40.0,
+                base_expectancy=1.0,
+                cand_expectancy=1.0,
+                base_errors=0,
+                cand_errors=0,
+                base_halts=0,
+                cand_halts=0,
+            )
+        )
+
+    result = mod.judge(
+        rows=rows,
+        min_days=25,
+        expectancy_ratio_threshold=0.9,
+        decision_date=dt.date(2026, 3, 22),
+        today=dt.date(2026, 3, 15),
+    )
+
+    m7 = result["summary"]["interim_milestones"]["tentative_7d"]
+    m14 = result["summary"]["interim_milestones"]["intermediate_14d"]
+    assert m7["reached"] is True
+    assert m14["reached"] is True
+    assert m7["decision"] == "GO"
+    assert m14["decision"] == "GO"
 
 
 def test_cli_fail_on_final_no_go_exit_code(tmp_path: Path):

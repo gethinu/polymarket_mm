@@ -131,11 +131,11 @@ function Stop-NoLongshotDaemonProcesses([string]$RepoRoot) {
 
   $stopped = @()
   foreach ($row in @($rows)) {
-    $pid = [int]$row.ProcessId
-    if ($pid -le 0) { continue }
+    $procId = [int]$row.ProcessId
+    if ($procId -le 0) { continue }
     try {
-      Stop-Process -Id $pid -Force -ErrorAction Stop
-      $stopped += $pid
+      Stop-Process -Id $procId -Force -ErrorAction Stop
+      $stopped += $procId
     } catch {
     }
   }

@@ -209,6 +209,38 @@ def _file_age_hours(path: Path) -> Optional[float]:
     return max(0.0, float((now - mtime).total_seconds() / 3600.0))
 
 
+def _find_health_artifact_row(payload: Dict[str, Any], suffix: str) -> Optional[Dict[str, Any]]:
+    artifacts = payload.get("artifacts") if isinstance(payload.get("artifacts"), list) else []
+    target = str(suffix or "").replace("/", "\\").lower().strip()
+    if not target:
+        return None
+    for row in artifacts:
+        if not isinstance(row, dict):
+            continue
+        path = str(row.get("path") or "").replace("/", "\\").lower().strip()
+        if path.endswith(target):
+            return row
+    return None
+
+
+def _resolve_simmer_interim_target(summary: Dict[str, Any], target: str) -> Dict[str, Any]:
+    interim = summary.get("interim_milestones") if isinstance(summary.get("interim_milestones"), dict) else {}
+    t = str(target or "").strip().lower()
+    key = "tentative_7d" if t == "7d" else "intermediate_14d"
+    row = interim.get(key) if isinstance(interim.get(key), dict) else {}
+    if not row:
+        return {
+            "target_key": key,
+            "decision": "UNKNOWN",
+            "reached": False,
+            "data_sufficient_days": _as_int(summary.get("data_sufficient_days"), 0),
+            "target_days": 7 if t == "7d" else 14,
+        }
+    out = dict(row)
+    out["target_key"] = key
+    return out
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Morning strategy gate check (observe-only).")
     p.add_argument("--no-refresh", action="store_true", help="Skip refresh commands and only read existing snapshot.")
@@ -280,6 +312,23 @@ def main() -> int:
         help="Strategy gate alarm log file path.",
     )
     p.add_argument(
+        "--no-longshot-practical-decision-date",
+        default="2026-03-02",
+        help="Initial practical judgment date for no_longshot resolved-trade gate (YYYY-MM-DD).",
+    )
+    p.add_argument(
+        "--no-longshot-practical-slide-days",
+        type=int,
+        default=3,
+        help="When practical gate is unmet on judgment date, slide the date by this many days.",
+    )
+    p.add_argument(
+        "--no-longshot-practical-min-resolved-trades",
+        type=int,
+        default=30,
+        help="Resolved-trade threshold for no_longshot practical gate.",
+    )
+    p.add_argument(
         "--discord-gate-alarm",
         action="store_true",
         help="Pass --discord to check_strategy_gate_alarm.py (transition notification).",
@@ -313,6 +362,17 @@ def main() -> int:
         "--fail-on-simmer-ab-final-no-go",
         action="store_true",
         help="Exit non-zero when Simmer A/B decision is FINAL and not GO (or decision JSON is missing/invalid).",
+    )
+    p.add_argument(
+        "--fail-on-simmer-ab-interim-no-go",
+        action="store_true",
+        help="Exit non-zero when selected Simmer A/B interim milestone is reached and decision is not GO.",
+    )
+    p.add_argument(
+        "--simmer-ab-interim-target",
+        choices=["7d", "14d"],
+        default="7d",
+        help="Interim milestone target used by --fail-on-simmer-ab-interim-no-go (default: 7d).",
     )
     p.add_argument(
         "--simmer-ab-max-stale-hours",
@@ -367,6 +427,12 @@ def main() -> int:
                 str(args.gate_alarm_log_file),
                 "--strategy-id",
                 str(args.strategy_id),
+                "--no-longshot-practical-decision-date",
+                str(args.no_longshot_practical_decision_date),
+                "--no-longshot-practical-slide-days",
+                str(max(1, int(args.no_longshot_practical_slide_days))),
+                "--no-longshot-practical-min-resolved-trades",
+                str(max(1, int(args.no_longshot_practical_min_resolved_trades))),
             ]
             if args.discord_gate_alarm:
                 alarm_cmd.append("--discord")
@@ -510,6 +576,40 @@ def main() -> int:
             f"rolling_30d_resolved={no_longshot_resolved_all}"
         )
     print(f"no_longshot_confidence={no_longshot_conf} threshold_resolved_trades>=30")
+    gate_alarm_state_path = resolve_repo_path(
+        str(args.gate_alarm_state_json),
+        "logs/strategy_gate_alarm_state.json",
+    )
+    if gate_alarm_state_path.exists():
+        try:
+            gate_alarm_state = load_json(gate_alarm_state_path)
+        except Exception:
+            gate_alarm_state = {}
+        practical_status = str(gate_alarm_state.get("no_longshot_practical_status") or "").strip()
+        if practical_status:
+            practical_date = str(gate_alarm_state.get("no_longshot_practical_active_decision_date") or "n/a")
+            practical_remaining = _as_int(gate_alarm_state.get("no_longshot_practical_remaining_days"), -1)
+            practical_threshold_met = bool(gate_alarm_state.get("no_longshot_practical_threshold_met"))
+            practical_min_resolved = _as_int(
+                gate_alarm_state.get("no_longshot_practical_min_resolved_trades"),
+                max(1, int(args.no_longshot_practical_min_resolved_trades)),
+            )
+            practical_rollover = bool(gate_alarm_state.get("no_longshot_practical_rollover_triggered_last_run"))
+            practical_rollover_from = str(gate_alarm_state.get("no_longshot_practical_rollover_from_date_last_run") or "")
+            practical_rollover_to = str(gate_alarm_state.get("no_longshot_practical_rollover_to_date_last_run") or "")
+            practical_remaining_txt = str(practical_remaining) if practical_remaining >= 0 else "n/a"
+            print(
+                "no_longshot_practical_gate="
+                f"{practical_status} decision_date={practical_date} "
+                f"remaining_days={practical_remaining_txt} "
+                f"threshold_met={'yes' if practical_threshold_met else 'no'} "
+                f"resolved={no_longshot_resolved}/{practical_min_resolved}"
+            )
+            if practical_rollover:
+                print(
+                    "no_longshot_practical_rollover="
+                    f"{practical_rollover_from or '-'}->{practical_rollover_to or '-'}"
+                )
     print(f"readiness_strict=GO {strict_go}/{strict_cnt} readiness_quality=GO {quality_go}/{quality_cnt}")
     print(f"snapshot={snapshot_path}")
 
@@ -518,6 +618,7 @@ def main() -> int:
     simmer_decision_stage = "UNKNOWN"
     simmer_final_ready = False
     simmer_file_age_hours: Optional[float] = None
+    simmer_summary: Dict[str, Any] = {}
 
     if not args.skip_simmer_ab:
         simmer_decision_path = resolve_repo_path(
@@ -555,6 +656,21 @@ def main() -> int:
                 simmer_stage = str(simmer_summary.get("decision_stage") or "UNKNOWN")
                 simmer_decision_stage = simmer_stage
                 simmer_final_ready = bool(simmer_summary.get("final_decision_ready"))
+                simmer_interim = (
+                    simmer_summary.get("interim_milestones")
+                    if isinstance(simmer_summary.get("interim_milestones"), dict)
+                    else {}
+                )
+                simmer_interim_7 = (
+                    simmer_interim.get("tentative_7d")
+                    if isinstance(simmer_interim.get("tentative_7d"), dict)
+                    else {}
+                )
+                simmer_interim_14 = (
+                    simmer_interim.get("intermediate_14d")
+                    if isinstance(simmer_interim.get("intermediate_14d"), dict)
+                    else {}
+                )
                 simmer_passed, simmer_total = _count_condition_passes(simmer_conditions)
                 simmer_action = str(simmer_payload.get("recommended_action") or "-")
                 print(
@@ -576,6 +692,15 @@ def main() -> int:
                     f"final_ready={'yes' if simmer_final_ready else 'no'} stage={simmer_stage}"
                 )
                 print(
+                    "simmer_ab_interim="
+                    f"7d:{str(simmer_interim_7.get('decision') or 'UNKNOWN')} "
+                    f"({int(simmer_interim_7.get('data_sufficient_days') or simmer_days)}/"
+                    f"{int(simmer_interim_7.get('target_days') or 7)}) "
+                    f"14d:{str(simmer_interim_14.get('decision') or 'UNKNOWN')} "
+                    f"({int(simmer_interim_14.get('data_sufficient_days') or simmer_days)}/"
+                    f"{int(simmer_interim_14.get('target_days') or 14)})"
+                )
+                print(
                     "simmer_ab_freshness_hours="
                     f"{(simmer_file_age_hours if simmer_file_age_hours is not None else -1.0):.2f} "
                     f"max_allowed={float(args.simmer_ab_max_stale_hours):.2f}"
@@ -595,6 +720,23 @@ def main() -> int:
         reasons = health_payload.get("reasons") if isinstance(health_payload.get("reasons"), list) else []
         reason_txt = "; ".join(str(x) for x in reasons if str(x).strip()) if reasons else "-"
         print(f"automation_health={health_decision} reasons={reason_txt}")
+        simmer_supervisor_row = _find_health_artifact_row(
+            health_payload,
+            r"logs\simmer_ab_supervisor_state.json",
+        )
+        if simmer_supervisor_row is not None:
+            sup_status = str(simmer_supervisor_row.get("status") or "UNKNOWN")
+            sup_age = _as_float(simmer_supervisor_row.get("age_hours"), None)
+            sup_max_age = _as_float(simmer_supervisor_row.get("max_age_hours"), None)
+            sup_note = str(simmer_supervisor_row.get("status_note") or "").strip()
+            sup_age_text = "n/a" if sup_age is None else f"{sup_age:.2f}"
+            sup_max_text = "n/a" if sup_max_age is None else f"{sup_max_age:.2f}"
+            sup_note_text = f" note={sup_note}" if sup_note else ""
+            print(
+                "simmer_ab_supervisor_health="
+                f"{sup_status} age_hours={sup_age_text} max_allowed={sup_max_text}"
+                f"{sup_note_text}"
+            )
     elif not args.skip_health:
         print("automation_health=UNKNOWN reasons=health_json_missing_or_invalid")
 
@@ -700,6 +842,47 @@ def main() -> int:
                 "simmer_ab_final_gate=WAIT "
                 f"decision={simmer_decision_value} stage={simmer_decision_stage}"
             )
+
+    if args.fail_on_simmer_ab_interim_no_go:
+        interim_target = str(args.simmer_ab_interim_target or "7d").strip().lower()
+        if args.skip_simmer_ab:
+            print("simmer_ab_interim_gate=SKIPPED_BY_FLAG")
+        elif not simmer_decision_available:
+            print("simmer_ab_interim_gate=FAIL reason=decision_missing_or_invalid")
+            return 7
+        elif simmer_file_age_hours is None or simmer_file_age_hours > float(args.simmer_ab_max_stale_hours):
+            stale_text = "unknown" if simmer_file_age_hours is None else f"{simmer_file_age_hours:.2f}"
+            print(
+                "simmer_ab_interim_gate=FAIL "
+                f"reason=decision_stale age_hours={stale_text} "
+                f"max_allowed={float(args.simmer_ab_max_stale_hours):.2f}"
+            )
+            return 7
+        else:
+            row = _resolve_simmer_interim_target(simmer_summary, interim_target)
+            interim_decision = str(row.get("decision") or "UNKNOWN")
+            interim_reached = bool(row.get("reached"))
+            interim_days = _as_int(row.get("data_sufficient_days"), 0)
+            interim_target_days = _as_int(row.get("target_days"), 7 if interim_target == "7d" else 14)
+            if interim_reached and interim_decision != "GO":
+                print(
+                    "simmer_ab_interim_gate=FAIL "
+                    f"target={interim_target} decision={interim_decision} "
+                    f"days={interim_days}/{interim_target_days}"
+                )
+                return 7
+            if interim_reached and interim_decision == "GO":
+                print(
+                    "simmer_ab_interim_gate=PASS "
+                    f"target={interim_target} decision=GO "
+                    f"days={interim_days}/{interim_target_days}"
+                )
+            else:
+                print(
+                    "simmer_ab_interim_gate=WAIT "
+                    f"target={interim_target} decision={interim_decision} "
+                    f"days={interim_days}/{interim_target_days}"
+                )
 
     if args.fail_on_gate_not_ready and gate_decision != "READY_FOR_JUDGMENT":
         return 3

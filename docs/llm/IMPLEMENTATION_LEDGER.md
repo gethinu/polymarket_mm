@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `33`
-- worktree_changes: `20`
+- commits_scanned: `35`
+- worktree_changes: `19`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,21 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 18 | `2026-02-27 09:09` | `a19a562f` | docs: refresh implementation ledger after ops commits |
+| `docs_llm` | 20 | `2026-02-27 12:27` | `8c5b329e` | 20260227_2 |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
-| `no_longshot` | 12 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
-| `security_or_ops` | 9 | `2026-02-27 09:07` | `abe22853` | fix: enforce realized monthly source in automation health check |
-| `simmer_clob` | 20 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
+| `no_longshot` | 13 | `2026-02-27 12:26` | `b2e0f847` | 20260227 |
+| `security_or_ops` | 10 | `2026-02-27 12:26` | `b2e0f847` | 20260227 |
+| `simmer_clob` | 21 | `2026-02-27 12:26` | `b2e0f847` | 20260227 |
 | `strategy_register` | 7 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
-| `task_automation` | 14 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
+| `task_automation` | 15 | `2026-02-27 12:26` | `b2e0f847` | 20260227 |
 | `weather_pipeline` | 6 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-27 12:27` | `8c5b329e` | `docs_llm` | 20260227_2 | `docs/llm/IMPLEMENTATION_LEDGER.md` |
+| `2026-02-27 12:26` | `b2e0f847` | `docs_llm,no_longshot,security_or_ops,simmer_clob,task_automation` | 20260227 | `configs/bot_supervisor.observe.json`, `configs/bot_supervisor.simmer_ab.observe.json`, `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, +16 |
 | `2026-02-27 09:09` | `a19a562f` | `docs_llm` | docs: refresh implementation ledger after ops commits | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `2026-02-27 09:08` | `05342527` | `misc` | docs: label uncorrelated memo scope for explicit cohorts | `docs/memo_uncorrelated_portfolio_20260227.txt`, `docs/memo_uncorrelated_portfolio_latest.txt`, `scripts/report_uncorrelated_portfolio.py` |
 | `2026-02-27 09:07` | `abe22853` | `docs_llm,security_or_ops` | fix: enforce realized monthly source in automation health check | `docs/llm/INTERFACES.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
@@ -70,26 +72,25 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `configs/bot_supervisor.observe.json` |
-| `A` | `configs/bot_supervisor.simmer_ab.observe.json` |
 | `M` | `docs/llm/ARCHITECTURE.md` |
 | `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STATE.md` |
-| `M` | `scripts/compare_simmer_ab_daily.py` |
-| `M` | `scripts/install_no_longshot_daily_task.ps1` |
-| `A` | `scripts/install_simmer_ab_observe_task.ps1` |
-| `M` | `scripts/no_longshot_daily_daemon.py` |
+| `M` | `docs/llm/STRATEGY.md` |
+| `M` | `scripts/check_morning_status.ps1` |
+| `M` | `scripts/check_morning_status.py` |
+| `M` | `scripts/check_strategy_gate_alarm.py` |
+| `M` | `scripts/install_morning_status_daily_task.ps1` |
+| `M` | `scripts/judge_simmer_ab_decision.py` |
 | `M` | `scripts/report_automation_health.py` |
-| `M` | `scripts/report_uncorrelated_portfolio.py` |
-| `M` | `scripts/run_no_longshot_daily_report.ps1` |
-| `A` | `scripts/run_simmer_ab_observe_supervisor.ps1` |
-| `A` | `scripts/set_no_longshot_daily_mode.ps1` |
-| `A` | `tests/test_compare_simmer_ab_daily.py` |
-| `M` | `tests/test_no_longshot_daily_daemon.py` |
+| `M` | `scripts/run_morning_status_daily.ps1` |
+| `M` | `scripts/set_no_longshot_daily_mode.ps1` |
+| `M` | `tests/test_check_morning_status.py` |
+| `M` | `tests/test_check_strategy_gate_alarm.py` |
+| `M` | `tests/test_judge_simmer_ab_decision.py` |
 | `M` | `tests/test_report_automation_health.py` |
-| `A` | `tests/test_report_uncorrelated_portfolio.py` |
+| `??` | `tests/test_set_no_longshot_daily_mode_ps1.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

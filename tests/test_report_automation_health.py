@@ -26,6 +26,10 @@ def test_default_artifacts_include_optional_simmer_ab_supervisor_state():
     assert "?logs/simmer_ab_supervisor_state.json:6" in mod.DEFAULT_ARTIFACT_SPECS
 
 
+def test_default_artifacts_include_no_longshot_daily_summary():
+    assert "logs/no_longshot_daily_summary.txt:30" in mod.DEFAULT_ARTIFACT_SPECS
+
+
 def test_parse_task_specs_supports_optional_prefix_and_dedupes():
     rows = mod._parse_task_specs(
         [
@@ -179,6 +183,51 @@ def test_apply_morning_kpi_marker_check_keeps_fresh_when_marker_present(tmp_path
     ]
 
     mod._apply_morning_kpi_marker_check(rows)
+
+    assert rows[0]["status"] == "FRESH"
+
+
+def test_apply_no_longshot_summary_mode_check_marks_invalid_when_marker_missing(tmp_path):
+    p = tmp_path / "logs" / "no_longshot_daily_summary.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """No-Longshot Daily Summary
+- strict_realized_band_only: False
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": True,
+        }
+    ]
+
+    mod._apply_no_longshot_summary_mode_check(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "missing marker:" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_no_longshot_summary_mode_check_keeps_fresh_when_marker_present(tmp_path):
+    p = tmp_path / "logs" / "no_longshot_daily_summary.txt"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        """No-Longshot Daily Summary
+- strict_realized_band_only: True
+""",
+        encoding="utf-8",
+    )
+    rows = [
+        {
+            "path": str(p),
+            "status": "FRESH",
+            "required": True,
+        }
+    ]
+
+    mod._apply_no_longshot_summary_mode_check(rows)
 
     assert rows[0]["status"] == "FRESH"
 
@@ -357,3 +406,50 @@ def test_apply_simmer_ab_supervisor_state_check_marks_invalid_when_enabled_job_n
 
     assert rows[0]["status"] == "INVALID_CONTENT"
     assert "job_not_running:simmer_ab_baseline" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_forbidden_skip_present():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground -SkipGateAlarm -NoLongshotPracticalDecisionDate 2026-03-02 -NoLongshotPracticalSlideDays 3 -NoLongshotPracticalMinResolvedTrades 30",
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "forbidden_flags=-skipgatealarm" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_morning_task_argument_guard_marks_invalid_when_required_missing():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground",
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert "missing_required_flags=" in str(rows[0].get("status_note") or "")
+
+
+def test_apply_morning_task_argument_guard_keeps_ok_when_required_present_and_no_forbidden():
+    rows = [
+        {
+            "task_name": "MorningStrategyStatusDaily",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_morning_status_daily.ps1 -NoBackground -NoLongshotPracticalDecisionDate 2026-03-02 -NoLongshotPracticalSlideDays 3 -NoLongshotPracticalMinResolvedTrades 30",
+        }
+    ]
+
+    mod._apply_morning_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "OK"

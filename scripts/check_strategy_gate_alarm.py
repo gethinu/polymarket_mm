@@ -25,6 +25,9 @@ except Exception:
 
 DEFAULT_STRATEGY_ID = "weather_clob_arb_buckets_observe"
 DEFAULT_MIN_RESOLVED_TRADES = 30
+DEFAULT_NO_LONGSHOT_PRACTICAL_DECISION_DATE = "2026-03-02"
+DEFAULT_NO_LONGSHOT_PRACTICAL_SLIDE_DAYS = 3
+DEFAULT_NO_LONGSHOT_PRACTICAL_MIN_RESOLVED_TRADES = 30
 
 
 def now_utc() -> dt.datetime:
@@ -140,6 +143,23 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_MIN_RESOLVED_TRADES,
         help="Minimum rolling-30d resolved trades required for capital gate ELIGIBLE_REVIEW.",
     )
+    p.add_argument(
+        "--no-longshot-practical-decision-date",
+        default=DEFAULT_NO_LONGSHOT_PRACTICAL_DECISION_DATE,
+        help="Initial practical judgment date for no_longshot resolved-trade threshold tracking (YYYY-MM-DD).",
+    )
+    p.add_argument(
+        "--no-longshot-practical-slide-days",
+        type=int,
+        default=DEFAULT_NO_LONGSHOT_PRACTICAL_SLIDE_DAYS,
+        help="When threshold is still unmet on practical judgment date, slide the next date by this many days.",
+    )
+    p.add_argument(
+        "--no-longshot-practical-min-resolved-trades",
+        type=int,
+        default=DEFAULT_NO_LONGSHOT_PRACTICAL_MIN_RESOLVED_TRADES,
+        help="Resolved-trade threshold for no_longshot practical-go checkpoint.",
+    )
     p.add_argument("--discord", action="store_true", help="Send Discord notification when transition is detected.")
     p.add_argument(
         "--discord-webhook-env",
@@ -168,6 +188,16 @@ def _as_int(v: object, default: int = 0) -> int:
         return int(v)  # type: ignore[arg-type]
     except Exception:
         return default
+
+
+def _as_iso_date(raw: object) -> Optional[dt.date]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        return dt.date.fromisoformat(s)
+    except Exception:
+        return None
 
 
 def load_no_longshot(snapshot: dict) -> dict:
@@ -202,6 +232,71 @@ def capital_gate_core(decision_3stage: str, resolved_trades: int, min_resolved_t
     return "ELIGIBLE_REVIEW", "all core checks passed"
 
 
+def evaluate_no_longshot_practical_gate(
+    *,
+    today_local: dt.date,
+    resolved_trades: int,
+    min_resolved_trades: int,
+    initial_decision_date: str,
+    slide_days: int,
+    prev_state: Optional[dict] = None,
+) -> dict:
+    prev = prev_state if isinstance(prev_state, dict) else {}
+    today = today_local
+    min_resolved = max(1, int(min_resolved_trades))
+    slide = max(1, int(slide_days))
+    initial_date = _as_iso_date(initial_decision_date) or today
+    active_date = _as_iso_date(prev.get("no_longshot_practical_active_decision_date")) or initial_date
+    last_rollover_on = _as_iso_date(prev.get("no_longshot_practical_last_rollover_on"))
+    rollover_count = max(0, _as_int(prev.get("no_longshot_practical_rollover_count"), 0))
+    prev_threshold_met = bool(prev.get("no_longshot_practical_threshold_met"))
+
+    resolved = max(0, int(resolved_trades))
+    threshold_met = resolved >= min_resolved
+    threshold_reached_now = threshold_met and not prev_threshold_met
+
+    rollover_triggered = False
+    rollover_from_date: Optional[dt.date] = None
+    rollover_to_date: Optional[dt.date] = None
+
+    if (not threshold_met) and (today >= active_date):
+        # Guard against duplicate slide when the checker runs multiple times on the same day.
+        if last_rollover_on != today:
+            rollover_triggered = True
+            rollover_from_date = active_date
+            active_date = active_date + dt.timedelta(days=slide)
+            rollover_to_date = active_date
+            last_rollover_on = today
+            rollover_count += 1
+
+    remaining_days = int((active_date - today).days)
+    if threshold_met:
+        status = "THRESHOLD_MET"
+    elif remaining_days > 0:
+        status = "PENDING"
+    elif remaining_days == 0:
+        status = "JUDGMENT_DAY"
+    else:
+        status = "OVERDUE"
+
+    return {
+        "status": status,
+        "resolved_trades": resolved,
+        "min_resolved_trades": min_resolved,
+        "threshold_met": bool(threshold_met),
+        "threshold_reached_now": bool(threshold_reached_now),
+        "initial_decision_date": initial_date.isoformat(),
+        "active_decision_date": active_date.isoformat(),
+        "remaining_days": remaining_days,
+        "slide_days": slide,
+        "rollover_triggered": bool(rollover_triggered),
+        "rollover_from_date": rollover_from_date.isoformat() if rollover_from_date else None,
+        "rollover_to_date": rollover_to_date.isoformat() if rollover_to_date else None,
+        "last_rollover_on": last_rollover_on.isoformat() if last_rollover_on else None,
+        "rollover_count": rollover_count,
+    }
+
+
 def main() -> int:
     args = parse_args()
     snapshot_path = resolve_path(str(args.snapshot_json), "strategy_register_latest.json")
@@ -209,6 +304,15 @@ def main() -> int:
     log_path = resolve_path(str(args.log_file), "strategy_gate_alarm.log")
     strategy_id = str(args.strategy_id or "").strip() or DEFAULT_STRATEGY_ID
     discord_webhook_env = str(args.discord_webhook_env or "").strip()
+    practical_decision_date = str(args.no_longshot_practical_decision_date or "").strip()
+    practical_slide_days = max(1, int(args.no_longshot_practical_slide_days))
+    practical_min_resolved = max(1, int(args.no_longshot_practical_min_resolved_trades))
+    if _as_iso_date(practical_decision_date) is None:
+        print(
+            "[strategy-gate-alarm] invalid --no-longshot-practical-decision-date "
+            f"(expected YYYY-MM-DD): {practical_decision_date}"
+        )
+        return 2
 
     snapshot = read_json(snapshot_path)
     if snapshot is None:
@@ -233,6 +337,20 @@ def main() -> int:
     has_prev = bool(prev_decision)
     prev_capital_gate = str(prev.get("last_capital_gate_core") or "").strip()
     has_prev_capital = bool(prev_capital_gate)
+    resolved_trades_now = _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0)
+    practical = evaluate_no_longshot_practical_gate(
+        today_local=dt.datetime.now().date(),
+        resolved_trades=resolved_trades_now,
+        min_resolved_trades=practical_min_resolved,
+        initial_decision_date=practical_decision_date,
+        slide_days=practical_slide_days,
+        prev_state=prev,
+    )
+    prev_practical_threshold_known = ("no_longshot_practical_threshold_met" in prev)
+    practical_threshold_reached = bool(practical.get("threshold_reached_now"))
+    if (not prev_practical_threshold_known) and bool(practical.get("threshold_met")):
+        practical_threshold_reached = True
+    practical_rollover_triggered = bool(practical.get("rollover_triggered"))
 
     changed = has_prev and (prev_decision != current_decision)
     reached_final = has_prev and current_decision == "READY_FINAL" and prev_decision != "READY_FINAL"
@@ -240,7 +358,20 @@ def main() -> int:
     reached_eligible_review = (
         has_prev_capital and current_capital_gate == "ELIGIBLE_REVIEW" and prev_capital_gate != "ELIGIBLE_REVIEW"
     )
-    should_alarm = bool(changed or reached_final or capital_changed or reached_eligible_review)
+    alarm_reason_codes = []
+    if changed:
+        alarm_reason_codes.append("gate_stage_changed")
+    if reached_final:
+        alarm_reason_codes.append("gate_stage_ready_final_reached")
+    if capital_changed:
+        alarm_reason_codes.append("capital_gate_changed")
+    if reached_eligible_review:
+        alarm_reason_codes.append("capital_gate_eligible_review_reached")
+    if practical_threshold_reached:
+        alarm_reason_codes.append("no_longshot_threshold_reached")
+    if practical_rollover_triggered:
+        alarm_reason_codes.append("no_longshot_judgment_date_slid")
+    should_alarm = bool(alarm_reason_codes)
 
     now = now_utc().isoformat()
     event = {
@@ -258,10 +389,12 @@ def main() -> int:
         "previous_capital_gate_core": prev_capital_gate or None,
         "current_capital_gate_core": current_capital_gate,
         "current_capital_gate_reason": current_capital_reason,
-        "rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "rolling_30d_resolved_trades": resolved_trades_now,
         "monthly_return_now_text": str(no_longshot.get("monthly_return_now_text") or ""),
         "monthly_return_now_source": str(no_longshot.get("monthly_return_now_source") or ""),
         "capital_min_resolved_trades": min_resolved,
+        "no_longshot_practical": practical,
+        "alarm_reason_codes": alarm_reason_codes,
         "alarm_triggered": should_alarm,
     }
 
@@ -278,11 +411,29 @@ def main() -> int:
         "previous_decision_3stage": prev_decision or None,
         "last_capital_gate_core": current_capital_gate,
         "last_capital_gate_reason": current_capital_reason,
-        "last_rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "last_rolling_30d_resolved_trades": resolved_trades_now,
         "last_monthly_return_now_text": str(no_longshot.get("monthly_return_now_text") or ""),
         "last_monthly_return_now_source": str(no_longshot.get("monthly_return_now_source") or ""),
         "capital_min_resolved_trades": min_resolved,
         "previous_capital_gate_core": prev_capital_gate or None,
+        "no_longshot_practical_status": str(practical.get("status") or "UNKNOWN"),
+        "no_longshot_practical_initial_decision_date": str(practical.get("initial_decision_date") or ""),
+        "no_longshot_practical_active_decision_date": str(practical.get("active_decision_date") or ""),
+        "no_longshot_practical_remaining_days": _as_int(practical.get("remaining_days"), 0),
+        "no_longshot_practical_slide_days": _as_int(practical.get("slide_days"), practical_slide_days),
+        "no_longshot_practical_min_resolved_trades": _as_int(
+            practical.get("min_resolved_trades"),
+            practical_min_resolved,
+        ),
+        "no_longshot_practical_threshold_met": bool(practical.get("threshold_met")),
+        "no_longshot_practical_threshold_reached_last_run": bool(practical_threshold_reached),
+        "no_longshot_practical_rollover_triggered_last_run": bool(practical_rollover_triggered),
+        "no_longshot_practical_rollover_count": _as_int(practical.get("rollover_count"), 0),
+        "no_longshot_practical_last_rollover_on": str(practical.get("last_rollover_on") or ""),
+        "no_longshot_practical_rollover_from_date_last_run": str(practical.get("rollover_from_date") or ""),
+        "no_longshot_practical_rollover_to_date_last_run": str(practical.get("rollover_to_date") or ""),
+        "no_longshot_practical_last_resolved_trades": resolved_trades_now,
+        "no_longshot_practical_alarm_reason_codes_last_run": alarm_reason_codes,
         "alarm_triggered_last_run": should_alarm,
     }
     write_json(state_path, state_payload, pretty=bool(args.pretty))
@@ -294,7 +445,7 @@ def main() -> int:
             mention = _env_any("CLOBBOT_DISCORD_MENTION")
             label_ja = str(gate.get("decision_3stage_label_ja") or "-")
             days = gate.get("observed_realized_days")
-            resolved = _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0)
+            resolved = resolved_trades_now
             body = (
                 "[Strategy Gate Alarm]\n"
                 f"strategy={strategy_id}\n"
@@ -302,6 +453,20 @@ def main() -> int:
                 f"capital_gate: {prev_capital_gate or '-'} -> {current_capital_gate}\n"
                 f"observed_days={days} resolved_trades={resolved}"
             )
+            if practical_threshold_reached:
+                body += (
+                    "\n"
+                    "no_longshot_practical: threshold_reached "
+                    f"resolved={resolved}>={practical_min_resolved}"
+                )
+            if practical_rollover_triggered:
+                body += (
+                    "\n"
+                    "no_longshot_practical: judgment_date_slid "
+                    f"{str(practical.get('rollover_from_date') or '-')}->"
+                    f"{str(practical.get('rollover_to_date') or '-')} "
+                    f"(resolved={resolved}<{practical_min_resolved})"
+                )
             if mention:
                 body = f"{mention} {body}"
             ok, status = post_discord(body, preferred_env=discord_webhook_env)
@@ -320,11 +485,22 @@ def main() -> int:
         "previous_capital_gate_core": prev_capital_gate or None,
         "current_capital_gate_core": current_capital_gate,
         "current_capital_gate_reason": current_capital_reason,
-        "rolling_30d_resolved_trades": _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
+        "rolling_30d_resolved_trades": resolved_trades_now,
         "monthly_return_now_text": str(no_longshot.get("monthly_return_now_text") or ""),
         "monthly_return_now_source": str(no_longshot.get("monthly_return_now_source") or ""),
         "capital_min_resolved_trades": min_resolved,
+        "no_longshot_practical_status": str(practical.get("status") or "UNKNOWN"),
+        "no_longshot_practical_active_decision_date": str(practical.get("active_decision_date") or ""),
+        "no_longshot_practical_remaining_days": _as_int(practical.get("remaining_days"), 0),
+        "no_longshot_practical_threshold_met": bool(practical.get("threshold_met")),
+        "no_longshot_practical_min_resolved_trades": _as_int(practical.get("min_resolved_trades"), practical_min_resolved),
+        "no_longshot_practical_threshold_reached": bool(practical_threshold_reached),
+        "no_longshot_practical_rollover_triggered": bool(practical_rollover_triggered),
+        "no_longshot_practical_rollover_from_date": str(practical.get("rollover_from_date") or ""),
+        "no_longshot_practical_rollover_to_date": str(practical.get("rollover_to_date") or ""),
+        "alarm_reason_codes": alarm_reason_codes,
         "capital_alarm_triggered": bool(capital_changed or reached_eligible_review),
+        "no_longshot_practical_alarm_triggered": bool(practical_threshold_reached or practical_rollover_triggered),
         "alarm_triggered": should_alarm,
         "discord": discord_status,
     }

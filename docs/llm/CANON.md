@@ -125,3 +125,4 @@ Preferred mode switch command (enforces task/daemon/off consistently):
 - Task mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode task`
 - Daemon mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode daemon`
 - Off mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode off`
+- `-Mode task` / `-Mode off` は、repo配下で実行中の `no_longshot_daily_daemon.py`（pythonプロセス）も停止して片系運用を強制する。
