@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `29`
-- worktree_changes: `40`
+- commits_scanned: `31`
+- worktree_changes: `5`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,21 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 15 | `2026-02-26 21:48` | `13658eb7` | feat: add event-driven profit window report and daily runner updates |
+| `docs_llm` | 17 | `2026-02-27 09:07` | `abe22853` | fix: enforce realized monthly source in automation health check |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 1 | `2026-02-17 14:21` | `82f44078` | Update architecture docs and set terminal cwd |
-| `no_longshot` | 11 | `2026-02-26 21:48` | `13658eb7` | feat: add event-driven profit window report and daily runner updates |
-| `security_or_ops` | 7 | `2026-02-26 20:54` | `5f1523aa` | feat: update ops health checks and no-longshot/simmer tooling |
-| `simmer_clob` | 19 | `2026-02-27 09:06` | `60d600cc` | refactor: extract clob arb monitor loop helpers |
-| `strategy_register` | 6 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
-| `task_automation` | 13 | `2026-02-26 21:48` | `13658eb7` | feat: add event-driven profit window report and daily runner updates |
-| `weather_pipeline` | 5 | `2026-02-26 20:52` | `b16994b7` | feat: add simmer ops automation and modular CLOB arb runtime |
+| `no_longshot` | 12 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
+| `security_or_ops` | 9 | `2026-02-27 09:07` | `abe22853` | fix: enforce realized monthly source in automation health check |
+| `simmer_clob` | 20 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
+| `strategy_register` | 7 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
+| `task_automation` | 14 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
+| `weather_pipeline` | 6 | `2026-02-27 09:07` | `5b977b58` | feat: harden daily ops KPI reporting and task controls |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-27 09:07` | `abe22853` | `docs_llm,security_or_ops` | fix: enforce realized monthly source in automation health check | `docs/llm/INTERFACES.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
+| `2026-02-27 09:07` | `5b977b58` | `docs_llm,no_longshot,security_or_ops,simmer_clob,strategy_register,task_automation,weather_pipeline` | feat: harden daily ops KPI reporting and task controls | `configs/bot_supervisor.observe.json`, `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, +36 |
 | `2026-02-27 09:06` | `60d600cc` | `simmer_clob` | refactor: extract clob arb monitor loop helpers | `scripts/lib/clob_arb_eval.py`, `scripts/lib/clob_arb_runtime.py`, `scripts/polymarket_clob_arb_realtime.py`, `tests/test_clob_arb_eval.py`, +1 |
 | `2026-02-26 21:48` | `13658eb7` | `docs_llm,no_longshot,simmer_clob,task_automation` | feat: add event-driven profit window report and daily runner updates | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, +8 |
 | `2026-02-26 20:55` | `643c290c` | `docs_llm` | feat: extend docs canon and event-driven classification coverage | `configs/bot_supervisor.observe.json`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `scripts/polymarket_event_driven_observe.py`, +1 |
@@ -66,46 +68,11 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `configs/bot_supervisor.observe.json` |
-| `M` | `docs/llm/ARCHITECTURE.md` |
-| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/STATE.md` |
-| `M` | `docs/llm/STRATEGY.md` |
-| `M` | `docs/memo_uncorrelated_portfolio_20260226.txt` |
-| `M` | `scripts/check_morning_status.ps1` |
-| `M` | `scripts/check_morning_status.py` |
-| `M` | `scripts/check_strategy_gate_alarm.py` |
-| `M` | `scripts/install_event_driven_daily_task.ps1` |
-| `M` | `scripts/install_morning_status_daily_task.ps1` |
-| `M` | `scripts/install_simmer_ab_daily_task.ps1` |
-| `M` | `scripts/install_weather_profit_window_weekly_task.ps1` |
-| `M` | `scripts/judge_simmer_ab_decision.py` |
-| `M` | `scripts/polymarket_event_driven_observe.py` |
-| `M` | `scripts/render_strategy_register_snapshot.py` |
-| `M` | `scripts/report_automation_health.py` |
+| `M` | `docs/memo_uncorrelated_portfolio_20260227.txt` |
+| `M` | `docs/memo_uncorrelated_portfolio_latest.txt` |
 | `M` | `scripts/report_uncorrelated_portfolio.py` |
-| `M` | `scripts/report_weather_arb_profit_window.py` |
-| `M` | `scripts/run_event_driven_daily_report.ps1` |
-| `M` | `scripts/run_morning_status_daily.ps1` |
-| `M` | `scripts/run_no_longshot_daily_report.ps1` |
-| `M` | `scripts/run_simmer_ab_daily_report.ps1` |
-| `M` | `scripts/run_weather_24h_alarm_action.ps1` |
-| `M` | `scripts/run_weather_24h_postcheck.ps1` |
-| `M` | `scripts/run_weather_arb_observe.ps1` |
-| `M` | `scripts/run_weather_arb_profit_window.ps1` |
-| `??` | `docs/memo_uncorrelated_portfolio_20260227.txt` |
-| `??` | `docs/memo_uncorrelated_portfolio_latest.txt` |
-| `??` | `scripts/disable_repo_tasks.ps1` |
-| `??` | `scripts/report_no_longshot_monthly_return.py` |
-| `??` | `scripts/set_weather_daily_mode.ps1` |
-| `??` | `tests/test_check_morning_status.py` |
-| `??` | `tests/test_check_strategy_gate_alarm.py` |
-| `??` | `tests/test_judge_simmer_ab_decision.py` |
-| `??` | `tests/test_no_longshot_daily_daemon.py` |
-| `??` | `tests/test_report_automation_health.py` |
-| `??` | `tests/test_report_no_longshot_monthly_return.py` |
+| `??` | `configs/bot_supervisor.simmer_ab.observe.json` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |
