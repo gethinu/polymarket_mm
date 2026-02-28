@@ -1,7 +1,7 @@
 param(
   [string]$RepoRoot = "C:\Repos\polymarket_mm",
   [string]$PythonExe = "python",
-  [string]$Profiles = "weather_7acct_auto,weather_visual_test",
+  [string]$Profiles = "weather_7acct_auto",
   [switch]$FailOnNoGo,
   [switch]$Discord,
   [switch]$Background,
@@ -206,21 +206,24 @@ foreach ($profile in $profileList) {
   )
 }
 
-Run-Python @(
+$reportArgs = @(
   $reportTool,
-  "--glob", "logs/*_top30_readiness_*latest.json",
+  "--glob", "logs/*_top30_readiness_*latest.json"
+)
+foreach ($profile in $profileList) {
+  $reportArgs += @("--profile", $profile)
+}
+Run-Python ($reportArgs + @(
   "--out-json", "logs/weather_top30_readiness_report_latest.json",
   "--out-txt", "logs/weather_top30_readiness_report_latest.txt",
   "--pretty"
-)
-Run-Python @(
-  $reportTool,
-  "--glob", "logs/*_top30_readiness_*latest.json",
+))
+Run-Python ($reportArgs + @(
   "--mode", "strict",
   "--out-json", "logs/weather_top30_readiness_report_strict_latest.json",
   "--out-txt", "logs/weather_top30_readiness_report_strict_latest.txt",
   "--pretty"
-)
+))
 
 try {
   if (-not (Test-Path $consensusOverviewTool)) {

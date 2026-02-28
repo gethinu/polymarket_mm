@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -40,6 +41,8 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG_FILE = str(DEFAULT_REPO_ROOT / "logs" / "simmer-pingpong.log")
 DEFAULT_STATE_FILE = str(DEFAULT_REPO_ROOT / "logs" / "simmer_pingpong_state.json")
 DEFAULT_METRICS_FILE = str(DEFAULT_REPO_ROOT / "logs" / "simmer-pingpong-metrics.jsonl")
+DEFAULT_DISCORD_DEDUPE_STATE_FILE = str(DEFAULT_REPO_ROOT / "logs" / "simmer_discord_summary_dedupe_state.json")
+DEFAULT_DISCORD_DEDUPE_WINDOW_SEC = 55.0
 
 
 def iso_now() -> str:
@@ -127,6 +130,105 @@ def _post_json(url: str, payload: dict, timeout_sec: float = 7.0) -> None:
         return
 
 
+def _acquire_advisory_lock(lock_file: Path, retries: int = 5, retry_sec: float = 0.05):
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    for attempt in range(max(1, int(retries))):
+        fp = lock_file.open("a+", encoding="utf-8")
+        try:
+            if os.name == "nt":
+                import msvcrt  # type: ignore
+
+                fp.seek(0)
+                msvcrt.locking(fp.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl  # type: ignore
+
+                fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fp
+        except OSError:
+            try:
+                fp.close()
+            except Exception:
+                pass
+            if attempt + 1 >= max(1, int(retries)):
+                return None
+            time.sleep(max(0.0, float(retry_sec)))
+    return None
+
+
+def _release_advisory_lock(fp) -> None:
+    if fp is None:
+        return
+    try:
+        if os.name == "nt":
+            import msvcrt  # type: ignore
+
+            fp.seek(0)
+            msvcrt.locking(fp.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl  # type: ignore
+
+            fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        fp.close()
+    except Exception:
+        pass
+
+
+def _should_send_discord_summary(
+    message: str,
+    state_file: Path,
+    dedupe_window_sec: float = DEFAULT_DISCORD_DEDUPE_WINDOW_SEC,
+) -> bool:
+    if float(dedupe_window_sec or 0.0) <= 0:
+        return True
+    text = str(message or "")
+    if not text.startswith("SIMMER_PONG summary:"):
+        return True
+
+    lock_fp = _acquire_advisory_lock(Path(str(state_file) + ".lock"))
+    if lock_fp is None:
+        # Fail open so notification path does not break when lock acquisition fails.
+        return True
+
+    try:
+        now = now_ts()
+        key = hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+        records: dict[str, float] = {}
+        if state_file.exists():
+            try:
+                raw = json.loads(state_file.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    for k, v in raw.items():
+                        try:
+                            ts = float(v)
+                        except Exception:
+                            continue
+                        if ts > 0:
+                            records[str(k)] = ts
+            except Exception:
+                records = {}
+
+        last_ts = float(records.get(key, 0.0) or 0.0)
+        if last_ts > 0.0 and (now - last_ts) < float(dedupe_window_sec):
+            return False
+
+        records[key] = now
+        keep_for_sec = max(float(dedupe_window_sec) * 12.0, 6.0 * 3600.0)
+        cutoff = now - keep_for_sec
+        pruned = {k: float(v) for k, v in records.items() if float(v) >= cutoff}
+
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = state_file.with_suffix(state_file.suffix + ".tmp")
+        tmp_path.write_text(json.dumps(pruned, ensure_ascii=True, sort_keys=True), encoding="utf-8")
+        tmp_path.replace(state_file)
+        return True
+    finally:
+        _release_advisory_lock(lock_fp)
+
+
 def maybe_notify_discord(logger: "Logger", message: str) -> None:
     # Webhook URLs are secrets. Never print them (including indirectly via exception strings).
     url = (
@@ -137,6 +239,19 @@ def maybe_notify_discord(logger: "Logger", message: str) -> None:
     )
     if not url:
         return
+
+    try:
+        dedupe_state_file = _resolve_repo_path(DEFAULT_DISCORD_DEDUPE_STATE_FILE)
+        if not _should_send_discord_summary(
+            message=message,
+            state_file=dedupe_state_file,
+            dedupe_window_sec=DEFAULT_DISCORD_DEDUPE_WINDOW_SEC,
+        ):
+            return
+    except Exception:
+        # Never let dedupe state handling block notifications.
+        pass
+
     mention = _env_str("CLOBBOT_DISCORD_MENTION")
     content = f"{mention} {message}".strip() if mention else message
 

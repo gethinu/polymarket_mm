@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -504,6 +505,112 @@ def prepare_monitor_runtime(
         "client": client,
         "simmer_api_key": simmer_api_key,
     }
+
+
+def build_live_execution_context(
+    *,
+    state: RuntimeState,
+    exec_backend: str,
+    client,
+    simmer_api_key: str,
+    save_state_func: Callable[[Path, RuntimeState], None],
+    state_file: Path,
+    sdk_request_func,
+    fetch_simmer_positions_func,
+    estimate_exec_cost_func,
+    execute_func,
+) -> Dict[str, Any]:
+    return {
+        "execute_func": execute_func,
+        "state": state,
+        "exec_backend": exec_backend,
+        "client": client,
+        "simmer_api_key": simmer_api_key,
+        "save_state_func": save_state_func,
+        "state_file": state_file,
+        "sdk_request_func": sdk_request_func,
+        "fetch_simmer_positions_func": fetch_simmer_positions_func,
+        "estimate_exec_cost_func": estimate_exec_cost_func,
+    }
+
+
+async def run_connected_monitor_loop(
+    *,
+    ws,
+    ws_url: str,
+    token_ids: List[str],
+    state: RuntimeState,
+    state_file: Path,
+    args,
+    stats,
+    start_ts: float,
+    summary_every: float,
+    logger,
+    format_candidate_brief_func: Callable[[Any], str],
+    maybe_apply_daily_loss_guard_func: Callable[[RuntimeState, Any, Any], bool],
+    save_state_func: Callable[[Path, RuntimeState], None],
+    process_ws_raw_message_func,
+    process_ws_raw_message_kwargs: Dict[str, Any],
+    initial_last_observe_notify_ts: float = 0.0,
+) -> RuntimeState:
+    await ws.send(json.dumps({"type": "market", "assets_ids": token_ids}))
+    logger.info(f"Connected: {ws_url}")
+
+    last_observe_notify_ts = float(initial_last_observe_notify_ts or 0.0)
+
+    while True:
+        state = maybe_rollover_daily_state(
+            state=state,
+            state_file=state_file,
+            logger=logger,
+            save_state_func=save_state_func,
+        )
+
+        maybe_emit_periodic_summary(
+            stats=stats,
+            summary_every=summary_every,
+            logger=logger,
+            format_candidate_brief_func=format_candidate_brief_func,
+        )
+
+        if run_timeout_reached(run_started_at=start_ts, run_seconds=float(args.run_seconds or 0.0)):
+            logger.info("Run timeout reached. Exiting.")
+            break
+
+        if args.execute:
+            if not maybe_apply_daily_loss_guard_func(state, args, logger):
+                save_state_func(state_file, state)
+                if state.halted:
+                    logger.info(f"[{iso_now()}] run ending early due to halt state")
+                    break
+                await asyncio.sleep(2)
+                continue
+
+        try:
+            timeout = compute_recv_timeout_seconds(
+                run_started_at=start_ts,
+                run_seconds=float(args.run_seconds or 0.0),
+            )
+            if timeout is None:
+                logger.info("Run timeout reached. Exiting.")
+                break
+
+            raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+        except asyncio.TimeoutError:
+            if should_log_idle_heartbeat(
+                run_started_at=start_ts,
+                run_seconds=float(args.run_seconds or 0.0),
+            ):
+                logger.info(f"[{iso_now()}] heartbeat: no message in 30s")
+            continue
+
+        msg_kwargs = dict(process_ws_raw_message_kwargs)
+        msg_kwargs["raw"] = raw
+        msg_kwargs["state"] = state
+        msg_kwargs["last_observe_notify_ts"] = last_observe_notify_ts
+        last_observe_notify_ts = await process_ws_raw_message_func(**msg_kwargs)
+
+    return state
 
 
 def maybe_rollover_daily_state(

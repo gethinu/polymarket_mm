@@ -217,15 +217,15 @@ Polymarket weather 24h completion alarm:
 Polymarket weather arb monthly-return window estimator (observe-only):
 - Report tool:
   - `python scripts/report_weather_arb_profit_window.py --log-file logs/clob-arb-weather-observe.log --hours 24`
-  - `python scripts/report_weather_arb_profit_window.py --log-file logs/clob-arb-weather-observe.log --hours 24 --thresholds-cents "1,1.5,2,3,4" --capture-ratios "0.25,0.35,0.50" --assumed-bankroll-usd 100 --target-monthly-return-pct 15 --pretty`
+  - `python scripts/report_weather_arb_profit_window.py --log-file logs/clob-arb-weather-observe.log --hours 24 --thresholds-cents "1,1.5,2,3,4" --capture-ratios "0.25,0.35,0.50" --assumed-bankroll-usd 60 --target-monthly-return-pct 15 --pretty`
 - One-shot runner (observe + report, background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1 -NoBackground -ObserveRunSeconds 1800 -AssumedBankrollUsd 100 -TargetMonthlyReturnPct 15`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1 -NoBackground -ObserveRunSeconds 1800 -AssumedBankrollUsd 60 -TargetMonthlyReturnPct 15`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1 -NoBackground -SkipObserve -ReportHours 24 -FailOnNoGo`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_arb_profit_window.ps1 -NoBackground -SkipObserve -ReportHours 24 -Discord`
 - Weekly task installer (Monday 01:00, observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground -StartTime 01:00 -AssumedBankrollUsd 100 -TargetMonthlyReturnPct 15 -Discord`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground -StartTime 01:00 -AssumedBankrollUsd 60 -TargetMonthlyReturnPct 15 -Discord`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground -RunNow`
 - Key flags:
   - report: `--thresholds-cents`, `--capture-ratios`, `--base-capture-ratio`, `--assumed-bankroll-usd`, `--target-monthly-return-pct`, `--min-opportunities-per-day`, `--min-unique-events`, `--min-positive-rows-pct`, `--out-json`, `--out-txt`
@@ -400,18 +400,18 @@ Polymarket weather consensus snapshot renderer (observe-only):
 Polymarket weather consensus overview renderer (observe-only):
 - Render cross-profile comparison overview from multiple consensus watchlists:
   - `python scripts/render_weather_consensus_overview.py`
-  - `python scripts/render_weather_consensus_overview.py --profile weather_7acct_auto --profile weather_visual_test --top-n 30`
+  - `python scripts/render_weather_consensus_overview.py --profile weather_7acct_auto --top-n 30`
   - `python scripts/render_weather_consensus_overview.py --profile weather_focus_mimic --out-html logs/weather_focus_overview_latest.html`
 - Key flags:
-  - `--profile`（repeatable。比較対象 profile 名。未指定時は `weather_7acct_auto` と `weather_visual_test`）
+  - `--profile`（repeatable。比較対象 profile 名。未指定時は `weather_7acct_auto`）
   - `--top-n`（profileごとに比較対象とする上位件数）
   - `--out-html`（出力HTML。simple filenameは `logs/` 配下）
 
 Polymarket weather Top30 readiness judge (observe-only):
 - Judge practical deployment readiness from consensus watchlist:
   - `python scripts/judge_weather_top30_readiness.py --consensus-json logs/weather_7acct_auto_consensus_watchlist_latest.json --supervisor-config logs/bot_supervisor.weather_7acct_auto.observe.json --pretty`
-  - `python scripts/judge_weather_top30_readiness.py --consensus-json logs/weather_visual_test_consensus_watchlist_latest.json --execution-plan-file logs/weather_visual_test_execution_plan_latest.json --pretty`
-  - `python scripts/judge_weather_top30_readiness.py --consensus-json logs/weather_visual_test_consensus_watchlist_latest.json --no-require-execution-plan`
+  - `python scripts/judge_weather_top30_readiness.py --consensus-json logs/weather_7acct_auto_tight_consensus_watchlist_latest.json --execution-plan-file logs/weather_7acct_auto_tight_execution_plan_latest.json --pretty`
+  - `python scripts/judge_weather_top30_readiness.py --consensus-json logs/weather_7acct_auto_consensus_watchlist_latest.json --no-require-execution-plan`
 - Key flags:
   - `--consensus-json`（`build_weather_consensus_watchlist.py` 出力JSON）
   - `--supervisor-config`（execution readiness 判定対象の supervisor 設定JSON）
@@ -425,7 +425,7 @@ Polymarket weather Top30 readiness report aggregator (observe-only):
 - Aggregate latest readiness decisions across profiles:
   - `python scripts/report_weather_top30_readiness.py --pretty`
   - `python scripts/report_weather_top30_readiness.py --glob "logs/*_top30_readiness_*latest.json" --mode strict`
-  - `python scripts/report_weather_top30_readiness.py --profile weather_7acct_auto --profile weather_visual_test`
+  - `python scripts/report_weather_top30_readiness.py --profile weather_7acct_auto`
 - Key flags:
   - `--glob`（入力 readiness JSON のglob）
   - `--mode`（`all` / `strict` / `quality` / `unknown`）
@@ -435,7 +435,7 @@ Polymarket weather Top30 readiness report aggregator (observe-only):
 Polymarket weather Top30 readiness daily runner (observe-only):
 - PowerShell runner (background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_top30_readiness_daily.ps1`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_top30_readiness_daily.ps1 -NoBackground -Profiles weather_7acct_auto,weather_visual_test -FailOnNoGo`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_weather_top30_readiness_daily.ps1 -NoBackground -Profiles weather_7acct_auto -FailOnNoGo`
 - Scheduled task installer:
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_top30_readiness_daily_task.ps1 -NoBackground`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_top30_readiness_daily_task.ps1 -NoBackground -StartTime 00:40 -RunNow`
@@ -807,6 +807,7 @@ Automation health report (observe-only):
   - optional: `logs/simmer-ab-decision-latest.json`（存在すれば鮮度判定、未作成なら `OPTIONAL_MISSING` で NO_GO にはしない）
   - optional: `logs/simmer_ab_supervisor_state.json`（存在すれば鮮度判定。既定 max age 6h）
   - optional: `logs/bot_supervisor_state.json`（存在すれば鮮度判定。既定 max age 6h）
+  - optional artifact は advisory 扱い。`required=false` の行は `STALE` / `INVALID_CONTENT` でも `NO_GO` 判定には含めない（運用警告として表示のみ）。
   - `logs/strategy_register_latest.json` が fresh な場合、authority key（`kpi_core.daily_realized_pnl_usd`, `kpi_core.monthly_return_now_text`, `kpi_core.max_drawdown_30d_text`, `no_longshot_status.monthly_return_now_text/source/new_condition/all`, `realized_30d_gate.decision`）の存在を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
   - `kpi_core.monthly_return_now_text` が `n/a` 以外なのに `kpi_core.monthly_return_now_source` が `realized_rolling_30d*` または `realized_monthly_return.projected_monthly_return_text` でない場合は `INVALID_CONTENT` で `NO_GO`
   - `logs/no_longshot_daily_summary.txt` が fresh な場合、`- strict_realized_band_only: True` を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
@@ -854,6 +855,11 @@ Polymarket BTC short-window lag monitor (observe-only):
   - `--daily-loss-limit-usd`, `--max-consecutive-errors` (observe-side risk guardrails)
   - `--summary-every-sec`, `--metrics-sample-sec`, `--log-file`, `--state-file`, `--metrics-file` (runtime outputs)
   - default runtime files auto-separate by window: `logs/btc5m-*` or `logs/btc15m-*` when paths are not explicitly specified
+- Realtime dashboard (local web, observe-only visualization):
+  - `python scripts/btc5m_monitor_dashboard.py`
+  - `python scripts/btc5m_monitor_dashboard.py --mode lag --window-minutes 5`
+  - `python scripts/btc5m_monitor_dashboard.py --mode lag --window-minutes 15`
+  - key flags: `--mode`, `--window-minutes`, `--metrics-file`, `--state-file`, `--log-file`, `--port`, `--window-lookback-minutes`
 
 Polymarket BTC short-window panic-fade monitor (observe-only):
 - Observe:
@@ -868,6 +874,9 @@ Polymarket BTC short-window panic-fade monitor (observe-only):
   - `--daily-loss-limit-usd`, `--max-consecutive-errors` (observe-side risk guardrails)
   - `--summary-every-sec`, `--metrics-sample-sec`, `--log-file`, `--state-file`, `--metrics-file` (runtime outputs)
   - default runtime files auto-separate by window: `logs/btc5m-*` or `logs/btc15m-*` when paths are not explicitly specified
+- Realtime dashboard (local web, observe-only visualization):
+  - `python scripts/btc5m_monitor_dashboard.py --mode panic --window-minutes 5`
+  - `python scripts/btc5m_monitor_dashboard.py --mode panic --window-minutes 15`
 
 Polymarket BTC short-window panic claim validator (observe-only):
 - Validate historical frequency claims from closed BTC up/down windows:
@@ -953,6 +962,13 @@ Polymarket CLOB fade monitor (observe-only, multi-bot consensus simulation):
 - Observation report:
   - `python scripts/report_clob_fade_observation.py --hours 24`
   - `python scripts/report_clob_fade_observation.py --hours 24 --discord`
+- Side-mode decision memo (2026-02-25):
+  - `long-only` was selected for the fade observe suite because it had the best `total_pnl` in the same comparison window (`2026-02-21 18:20:23` -> `2026-02-25 22:00:31`).
+  - Result:
+    - `both: total_pnl=-0.1290, day_pnl=-0.6495, entries/exits=477/473`
+    - `long-only: total_pnl=+0.7670, day_pnl=-0.4650, entries/exits=360/362`
+    - `short-only: total_pnl=+0.0775, day_pnl=-0.3195, entries/exits=409/409`
+  - Current local supervisor profile `logs/bot_supervisor.fade.observe.json` is simplified to long-only operation (`fade_long_canary` + `fade_dashboard`); `fade_both`, `fade_short_canary`, and `fade_router` are removed from this profile.
 - Parameter optimization (metrics replay):
   - `python scripts/optimize_clob_fade_params.py --hours 6`
   - `python scripts/optimize_clob_fade_params.py --hours 72 --metrics-glob "logs/clob-fade-observe-profit*-metrics.jsonl" --top-n 8`
@@ -968,6 +984,7 @@ Polymarket CLOB fade monitor (observe-only, multi-bot consensus simulation):
 - Side router (canary成績で `allowed_sides` を自動切替):
   - `python scripts/fade_side_router.py --once`
   - `python scripts/fade_side_router.py --poll-sec 30 --hold-side-sec 900 --decision-metric per_exit --switch-margin-usd 0.0006 --both-keep-margin-usd 0.0009 --out-control logs/clob_fade_runtime_control.json`
+  - Note: current long-only local profile does not run side router by default.
   - `--decision-metric` (`per_exit`/`cumulative`/`total_per_exit`/`total_cumulative`/`day_per_exit`/`day_cumulative`) で比較軸を選択（既定は `per_exit`）
   - `day_*` は日次アンカー差分（`state.day_anchor_total_pnl` 基準）を比較するため、短期の地合い変化に追随しやすい。
   - メインbot側で `--control-file logs/clob_fade_runtime_control.json` を指定して連携
@@ -1125,7 +1142,7 @@ Polymarket event-driven mispricing monitor (observe-only):
   - `python scripts/report_event_driven_observation.py --hours 24 --discord`
 - Profit-window report (observe-only):
   - `python scripts/report_event_driven_profit_window.py --hours 24 --pretty`
-  - `python scripts/report_event_driven_profit_window.py --hours 24 --thresholds-cents "0.8,1,2,3,5" --capture-ratios "0.25,0.35,0.50" --target-monthly-return-pct 12 --assumed-bankroll-usd 100 --pretty`
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --thresholds-cents "0.8,1,2,3,5" --capture-ratios "0.25,0.35,0.50" --target-monthly-return-pct 12 --assumed-bankroll-usd 60 --pretty`
 - Daily runner (PowerShell, background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -MaxPages 12 -MinEdgeCents 0.8 -TopN 20`

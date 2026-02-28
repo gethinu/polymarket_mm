@@ -28,7 +28,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground [-TaskName WeatherArbProfitWindowWeekly] [-StartTime 01:00] [-AssumedBankrollUsd 100] [-TargetMonthlyReturnPct 15] [-Discord] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground [-TaskName WeatherArbProfitWindowWeekly] [-StartTime 01:00] [-AssumedBankrollUsd 60] [-TargetMonthlyReturnPct 15] [-Discord] [-RunNow]"
   Write-Host "  (omit -AssumedBankrollUsd to use STRATEGY bankroll policy default)"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_profit_window_weekly_task.ps1 -NoBackground -?"
 }

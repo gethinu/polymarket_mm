@@ -72,6 +72,7 @@ Polymarket CLOB fade monitor (observe-only):
 - State/control JSON writes use temp-file atomic replace with retry on transient Windows sharing conflicts.
 - Exit management is applied to open positions even when their token is no longer in the current active universe; max-hold timeout can close these inactive positions to avoid long-lived `open_inactive` residue.
 - Optional fade-suite supervisor config: `logs/bot_supervisor.fade.observe.json`
+  - Current local profile is long-only (`fade_long_canary` + `fade_dashboard`).
 - Optional fade-suite supervisor runtime files:
   - `logs/fade_observe_supervisor.log`
   - `logs/fade_observe_supervisor_state.json`

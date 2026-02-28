@@ -17,7 +17,6 @@ Data flow:
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 import traceback
 from pathlib import Path
@@ -38,24 +37,20 @@ from lib.clob_arb_execution import (
 from lib.clob_arb_sports import DEFAULT_ESPN_SCOREBOARD_PATHS
 from lib.clob_arb_runtime import (
     append_jsonl,
+    build_live_execution_context,
     build_monitor_loop_tuning,
     compile_gamma_market_regexes,
-    compute_recv_timeout_seconds,
     fetch_simmer_positions,
     initialize_execution_backend,
     load_state,
-    log_monitor_startup,
-    maybe_emit_periodic_summary,
     maybe_emit_run_summary,
-    maybe_rollover_daily_state,
-    maybe_apply_daily_loss_guard as _maybe_apply_daily_loss_guard_runtime,
     prepare_monitor_runtime,
     resolve_monitor_paths,
-    run_timeout_reached,
+    run_connected_monitor_loop,
     save_state,
     sdk_request,
     should_skip_halted_execute_run,
-    should_log_idle_heartbeat,
+    maybe_apply_daily_loss_guard as _maybe_apply_daily_loss_guard_runtime,
 )
 from lib.clob_arb_universe import (
     apply_subscription_token_cap,
@@ -173,92 +168,56 @@ async def run(args) -> int:
     observe_exec_edge_strike_limit = int(loop_tuning["observe_exec_edge_strike_limit"])
     observe_exec_edge_cooldown_sec = float(loop_tuning["observe_exec_edge_cooldown_sec"])
     observe_exec_edge_filter_strategies = set(loop_tuning["observe_exec_edge_filter_strategies"])
-    live_execution_ctx = {
-        "execute_func": maybe_execute_candidate_live,
-        "state": state,
-        "exec_backend": exec_backend,
-        "client": client,
-        "simmer_api_key": simmer_api_key,
-        "save_state_func": save_state,
-        "state_file": state_file,
-        "sdk_request_func": sdk_request,
-        "fetch_simmer_positions_func": fetch_simmer_positions,
-        "estimate_exec_cost_func": _estimate_exec_cost_clob,
-    }
+    live_execution_ctx = build_live_execution_context(
+        state=state,
+        exec_backend=exec_backend,
+        client=client,
+        simmer_api_key=simmer_api_key,
+        save_state_func=save_state,
+        state_file=state_file,
+        sdk_request_func=sdk_request,
+        fetch_simmer_positions_func=fetch_simmer_positions,
+        estimate_exec_cost_func=_estimate_exec_cost_clob,
+        execute_func=maybe_execute_candidate_live,
+    )
 
     async with websockets.connect(args.ws_url, ping_interval=20, ping_timeout=20, max_size=2**24) as ws:
-        await ws.send(json.dumps({"type": "market", "assets_ids": token_ids}))
-        logger.info(f"Connected: {args.ws_url}")
-
-        while True:
-            state = maybe_rollover_daily_state(
-                state=state,
-                state_file=state_file,
-                logger=logger,
-                save_state_func=save_state,
-            )
-
-            maybe_emit_periodic_summary(
-                stats=stats,
-                summary_every=summary_every,
-                logger=logger,
-                format_candidate_brief_func=format_candidate_brief,
-            )
-
-            if run_timeout_reached(run_started_at=start, run_seconds=float(args.run_seconds or 0.0)):
-                logger.info("Run timeout reached. Exiting.")
-                break
-
-            if args.execute:
-                if not maybe_apply_daily_loss_guard(state, args, logger):
-                    save_state(state_file, state)
-                    if state.halted:
-                        logger.info(f"[{iso_now()}] run ending early due to halt state")
-                        break
-                    await asyncio.sleep(2)
-                    continue
-
-            try:
-                timeout = compute_recv_timeout_seconds(
-                    run_started_at=start,
-                    run_seconds=float(args.run_seconds or 0.0),
-                )
-                if timeout is None:
-                    logger.info("Run timeout reached. Exiting.")
-                    break
-
-                raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
-            except asyncio.TimeoutError:
-                # If we're near the end of a timed run, avoid noisy heartbeats.
-                if should_log_idle_heartbeat(
-                    run_started_at=start,
-                    run_seconds=float(args.run_seconds or 0.0),
-                ):
-                    logger.info(f"[{iso_now()}] heartbeat: no message in 30s")
-                continue
-
-            last_observe_notify_ts = await process_ws_raw_message(
-                raw=raw,
-                books=books,
-                token_to_events=token_to_events,
-                event_map=event_map,
-                state=state,
-                args=args,
-                stats=stats,
-                min_eval_interval=min_eval_interval,
-                metrics_file=metrics_file,
-                observe_exec_edge_filter=observe_exec_edge_filter,
-                observe_exec_edge_min_usd=observe_exec_edge_min_usd,
-                observe_exec_edge_strike_limit=observe_exec_edge_strike_limit,
-                observe_exec_edge_cooldown_sec=observe_exec_edge_cooldown_sec,
-                observe_exec_edge_filter_strategies=observe_exec_edge_filter_strategies,
-                observe_notify_min_interval=observe_notify_min_interval,
-                last_observe_notify_ts=last_observe_notify_ts,
-                logger=logger,
-                append_jsonl_func=append_jsonl,
-                notify_func=maybe_notify_discord,
-                live_execution_ctx=live_execution_ctx,
-            )
+        state = await run_connected_monitor_loop(
+            ws=ws,
+            ws_url=args.ws_url,
+            token_ids=token_ids,
+            state=state,
+            state_file=state_file,
+            args=args,
+            stats=stats,
+            start_ts=start,
+            summary_every=summary_every,
+            logger=logger,
+            format_candidate_brief_func=format_candidate_brief,
+            maybe_apply_daily_loss_guard_func=maybe_apply_daily_loss_guard,
+            save_state_func=save_state,
+            process_ws_raw_message_func=process_ws_raw_message,
+            process_ws_raw_message_kwargs={
+                "books": books,
+                "token_to_events": token_to_events,
+                "event_map": event_map,
+                "args": args,
+                "stats": stats,
+                "min_eval_interval": min_eval_interval,
+                "metrics_file": metrics_file,
+                "observe_exec_edge_filter": observe_exec_edge_filter,
+                "observe_exec_edge_min_usd": observe_exec_edge_min_usd,
+                "observe_exec_edge_strike_limit": observe_exec_edge_strike_limit,
+                "observe_exec_edge_cooldown_sec": observe_exec_edge_cooldown_sec,
+                "observe_exec_edge_filter_strategies": observe_exec_edge_filter_strategies,
+                "observe_notify_min_interval": observe_notify_min_interval,
+                "logger": logger,
+                "append_jsonl_func": append_jsonl,
+                "notify_func": maybe_notify_discord,
+                "live_execution_ctx": live_execution_ctx,
+            },
+            initial_last_observe_notify_ts=last_observe_notify_ts,
+        )
 
     save_state(state_file, state)
     maybe_emit_run_summary(

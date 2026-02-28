@@ -25,6 +25,10 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_REALIZED_STRATEGY_ID = "weather_clob_arb_buckets_observe"
+LEGACY_READINESS_PROFILE_ALIASES = {
+    # Consolidated into weather_7acct_auto; keep older *_latest.json compatible.
+    "weather_visual_test": "weather_7acct_auto",
+}
 
 
 def now_utc() -> dt.datetime:
@@ -437,6 +441,7 @@ def load_readiness_record(path: Path) -> Optional[dict]:
         key = "_top30_readiness_"
         stem = path.stem
         profile = stem.split(key, 1)[0] if key in stem else stem
+    profile = LEGACY_READINESS_PROFILE_ALIASES.get(profile, profile)
 
     decision = str(payload.get("decision") or "UNKNOWN").strip().upper()
     mode = infer_readiness_mode(payload, path)
@@ -1198,10 +1203,6 @@ def render_html_snapshot(payload: dict) -> str:
         (
             "weather_7acct_auto_consensus_snapshot_latest.html",
             "Weather consensus snapshot: weather_7acct_auto",
-        ),
-        (
-            "weather_visual_test_consensus_snapshot_latest.html",
-            "Weather consensus snapshot: weather_visual_test",
         ),
     ]
     weather_view_rows: List[str] = []

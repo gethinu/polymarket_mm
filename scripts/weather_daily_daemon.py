@@ -342,7 +342,7 @@ def main() -> int:
     p.add_argument("--mimic-script-path", default=DEFAULT_MIMIC_SCRIPT, help="Mimic runner script path")
     p.add_argument("--top30-run-at-hhmm", default="00:40", help="Top30 run local time HH:MM")
     p.add_argument("--mimic-run-at-hhmm", default="00:20", help="Mimic run local time HH:MM")
-    p.add_argument("--top30-profiles", default="weather_7acct_auto,weather_visual_test", help="Top30 profiles csv")
+    p.add_argument("--top30-profiles", default="weather_7acct_auto", help="Top30 profiles csv")
     p.add_argument("--mimic-profile-name", default="weather_7acct_auto", help="Mimic profile name")
     p.add_argument("--mimic-user-file", default=str(Path("configs") / "weather_mimic_target_users.txt"), help="Mimic user file")
     p.add_argument("--mimic-no-run-scans", action="store_true", help="Pass -NoRunScans to mimic runner")

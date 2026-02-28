@@ -302,6 +302,7 @@ def render_compare_panel(comp: dict) -> str:
 
 def render_html(snapshots: List[ProfileSnapshot], missing: List[str], top_n: int) -> str:
     generated = now_iso_utc()
+    auto_refresh_sec = 30 * 60
     cards = "".join(render_profile_card(s) for s in snapshots)
 
     compare_panels: List[str] = []
@@ -358,6 +359,31 @@ def render_html(snapshots: List[ProfileSnapshot], missing: List[str], top_n: int
     h2 {{ margin: 0 0 10px; font-size: 18px; }}
     h3 {{ margin: 0 0 10px; font-size: 16px; }}
     .sub {{ color: var(--muted); font-size: 12px; margin-bottom: 14px; }}
+    .toolbar {{
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }}
+    .btn {{
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #1b2a3c;
+      color: var(--text);
+      padding: 7px 11px;
+      cursor: pointer;
+      font-size: 12px;
+    }}
+    .btn:hover {{ border-color: var(--accent); }}
+    .pill {{
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(0, 0, 0, 0.18);
+    }}
     .summary {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -423,6 +449,11 @@ def render_html(snapshots: List[ProfileSnapshot], missing: List[str], top_n: int
     <div class="sub">
       generated_utc={esc(generated)} | top_n={top_n} | profiles_loaded={len(snapshots)} | common_across_all={common_all} | union={union_all}
     </div>
+    <div class="toolbar">
+      <button type="button" class="btn" id="manual-refresh">Refresh now</button>
+      <span class="pill">auto refresh: every 30 minutes</span>
+      <span class="pill" id="next-refresh">next auto refresh in --:--</span>
+    </div>
 
     {missing_html}
 
@@ -438,6 +469,41 @@ def render_html(snapshots: List[ProfileSnapshot], missing: List[str], top_n: int
       {top_tables}
     </section>
   </main>
+  <script>
+    (function() {{
+      const AUTO_REFRESH_SEC = {auto_refresh_sec};
+      const nextEl = document.getElementById("next-refresh");
+      const refreshBtn = document.getElementById("manual-refresh");
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const nextEpoch = nowEpoch + AUTO_REFRESH_SEC;
+
+      function pad2(n) {{
+        return String(n).padStart(2, "0");
+      }}
+
+      function renderCountdown() {{
+        const remain = Math.max(0, nextEpoch - Math.floor(Date.now() / 1000));
+        const mm = Math.floor(remain / 60);
+        const ss = remain % 60;
+        if (nextEl) {{
+          nextEl.textContent = "next auto refresh in " + pad2(mm) + ":" + pad2(ss);
+        }}
+      }}
+
+      if (refreshBtn) {{
+        refreshBtn.addEventListener("click", function() {{
+          const sep = window.location.href.indexOf("?") >= 0 ? "&" : "?";
+          window.location.href = window.location.href + sep + "r=" + Date.now();
+        }});
+      }}
+
+      renderCountdown();
+      window.setInterval(renderCountdown, 1000);
+      window.setTimeout(function() {{
+        window.location.reload();
+      }}, AUTO_REFRESH_SEC * 1000);
+    }})();
+  </script>
 </body>
 </html>
 """
@@ -449,7 +515,7 @@ def parse_args() -> argparse.Namespace:
         "--profile",
         action="append",
         default=[],
-        help="Profile name (repeatable). default: weather_7acct_auto + weather_visual_test",
+        help="Profile name (repeatable). default: weather_7acct_auto",
     )
     p.add_argument("--top-n", type=int, default=30, help="Rows per profile to compare")
     p.add_argument(
@@ -471,7 +537,7 @@ def main() -> int:
         seen[p] = 1
         profiles.append(p)
     if not profiles:
-        profiles = ["weather_7acct_auto", "weather_visual_test"]
+        profiles = ["weather_7acct_auto"]
 
     loaded: List[ProfileSnapshot] = []
     missing: List[str] = []

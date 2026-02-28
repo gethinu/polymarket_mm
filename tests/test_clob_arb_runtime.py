@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from types import SimpleNamespace
 
 import lib.clob_arb_runtime as runtime
@@ -460,3 +462,145 @@ def test_prepare_monitor_runtime_success_rebuilds_maps_after_backend_filter():
     assert out["token_ids"] == [baskets[0].legs[0].token_id]
     assert calls["maps"] == 2
     assert any("CLOBBOT started (LIVE)" in n for n in notices)
+
+
+def test_build_live_execution_context_keeps_expected_keys(tmp_path):
+    state_file = tmp_path / "state.json"
+    state = RuntimeState(day="2026-02-28")
+
+    ctx = runtime.build_live_execution_context(
+        state=state,
+        exec_backend="clob",
+        client="client",
+        simmer_api_key="",
+        save_state_func=lambda _path, _state: None,
+        state_file=state_file,
+        sdk_request_func=lambda *_a, **_kw: {},
+        fetch_simmer_positions_func=lambda *_a, **_kw: [],
+        estimate_exec_cost_func=lambda *_a, **_kw: 0.0,
+        execute_func=lambda *_a, **_kw: None,
+    )
+
+    assert ctx["state"] is state
+    assert ctx["exec_backend"] == "clob"
+    assert ctx["client"] == "client"
+    assert ctx["state_file"] == state_file
+    assert callable(ctx["execute_func"])
+
+
+def test_run_connected_monitor_loop_processes_one_message_then_times_out(monkeypatch, tmp_path):
+    class _WS:
+        def __init__(self):
+            self.sent = []
+            self.recv_calls = 0
+
+        async def send(self, payload):
+            self.sent.append(payload)
+
+        async def recv(self):
+            self.recv_calls += 1
+            return '{"ok":1}'
+
+    ws = _WS()
+    logger = _Logger()
+    state = RuntimeState(day="2026-02-28")
+    state_file = tmp_path / "state.json"
+    stats = RunStats()
+    args = _mk_args(execute=False, run_seconds=0)
+
+    iter_count = {"n": 0}
+
+    def _fake_timeout(**_kwargs):
+        iter_count["n"] += 1
+        return iter_count["n"] > 1
+
+    processed = []
+
+    async def _fake_process(**kwargs):
+        processed.append(
+            {
+                "raw": kwargs["raw"],
+                "last_observe_notify_ts": kwargs["last_observe_notify_ts"],
+                "state": kwargs["state"],
+            }
+        )
+        return kwargs["last_observe_notify_ts"] + 1.0
+
+    monkeypatch.setattr(runtime, "run_timeout_reached", _fake_timeout)
+
+    out_state = asyncio.run(
+        runtime.run_connected_monitor_loop(
+            ws=ws,
+            ws_url="wss://example",
+            token_ids=["t1", "t2"],
+            state=state,
+            state_file=state_file,
+            args=args,
+            stats=stats,
+            start_ts=0.0,
+            summary_every=0.0,
+            logger=logger,
+            format_candidate_brief_func=lambda _c: "x",
+            maybe_apply_daily_loss_guard_func=lambda _s, _a, _l: True,
+            save_state_func=lambda _path, _state: None,
+            process_ws_raw_message_func=_fake_process,
+            process_ws_raw_message_kwargs={},
+            initial_last_observe_notify_ts=0.0,
+        )
+    )
+
+    assert out_state is state
+    assert ws.recv_calls == 1
+    assert len(processed) == 1
+    assert processed[0]["raw"] == '{"ok":1}'
+    assert processed[0]["last_observe_notify_ts"] == 0.0
+    assert processed[0]["state"] is state
+    sent = json.loads(ws.sent[0])
+    assert sent["type"] == "market"
+    assert sent["assets_ids"] == ["t1", "t2"]
+
+
+def test_run_connected_monitor_loop_breaks_on_halt_guard(monkeypatch, tmp_path):
+    class _WS:
+        async def send(self, _payload):
+            return None
+
+        async def recv(self):
+            raise AssertionError("recv should not be called when halting before read")
+
+    ws = _WS()
+    logger = _Logger()
+    state = RuntimeState(day="2026-02-28", halted=True)
+    state_file = tmp_path / "state.json"
+    stats = RunStats()
+    args = _mk_args(execute=True, run_seconds=0)
+    saves = []
+
+    monkeypatch.setattr(runtime, "run_timeout_reached", lambda **_kwargs: False)
+
+    out_state = asyncio.run(
+        runtime.run_connected_monitor_loop(
+            ws=ws,
+            ws_url="wss://example",
+            token_ids=["t1"],
+            state=state,
+            state_file=state_file,
+            args=args,
+            stats=stats,
+            start_ts=0.0,
+            summary_every=0.0,
+            logger=logger,
+            format_candidate_brief_func=lambda _c: "x",
+            maybe_apply_daily_loss_guard_func=lambda _s, _a, _l: False,
+            save_state_func=lambda path, s: saves.append((path, s)),
+            process_ws_raw_message_func=lambda **_kw: 0.0,
+            process_ws_raw_message_kwargs={},
+            initial_last_observe_notify_ts=0.0,
+        )
+    )
+
+    assert out_state is state
+    assert len(saves) == 1
+    assert saves[0][0] == state_file
+    assert saves[0][1] is state
+    assert any("run ending early due to halt state" in m for m in logger.messages)

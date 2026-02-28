@@ -65,6 +65,16 @@ def test_task_status_optional_missing_for_optional_task():
     assert mod._task_status(row) == "OPTIONAL_MISSING"
 
 
+def test_artifact_is_bad_for_decision_ignores_optional_stale():
+    row = {"required": False, "status": "STALE"}
+    assert mod._artifact_is_bad_for_decision(row) is False
+
+
+def test_artifact_is_bad_for_decision_marks_required_stale():
+    row = {"required": True, "status": "STALE"}
+    assert mod._artifact_is_bad_for_decision(row) is True
+
+
 def test_soft_fail_override_for_simmer_daily_report():
     task_rows = [
         {

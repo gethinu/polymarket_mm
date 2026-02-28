@@ -4,7 +4,7 @@ param(
   [string]$RepoRoot = "C:\Repos\polymarket_mm",
   [string]$StartTime = "00:40",
   [string]$PowerShellExe = "powershell.exe",
-  [string]$Profiles = "weather_7acct_auto,weather_visual_test",
+  [string]$Profiles = "weather_7acct_auto",
   [Alias("h")]
   [switch]$Help,
   [switch]$FailOnNoGo,
@@ -18,7 +18,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_top30_readiness_daily_task.ps1 -NoBackground [-TaskName WeatherTop30ReadinessDaily] [-StartTime 00:40] [-Profiles weather_7acct_auto,weather_visual_test] [-FailOnNoGo] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_top30_readiness_daily_task.ps1 -NoBackground [-TaskName WeatherTop30ReadinessDaily] [-StartTime 00:40] [-Profiles weather_7acct_auto] [-FailOnNoGo] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_weather_top30_readiness_daily_task.ps1 -NoBackground -?"
 }
 

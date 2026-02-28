@@ -276,6 +276,14 @@ def _task_status(row: dict) -> str:
     return "LAST_RUN_FAILED"
 
 
+def _artifact_is_bad_for_decision(row: dict) -> bool:
+    if not isinstance(row, dict):
+        return False
+    if not bool(row.get("required", True)):
+        return False
+    return str(row.get("status")) in {"MISSING", "STALE", "INVALID_CONTENT"}
+
+
 def _looks_like_no_run_time(last_run_text: str) -> bool:
     s = str(last_run_text or "").strip()
     if not s:
@@ -1207,7 +1215,7 @@ def main() -> int:
         in {"MISSING", "ERROR", "LAST_RUN_FAILED", "DISABLED", "DUPLICATE_RUN_RISK", "INVALID_CONTENT"}
     ]
     optional_missing_tasks = [r for r in task_rows if str(r.get("status")) == "OPTIONAL_MISSING"]
-    stale_art = [r for r in art_rows if str(r.get("status")) in {"MISSING", "STALE", "INVALID_CONTENT"}]
+    stale_art = [r for r in art_rows if _artifact_is_bad_for_decision(r)]
     duplicate_run_guard_violations = [r for r in task_rows if str(r.get("status")) == "DUPLICATE_RUN_RISK"]
     if duplicate_run_guard_violations:
         reasons.append(f"duplicate_run_guard_violations={len(duplicate_run_guard_violations)}")

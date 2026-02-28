@@ -2,9 +2,9 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `46`
-- worktree_changes: `15`
-- link_intake_sessions: `8`
+- commits_scanned: `47`
+- worktree_changes: `25`
+- link_intake_sessions: `9`
 
 ## Purpose
 - Keep one canonical history document to avoid duplicate implementation work across chats.
@@ -20,11 +20,11 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 31 | `2026-02-28 13:12` | `7b4688d3` | docs: update strategy/state and refresh implementation ledger |
+| `docs_llm` | 32 | `2026-02-28 21:54` | `497977f1` | feat: add pending-release checker, alarms, and batch runner |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 16 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
-| `security_or_ops` | 18 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
+| `security_or_ops` | 19 | `2026-02-28 21:54` | `497977f1` | feat: add pending-release checker, alarms, and batch runner |
 | `simmer_clob` | 26 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
 | `strategy_register` | 13 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
 | `task_automation` | 21 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
@@ -33,6 +33,7 @@
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-28 21:54` | `497977f1` | `docs_llm,security_or_ops` | feat: add pending-release checker, alarms, and batch runner | `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, +7 |
 | `2026-02-28 13:12` | `7b4688d3` | `docs_llm` | docs: update strategy/state and refresh implementation ledger | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md` |
 | `2026-02-28 12:21` | `3d9a8012` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation` | add guarded no-longshot live path and kpi-core checks | `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, +11 |
 | `2026-02-27 23:48` | `c3d5a905` | `docs_llm,security_or_ops,simmer_clob,strategy_register,task_automation` | strengthen morning gates and extend event-driven observe tooling | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, +14 |
@@ -84,19 +85,29 @@
 | status | path |
 |---|---|
 | `M` | `docs/SIMMER_PINGPONG.md` |
-| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STATE.md` |
 | `M` | `docs/llm/STRATEGY.md` |
+| `M` | `scripts/fade_monitor_dashboard.py` |
+| `M` | `scripts/install_weather_profit_window_weekly_task.ps1` |
+| `M` | `scripts/install_weather_top30_readiness_daily_task.ps1` |
+| `M` | `scripts/lib/clob_arb_runtime.py` |
+| `M` | `scripts/polymarket_clob_arb_realtime.py` |
+| `M` | `scripts/render_strategy_register_snapshot.py` |
+| `M` | `scripts/render_weather_consensus_overview.py` |
+| `M` | `scripts/report_automation_health.py` |
+| `M` | `scripts/report_event_driven_profit_window.py` |
+| `M` | `scripts/report_weather_arb_profit_window.py` |
+| `M` | `scripts/run_weather_top30_readiness_daily.ps1` |
 | `M` | `scripts/simmer_pingpong_mm.py` |
+| `M` | `scripts/weather_daily_daemon.py` |
+| `M` | `tests/test_clob_arb_runtime.py` |
+| `M` | `tests/test_report_automation_health.py` |
+| `??` | `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb/` |
 | `??` | `docs/memo0228_1.txt` |
-| `??` | `scripts/check_pending_release.py` |
-| `??` | `scripts/check_pending_release_alarm.py` |
-| `??` | `scripts/run_pending_release_alarm_batch.py` |
-| `??` | `tests/test_check_pending_release.py` |
-| `??` | `tests/test_check_pending_release_alarm.py` |
-| `??` | `tests/test_run_pending_release_alarm_batch.py` |
+| `??` | `docs/memo0228_2.txt` |
+| `??` | `scripts/btc5m_monitor_dashboard.py` |
 | `??` | `tests/test_simmer_pingpong_mm.py` |
 
 ## Link-Intake Session Artifacts
@@ -110,6 +121,7 @@
 | `2026-02-22` | `2026-02-22_polymarket-5links` | polymarket-5links | 6 | yes | `docs/knowledge/link-intake/sessions/2026-02-22_polymarket-5links` |
 | `2026-02-24` | `2026-02-24_polymarket-7links` | polymarket-7links | 8 | yes | `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-7links` |
 | `2026-02-24` | `2026-02-24_polymarket-link5-retry` | polymarket-link5-retry | 2 | yes | `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-link5-retry` |
+| `2026-02-28` | `2026-02-28_x-w1nklerr-btc-lag-arb` | x-w1nklerr-btc-lag-arb | 2 | yes | `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb` |
 
 ## Refresh Command
 - `python scripts/render_implementation_ledger.py`

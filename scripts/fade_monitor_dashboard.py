@@ -304,6 +304,22 @@ def collect_log_stats(log_file: str, since: dt.datetime, until: dt.datetime, tai
     return out
 
 
+def _calc_drawdown(values: List[float]) -> tuple[float, float]:
+    if not values:
+        return (0.0, 0.0)
+    peak = float(values[0])
+    max_dd = 0.0
+    for raw in values:
+        v = float(raw)
+        if v > peak:
+            peak = v
+        dd = peak - v
+        if dd > max_dd:
+            max_dd = dd
+    now_dd = max(0.0, peak - float(values[-1]))
+    return (max_dd, now_dd)
+
+
 def _build_single_snapshot(
     metrics_file: str,
     state_file: str,
@@ -400,6 +416,7 @@ def _build_single_snapshot(
 
     latest_total = float(ts_total[-1]) if ts_total else 0.0
     latest_day = float(ts_day[-1]) if ts_day else 0.0
+    max_drawdown, now_drawdown = _calc_drawdown(ts_total)
     halted = bool(state.get("halted") or False) or bool((selected[0].halted if selected else False))
     selected_open_positions = sum(1 for r in selected if int(r.position_side) != 0)
     open_stats = _state_open_stats(state)
@@ -416,6 +433,17 @@ def _build_single_snapshot(
     entry_exit_gap = int(open_stats.get("entry_exit_gap") or 0)
     consistency_warning = str(open_stats.get("warning") or "")
     active_signals = sum(1 for r in selected if int(r.consensus_side) != 0)
+    long_trades = int(state.get("long_trades") or 0)
+    short_trades = int(state.get("short_trades") or 0)
+    long_wins = int(state.get("long_wins") or 0)
+    short_wins = int(state.get("short_wins") or 0)
+    trade_count = max(0, long_trades + short_trades)
+    win_count = max(0, long_wins + short_wins)
+    if trade_count <= 0:
+        trade_count = max(0, sum(max(0, int(x.trade_count or 0)) for x in latest_rows))
+    if win_count <= 0:
+        win_count = max(0, sum(max(0, int(x.win_count or 0)) for x in latest_rows))
+    win_rate = (float(win_count) / float(trade_count)) if trade_count > 0 else 0.0
 
     return {
         "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
@@ -431,6 +459,11 @@ def _build_single_snapshot(
             "active_signals": active_signals,
             "tracked_tokens": len(selected),
             "halted": halted,
+            "trade_count": trade_count,
+            "win_count": win_count,
+            "win_rate": win_rate,
+            "max_drawdown": float(max_drawdown),
+            "drawdown_now": float(now_drawdown),
         },
         "series": {
             "ts": [to_iso_ms(x) for x in ts_points[-240:]],
@@ -478,6 +511,11 @@ def _variant_summary(source: str, label: str, snap: dict) -> dict:
         "totals": {
             "total_pnl": float(totals.get("total_pnl") or 0.0),
             "day_pnl": float(totals.get("day_pnl") or 0.0),
+            "trade_count": int(totals.get("trade_count") or 0),
+            "win_count": int(totals.get("win_count") or 0),
+            "win_rate": float(totals.get("win_rate") or 0.0),
+            "max_drawdown": float(totals.get("max_drawdown") or 0.0),
+            "drawdown_now": float(totals.get("drawdown_now") or 0.0),
             "open_positions": int(totals.get("open_positions") or 0),
             "open_positions_active": int(totals.get("open_positions_active") or 0),
             "open_positions_inactive": int(totals.get("open_positions_inactive") or 0),
@@ -624,9 +662,17 @@ HTML_TEMPLATE = r"""
     }
     .stats {
       display:grid;
-      grid-template-columns: repeat(6, minmax(130px, 1fr));
+      grid-template-columns: repeat(8, minmax(120px, 1fr));
       gap:10px;
       margin-bottom:12px;
+      padding:10px;
+      border:1px solid #1b3345;
+      border-radius:16px;
+      background: rgba(5, 14, 21, 0.84);
+      backdrop-filter: blur(6px);
+      position: sticky;
+      top: 8px;
+      z-index: 18;
       animation: fadeIn .6s ease-out;
     }
     .variants {
@@ -677,6 +723,7 @@ HTML_TEMPLATE = r"""
       border:1px solid var(--line);
       border-radius:14px;
       padding:10px 12px;
+      min-height:78px;
     }
     .stat .k { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
     .stat .v {
@@ -842,7 +889,11 @@ HTML_TEMPLATE = r"""
     }
 
     @media (max-width: 1000px) {
-      .stats { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+      .stats { grid-template-columns: repeat(4, minmax(120px, 1fr)); }
+      .grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 720px) {
+      .stats { grid-template-columns: repeat(2, minmax(120px, 1fr)); top: 4px; }
       .grid { grid-template-columns: 1fr; }
     }
   </style>
@@ -874,6 +925,8 @@ HTML_TEMPLATE = r"""
     <section class="stats">
       <div class="stat"><div class="k">Total PnL</div><div class="v" id="stTotal">-</div></div>
       <div class="stat"><div class="k">Day PnL</div><div class="v" id="stDay">-</div></div>
+      <div class="stat"><div class="k">Win Rate</div><div class="v" id="stWinRate">-</div></div>
+      <div class="stat"><div class="k">Max DD / Now</div><div class="v" id="stDD">-</div></div>
       <div class="stat"><div class="k">Open Positions</div><div class="v" id="stOpen">-</div></div>
       <div class="stat"><div class="k">Active Signals</div><div class="v" id="stSignals">-</div></div>
       <div class="stat"><div class="k">Entries / Exits</div><div class="v" id="stEntries">-</div></div>
@@ -918,6 +971,17 @@ HTML_TEMPLATE = r"""
       const n = Number(v || 0);
       const s = (n >= 0 ? '+' : '') + n.toFixed(4);
       return s;
+    }
+
+    function fmtPct(v) {
+      const n = Number(v || 0);
+      const clamped = Math.max(0, Math.min(1, n));
+      return (clamped * 100).toFixed(1) + '%';
+    }
+
+    function fmtDrawdown(v) {
+      const n = Math.abs(Number(v || 0));
+      return '-' + n.toFixed(4);
     }
 
     function clsSigned(v) {
@@ -1084,6 +1148,8 @@ HTML_TEMPLATE = r"""
           </div>
           <div class="row"><span>day</span><b class="${clsSigned(t.day_pnl || 0)}">${fmtSigned(t.day_pnl || 0)}</b></div>
           <div class="row"><span>total</span><b class="${clsSigned(t.total_pnl || 0)}">${fmtSigned(t.total_pnl || 0)}</b></div>
+          <div class="row"><span>win / trades</span><b>${fmtPct(t.win_rate || 0)} / ${Number(t.trade_count || 0)}</b></div>
+          <div class="row"><span>max DD / now</span><b class="${Number(t.max_drawdown || 0) > 0 ? 'down' : 'neutral'}">${fmtDrawdown(t.max_drawdown || 0)} / ${fmtDrawdown(t.drawdown_now || 0)}</b></div>
           <div class="row"><span>entries / exits</span><b>${Number(v?.entries || 0)} / ${Number(v?.exits || 0)}</b></div>
           <div class="row"><span>open(all/a/i)</span><b class="${warnOpen ? 'down' : 'neutral'}">${Number(t.open_positions || 0)} / ${Number(t.open_positions_active || 0)} / ${Number(t.open_positions_inactive || 0)}</b></div>
           <div class="row"><span>open / signals</span><b>${Number(t.open_positions || 0)} / ${Number(t.active_signals || 0)}</b></div>
@@ -1134,6 +1200,22 @@ HTML_TEMPLATE = r"""
       el('stTotal').className = `v ${clsSigned(total.total_pnl || 0)}`;
       el('stDay').textContent = fmtSigned(total.day_pnl || 0);
       el('stDay').className = `v ${clsSigned(total.day_pnl || 0)}`;
+      const tradeCount = Number(total.trade_count || 0);
+      const winRate = Number(total.win_rate || 0);
+      el('stWinRate').textContent = fmtPct(winRate);
+      if (tradeCount <= 0) {
+        el('stWinRate').className = 'v neutral';
+      } else if (winRate >= 0.55) {
+        el('stWinRate').className = 'v up';
+      } else if (winRate <= 0.45) {
+        el('stWinRate').className = 'v down';
+      } else {
+        el('stWinRate').className = 'v neutral';
+      }
+      const maxDD = Number(total.max_drawdown || 0);
+      const nowDD = Number(total.drawdown_now || 0);
+      el('stDD').textContent = `${fmtDrawdown(maxDD)} / ${fmtDrawdown(nowDD)}`;
+      el('stDD').className = `v ${maxDD > 0 ? 'down' : 'neutral'}`;
       const openTotal = Number(total.open_positions || 0);
       const openActive = Number(total.open_positions_active || 0);
       const openInactive = Number(total.open_positions_inactive || 0);

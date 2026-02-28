@@ -28,6 +28,8 @@ Goal: run a **demo** auto-trader using Simmer's virtual venue (`venue=simmer`), 
 - State: `C:\\Repos\\polymarket_mm\\logs\\simmer_pingpong_state.json`
 - Lock: `C:\\Repos\\polymarket_mm\\logs\\simmer_pingpong_state.json.lock`
 - Metrics: `C:\\Repos\\polymarket_mm\\logs\\simmer-pingpong-metrics.jsonl`
+- Discord summary dedupe state: `C:\\Repos\\polymarket_mm\\logs\\simmer_discord_summary_dedupe_state.json`
+- Discord summary dedupe lock: `C:\\Repos\\polymarket_mm\\logs\\simmer_discord_summary_dedupe_state.json.lock`
 
 ## Prereqs
 
@@ -38,6 +40,7 @@ Goal: run a **demo** auto-trader using Simmer's virtual venue (`venue=simmer`), 
   - `CLOBBOT_DISCORD_WEBHOOK_URL`
   - `CLOBBOT_DISCORD_MENTION`
   - Event-driven only (startup / stop / fills / halt / periodic summary). No quote-level spam.
+  - `SIMMER_PONG summary` is deduped across processes within a short window to suppress burst duplicates.
 
 ## Observe-Only (Default)
 

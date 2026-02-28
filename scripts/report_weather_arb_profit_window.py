@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-DEFAULT_ASSUMED_BANKROLL_USD = 100.0
+DEFAULT_ASSUMED_BANKROLL_USD = 60.0
 
 
 SUMMARY_RE = re.compile(

@@ -34,9 +34,9 @@ Secondary keys (diagnostics/compatibility):
 
 ## Bankroll Policy
 
-- Initial bankroll (temporary default): `$100`.
+- Initial bankroll (temporary default): `$60`.
 - Strategy allocation ratio (default): equal-weight allocation across currently `ADOPTED` strategies.
-- Live start max risk: cap daily risk at `5%` of bankroll (`$5/day` when bankroll is `$100`).
+- Live start max risk: cap daily risk at `5%` of bankroll (`$3/day` when bankroll is `$60`).
 - For analytics/report scripts using `--assumed-bankroll-usd` / `-AssumedBankrollUsd`, use this policy bankroll by default unless an explicit override is required.
 - Diversification memo (observe-only diagnostic, 2026-02-27):
   - Source: `logs/uncorrelated_portfolio_proxy_analysis_latest.json`, `docs/memo_uncorrelated_portfolio_latest.txt`
@@ -171,40 +171,19 @@ Secondary keys (diagnostics/compatibility):
     - `summary.positive_ev_ratio < 0.60`
   - Keep default horizon hygiene (`allow_missing_end_date=false`; do not enable `--allow-missing-end-date` in production observe profile unless explicitly testing).
 
-## Rejected Strategies
+6. `gamma_eventpair_exec_edge_filter_observe`
 
-1. `weather_clob_arb_yes_no_only`
-
-- Status: `REJECTED`.
-- Reason: low usefulness in this workspace run; switched to `buckets` as default.
-
-2. `no_longshot_strict_lite_observe_experiment`
-
-- Status: `REJECTED` (as of 2026-02-27, operator decision).
-- Scope: strict-lite no-longshot side experiment (`non-crypto`, shorter horizon focus) tracked in isolated logs, observe-only.
-- Runtime (experiment-only):
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File logs/run_no_longshot_strict_lite_watch.ps1`
-  - `python scripts/record_no_longshot_realized_daily.py --screen-csv logs/no_longshot_strict_lite_screen_latest.csv --positions-json logs/no_longshot_strict_lite_forward_positions.json --out-daily-jsonl logs/no_longshot_strict_lite_realized_daily.jsonl --out-latest-json logs/no_longshot_strict_lite_realized_latest.json --out-monthly-txt logs/no_longshot_strict_lite_monthly_return_latest.txt --entry-top-n 4 --per-trade-cost 0.002`
-- Evidence snapshot (latest before stop):
-  - `logs/no_longshot_strict_lite_vs_baseline_latest.json`: strict-lite `-4.3520%` (`resolved=8`, `open=7`) vs baseline `-14.8190%` (`resolved=46`).
-  - `logs/no_longshot_strict_lite_outcome_range_latest.json`: all-open resolution range `worst=-47.9612%`, `best=+4.0776%`, `breakeven_wins_on_avg=7` (all wins required).
-  - `logs/no_longshot_strict_lite_watch.log`: guard entered `reason=freeze_negative_realized` with `entry_top_n=0`.
-- Decision note: operator rejected this experiment on 2026-02-27 (`ボツ`) due weak expected upside versus downside risk.
-- Operational gate: keep strict-lite watcher stopped and do not add new strict-lite entries; only reconsider with a materially different rule set and new dryrun evidence.
-
-## Pending Strategies
-
-1. `gamma_eventpair_exec_edge_filter_observe`
-
-- Status: `PENDING` (as of 2026-02-28, review-hold, observe-only).
+- Status: `ADOPTED` (as of 2026-02-28, promoted from pending-release hold, observe-only).
 - Scope: Polymarket gamma-active event-pair strategy with observe-only exec-edge suppression (`event-yes` filter).
 - Runtime:
   - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --gamma-limit 1500 --gamma-min-liquidity 0 --gamma-min-volume24hr 0 --gamma-scan-max-markets 40000 --gamma-max-days-to-end 60 --max-markets-per-event 5 --max-subscribe-tokens 400 --metrics-log-all-candidates --observe-exec-edge-filter --observe-exec-edge-min-usd 0.01 --observe-exec-edge-strike-limit 1 --observe-exec-edge-cooldown-sec 180 --observe-exec-edge-filter-strategies event-yes --min-edge-cents 10`
   - `python scripts/replay_clob_arb_kelly.py --metrics-file logs/clob-arb-monitor-metrics-eventpair-tuned-20260226-20260226_204500.jsonl,logs/clob-arb-monitor-metrics-eventpair-tuned30m-20260226-20260226_205340.jsonl,logs/clob-arb-monitor-metrics-eventpair-tuned3m-20260227_233912.jsonl --require-threshold-pass --fill-ratio-mode min --miss-penalty 0.005 --stale-grace-sec 2 --stale-penalty-per-sec 0.001 --max-worst-stale-sec 10 --min-gap-ms-per-event 5000 --scales 0.1,0.25,0.5,0.75,1.0 --bootstrap-iters 3000 --pretty --out-json logs/clob-arb-kelly-replay-eventpair-tuned38m-20260227-gap5s.json`
+  - `python scripts/check_pending_release.py --strategy gamma_eventpair_exec_edge_filter_observe --conservative-costs --conservative-cost-cents 2 --pretty`
 - Evidence snapshot (2026-02-27 strict revalidation):
   - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-tuned3m-20260227_233912.jsonl` (`rows_total=1865`, `reason_threshold=515`, `distinct_events_threshold=7`)
   - Monthly estimate (3m strict): `logs/clob-arb-eventpair-monthly-estimate-tuned3m-20260227_233912.json` (`weighted_monthly_trim_edgepct_le_25=+4.07%`)
   - Monthly estimate (38m combined strict): `logs/clob-arb-eventpair-monthly-estimate-tuned38m-20260227.json` (`weighted_monthly_trim_edgepct_le_25=+5.47%`)
+  - Kelly replay (38m strict combined): `logs/clob-arb-kelly-replay-eventpair-tuned38m-20260227-gap5s.json` (`full_fraction_estimate=0.293505`)
 - Evidence snapshot (risk-transferability constraints):
   - Long-run NO_GO baseline: `logs/clob-arb-adoption-summary-20260226.json` (`decision=NO_GO`)
   - Prior long-run replay showed negative execution-edge regime (`full_kelly=0.0`): `logs/clob-arb-kelly-replay-eventpair-long2-exec.json`
@@ -232,14 +211,33 @@ Secondary keys (diagnostics/compatibility):
   - IF monthly conditions pass but any safety-lock condition fails THEN keep `PENDING` (`REVIEW`-equivalent hold)
   - IF monthly conditions pass and safety-lock is pending, keep observe-only and run periodic refresh (do not promote by monthly-only evidence)
   - IF either strict monthly metric is non-positive THEN `REJECTED`
-- Decision note: monthly estimate has improved and is positive, but transferability/safety conditions are not fully stable; keep review-hold state.
-- PENDING release conditions:
-  - `execution-edge > 0` on refreshed multi-event strict evidence
-  - Kelly replay `full_kelly > 0` on refreshed strict evidence
-  - conservative cost/slippage check still keeps execution-edge positive
-- Operational gate: keep observe-only while `PENDING`; promote only after PENDING release conditions are met.
+- Decision note: promoted to `ADOPTED` on 2026-02-28 after strict replay (`logs/clob-arb-kelly-replay-eventpair-tuned38m-20260227-gap5s.json`) and conservative pending-release check both satisfied release locks (`execution_edge>0`, `full_kelly>0`, conservative edge positive).
+- Operational gate: keep observe-only; immediately set `REVIEW` and stop promotion/live consideration if latest `check_pending_release.py --conservative-costs` returns `release_check=HOLD`.
 
-2. `social_profit_claim_validation_observe`
+## Rejected Strategies
+
+1. `weather_clob_arb_yes_no_only`
+
+- Status: `REJECTED`.
+- Reason: low usefulness in this workspace run; switched to `buckets` as default.
+
+2. `no_longshot_strict_lite_observe_experiment`
+
+- Status: `REJECTED` (as of 2026-02-27, operator decision).
+- Scope: strict-lite no-longshot side experiment (`non-crypto`, shorter horizon focus) tracked in isolated logs, observe-only.
+- Runtime (experiment-only):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File logs/run_no_longshot_strict_lite_watch.ps1`
+  - `python scripts/record_no_longshot_realized_daily.py --screen-csv logs/no_longshot_strict_lite_screen_latest.csv --positions-json logs/no_longshot_strict_lite_forward_positions.json --out-daily-jsonl logs/no_longshot_strict_lite_realized_daily.jsonl --out-latest-json logs/no_longshot_strict_lite_realized_latest.json --out-monthly-txt logs/no_longshot_strict_lite_monthly_return_latest.txt --entry-top-n 4 --per-trade-cost 0.002`
+- Evidence snapshot (latest before stop):
+  - `logs/no_longshot_strict_lite_vs_baseline_latest.json`: strict-lite `-4.3520%` (`resolved=8`, `open=7`) vs baseline `-14.8190%` (`resolved=46`).
+  - `logs/no_longshot_strict_lite_outcome_range_latest.json`: all-open resolution range `worst=-47.9612%`, `best=+4.0776%`, `breakeven_wins_on_avg=7` (all wins required).
+  - `logs/no_longshot_strict_lite_watch.log`: guard entered `reason=freeze_negative_realized` with `entry_top_n=0`.
+- Decision note: operator rejected this experiment on 2026-02-27 (`ボツ`) due weak expected upside versus downside risk.
+- Operational gate: keep strict-lite watcher stopped and do not add new strict-lite entries; only reconsider with a materially different rule set and new dryrun evidence.
+
+## Pending Strategies
+
+1. `social_profit_claim_validation_observe`
 
 - Status: `PENDING` (as of 2026-02-25).
 - Scope: social/X performance claims around Polymarket bot profitability, observe-only.
@@ -250,8 +248,8 @@ Secondary keys (diagnostics/compatibility):
   - Source claim link: `https://x.com/frostikkkk/status/2015154001797390637`
   - Intake evidence: `logs/link_intake_20260224_7links.json`
   - Per-link note: `docs/knowledge/link-intake/sessions/2026-02-24_polymarket-7links/07_frostikk-on-x-how-claude-polymarket-will.md`
-- Evidence snapshot (2026-02-25 run):
+- Evidence snapshot (2026-02-28 run):
   - Source summary: `logs/social_profit_claims_latest.json`
-  - `summary.observed_days=2`, `meta.min_days=30`, all claim statuses were `INSUFFICIENT_DATA`
+  - `summary.observed_days=5`, `meta.min_days=30`, all claim statuses were `INSUFFICIENT_DATA`
 - Decision note: use measured realized PnL windows (`daily`, `rolling-30d`) to support/reject headline claims before considering strategy adoption.
 - Operational gate: require at least 30 observed realized-PnL days (`--min-days 30`) before support/no-support judgment.
