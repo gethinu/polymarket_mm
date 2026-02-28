@@ -1079,10 +1079,30 @@ def summarize_realized_monthly_return(min_days: int, series: Optional[dict] = No
     mean_daily = (total_realized / observed_days) if observed_days > 0 else None
     trailing_days = min(30, observed_days)
     trailing_sum = float(sum(per_day[d] for d in day_keys[-trailing_days:])) if trailing_days > 0 else 0.0
+    latest_day = day_keys[-1] if day_keys else ""
+    latest_daily = float(per_day.get(latest_day)) if latest_day in per_day else None
 
     bankroll = _as_float(s.get("bankroll_usd"))
     trailing_window_return = (trailing_sum / bankroll) if (bankroll is not None and bankroll > 0 and trailing_days > 0) else None
     rolling_30d_return = (trailing_sum / bankroll) if (bankroll is not None and bankroll > 0 and observed_days >= 30) else None
+    max_drawdown_30d = None
+    if bankroll is not None and bankroll > 0 and trailing_days > 0:
+        eq = 1.0
+        peak = 1.0
+        worst_dd = 0.0
+        for d in day_keys[-trailing_days:]:
+            daily_ret = float(per_day.get(d, 0.0)) / float(bankroll)
+            if daily_ret <= -1.0:
+                eq = 0.0
+            else:
+                eq = eq * (1.0 + daily_ret)
+            if eq > peak:
+                peak = eq
+            if peak > 0:
+                dd = (eq / peak) - 1.0
+                if dd < worst_dd:
+                    worst_dd = dd
+        max_drawdown_30d = float(worst_dd)
 
     projected_monthly = None
     if bankroll is not None and bankroll > 0 and mean_daily is not None:
@@ -1110,6 +1130,8 @@ def summarize_realized_monthly_return(min_days: int, series: Optional[dict] = No
         "bankroll_usd": bankroll,
         "bankroll_source": str(s.get("bankroll_source") or ""),
         "total_realized_pnl_usd": float(total_realized),
+        "latest_day": latest_day,
+        "daily_realized_pnl_usd_latest": float(latest_daily) if latest_daily is not None else None,
         "mean_daily_realized_pnl_usd": float(mean_daily) if mean_daily is not None else None,
         "trailing_window_days": int(trailing_days),
         "trailing_window_realized_pnl_usd": float(trailing_sum),
@@ -1119,6 +1141,33 @@ def summarize_realized_monthly_return(min_days: int, series: Optional[dict] = No
         "trailing_window_return_text": _fmt_ratio_pct(trailing_window_return, digits=2),
         "rolling_30d_return_ratio": float(rolling_30d_return) if rolling_30d_return is not None else None,
         "rolling_30d_return_text": _fmt_ratio_pct(rolling_30d_return, digits=2),
+        "max_drawdown_30d_ratio": float(max_drawdown_30d) if max_drawdown_30d is not None else None,
+        "max_drawdown_30d_text": _fmt_ratio_pct(max_drawdown_30d, digits=2),
+    }
+
+
+def build_kpi_core(no_longshot: dict, realized_monthly: dict) -> dict:
+    no = no_longshot if isinstance(no_longshot, dict) else {}
+    rm = realized_monthly if isinstance(realized_monthly, dict) else {}
+    daily = _as_float(rm.get("daily_realized_pnl_usd_latest"))
+    daily_day = str(rm.get("latest_day") or "")
+    monthly_now_text = str(no.get("monthly_return_now_text") or rm.get("projected_monthly_return_text") or "n/a")
+    monthly_now_source = str(no.get("monthly_return_now_source") or "realized_monthly_return.projected_monthly_return_text")
+    max_dd_ratio = _as_float(rm.get("max_drawdown_30d_ratio"))
+    max_dd_text = str(rm.get("max_drawdown_30d_text") or _fmt_ratio_pct(max_dd_ratio, digits=2))
+
+    daily_text = "n/a"
+    if daily is not None:
+        daily_text = f"{daily:+.4f}"
+    return {
+        "daily_realized_pnl_usd": float(daily) if daily is not None else None,
+        "daily_realized_pnl_usd_text": daily_text,
+        "daily_realized_pnl_day": daily_day,
+        "monthly_return_now_text": monthly_now_text,
+        "monthly_return_now_source": monthly_now_source,
+        "max_drawdown_30d_ratio": float(max_dd_ratio) if max_dd_ratio is not None else None,
+        "max_drawdown_30d_text": max_dd_text,
+        "source": "logs/strategy_register_latest.json",
     }
 
 
@@ -1139,6 +1188,7 @@ def render_html_snapshot(payload: dict) -> str:
     realized_monthly = (
         payload.get("realized_monthly_return") if isinstance(payload.get("realized_monthly_return"), dict) else {}
     )
+    kpi_core = payload.get("kpi_core") if isinstance(payload.get("kpi_core"), dict) else {}
 
     weather_view_specs = [
         (
@@ -1310,6 +1360,9 @@ def render_html_snapshot(payload: dict) -> str:
     no_source = html.escape(str(no_longshot.get("monthly_return_now_source") or "-"))
     no_source_all = html.escape(str(no_longshot.get("monthly_return_now_all_source") or "-"))
     no_source_new = html.escape(str(no_longshot.get("monthly_return_now_new_condition_source") or "-"))
+    kpi_daily = html.escape(str(kpi_core.get("daily_realized_pnl_usd_text") or "n/a"))
+    kpi_monthly = html.escape(str(kpi_core.get("monthly_return_now_text") or "n/a"))
+    kpi_maxdd = html.escape(str(kpi_core.get("max_drawdown_30d_text") or "n/a"))
     clob_monthly_now = html.escape(str(realized_monthly.get("projected_monthly_return_text") or "n/a"))
     clob_roll30 = html.escape(str(realized_monthly.get("rolling_30d_return_text") or "n/a"))
     clob_obs_days = html.escape(
@@ -1448,6 +1501,9 @@ def render_html_snapshot(payload: dict) -> str:
       <div class="card"><div class="k">clob realized rolling_30d</div><div class="v">{clob_roll30}</div></div>
       <div class="card"><div class="k">no-longshot monthly_now</div><div class="v">{no_monthly_now}</div></div>
       <div class="card"><div class="k">no-longshot rolling_30d</div><div class="v">{no_roll30}</div></div>
+      <div class="card"><div class="k">kpi_core daily realized pnl</div><div class="v">{kpi_daily}</div></div>
+      <div class="card"><div class="k">kpi_core monthly return</div><div class="v">{kpi_monthly}</div></div>
+      <div class="card"><div class="k">kpi_core max drawdown 30d</div><div class="v">{kpi_maxdd}</div></div>
       <div class="card"><div class="k">realized gate 7/14/30</div><div class="v">{chip(gate_dec_stage)}</div><div class="k" style="text-transform:none; letter-spacing:0.03em; margin-top:6px;">{gate_dec_stage_ja}</div></div>
     </div>
 
@@ -1609,6 +1665,14 @@ def main() -> int:
         strategy_path,
         strategy_entries=(strategy_register.get("entries") if isinstance(strategy_register.get("entries"), list) else []),
     )
+    no_longshot_status = load_no_longshot_status(
+        logs_dir() / "no_longshot_daily_summary.txt",
+        logs_dir() / "no_longshot_realized_latest.json",
+        logs_dir() / "no_longshot_monthly_return_latest.txt",
+    )
+    realized_30d_gate = evaluate_realized_30d_gate(min_realized_days, series=realized_series)
+    realized_monthly = summarize_realized_monthly_return(min_realized_days, series=realized_series)
+    kpi_core = build_kpi_core(no_longshot_status, realized_monthly)
 
     payload = {
         "generated_utc": now_utc().isoformat(),
@@ -1632,13 +1696,10 @@ def main() -> int:
             "clob_state": load_clob_state(resolve_path(str(args.clob_state_file), "clob_arb_state.json")),
             "live_processes": scan_live_processes(bool(args.skip_process_scan)),
         },
-        "no_longshot_status": load_no_longshot_status(
-            logs_dir() / "no_longshot_daily_summary.txt",
-            logs_dir() / "no_longshot_realized_latest.json",
-            logs_dir() / "no_longshot_monthly_return_latest.txt",
-        ),
-        "realized_30d_gate": evaluate_realized_30d_gate(min_realized_days, series=realized_series),
-        "realized_monthly_return": summarize_realized_monthly_return(min_realized_days, series=realized_series),
+        "kpi_core": kpi_core,
+        "no_longshot_status": no_longshot_status,
+        "realized_30d_gate": realized_30d_gate,
+        "realized_monthly_return": realized_monthly,
     }
 
     out_json = resolve_path(str(args.out_json), "strategy_register_latest.json")

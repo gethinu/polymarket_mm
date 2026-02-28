@@ -45,15 +45,18 @@ Then read/report KPI only from `logs/strategy_register_latest.json`.
 
 ## 4. KPI Authority Keys
 
-Monthly return authority:
+Core KPI authority (primary):
+
+- `kpi_core.daily_realized_pnl_usd`
+- `kpi_core.monthly_return_now_text`
+- `kpi_core.max_drawdown_30d_text`
+
+Compatibility/diagnostic keys (secondary):
 
 - `no_longshot_status.monthly_return_now_text`
 - `no_longshot_status.monthly_return_now_source`
 - `no_longshot_status.monthly_return_now_new_condition_text`（新条件専用表示）
 - `no_longshot_status.monthly_return_now_all_text`（全体比較値）
-
-Also report when needed:
-
 - `no_longshot_status.rolling_30d_monthly_return_text`
 - `realized_30d_gate.decision`
 

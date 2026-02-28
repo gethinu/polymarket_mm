@@ -307,10 +307,40 @@ def run_daily_once(args, logger: Logger) -> Tuple[int, str]:
         cmd.append("-FailOnGapErrorRateHigh")
     if args.runner_strict_realized_band_only:
         cmd.append("-StrictRealizedBandOnly")
+    runner_live_execute = bool(getattr(args, "runner_live_execute", False))
+    if runner_live_execute:
+        cmd.extend(
+            [
+                "-LiveExecute",
+                "-LiveConfirm",
+                str(getattr(args, "runner_live_confirm_live", "YES")),
+                "-LiveMaxOrders",
+                str(int(getattr(args, "runner_live_max_new_orders", 1))),
+                "-LiveOrderSizeShares",
+                str(float(getattr(args, "runner_live_order_size_shares", 5.0))),
+                "-LiveMaxDailyNotionalUsd",
+                str(float(getattr(args, "runner_live_max_daily_notional_usd", 10.0))),
+                "-LiveMaxOpenPositions",
+                str(int(getattr(args, "runner_live_max_open_positions", 10))),
+                "-LiveMaxEntryNoPrice",
+                str(float(getattr(args, "runner_live_max_entry_no_price", 0.84))),
+                "-LivePriceBufferCents",
+                str(float(getattr(args, "runner_live_price_buffer_cents", 0.2))),
+                "-LiveScreenSource",
+                str(getattr(args, "runner_live_screen_source", "fast")),
+                "-LiveStateFile",
+                str(getattr(args, "runner_live_state_file", "logs/no_longshot_live_state.json")),
+                "-LiveExecLogFile",
+                str(getattr(args, "runner_live_exec_log_file", "logs/no_longshot_live_executions.jsonl")),
+                "-LiveLogFile",
+                str(getattr(args, "runner_live_log_file", "logs/no_longshot_live.log")),
+            ]
+        )
 
     logger.info(
         f"[{iso_now()}] no_longshot run start "
-        f"(skip_refresh={args.skip_refresh} discord={args.discord} timeout={args.max_run_seconds}s)"
+        f"(skip_refresh={args.skip_refresh} discord={args.discord} "
+        f"live_execute={runner_live_execute} timeout={args.max_run_seconds}s)"
     )
     t0 = now_ts()
     try:
@@ -490,6 +520,73 @@ def parse_args():
         action="store_true",
         help="Pass -StrictRealizedBandOnly to run_no_longshot_daily_report.ps1.",
     )
+    p.add_argument(
+        "--runner-live-execute",
+        action="store_true",
+        help="Pass -LiveExecute to run_no_longshot_daily_report.ps1 (requires --runner-live-confirm-live YES).",
+    )
+    p.add_argument(
+        "--runner-live-confirm-live",
+        default="",
+        help='Pass -LiveConfirm to run_no_longshot_daily_report.ps1 (must be "YES" when live is enabled).',
+    )
+    p.add_argument(
+        "--runner-live-max-new-orders",
+        type=int,
+        default=1,
+        help="Pass -LiveMaxOrders to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-order-size-shares",
+        type=float,
+        default=5.0,
+        help="Pass -LiveOrderSizeShares to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-max-daily-notional-usd",
+        type=float,
+        default=10.0,
+        help="Pass -LiveMaxDailyNotionalUsd to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-max-open-positions",
+        type=int,
+        default=10,
+        help="Pass -LiveMaxOpenPositions to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-max-entry-no-price",
+        type=float,
+        default=0.84,
+        help="Pass -LiveMaxEntryNoPrice to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-price-buffer-cents",
+        type=float,
+        default=0.2,
+        help="Pass -LivePriceBufferCents to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-screen-source",
+        choices=("fast", "primary"),
+        default="fast",
+        help="Pass -LiveScreenSource to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-state-file",
+        default=str(Path("logs") / "no_longshot_live_state.json"),
+        help="Pass -LiveStateFile to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-exec-log-file",
+        default=str(Path("logs") / "no_longshot_live_executions.jsonl"),
+        help="Pass -LiveExecLogFile to run_no_longshot_daily_report.ps1.",
+    )
+    p.add_argument(
+        "--runner-live-log-file",
+        default=str(Path("logs") / "no_longshot_live.log"),
+        help="Pass -LiveLogFile to run_no_longshot_daily_report.ps1.",
+    )
     p.add_argument("--python-exe", default="python", help="Python executable for realized-refresh runner")
     p.add_argument(
         "--realized-refresh-sec",
@@ -610,6 +707,48 @@ def main() -> int:
             f"{int(args.runner_gap_error_alert_min_runs_7d)} must be >= 1"
         )
         return 2
+    if bool(args.runner_live_execute) and str(args.runner_live_confirm_live or "").strip() != "YES":
+        logger.info(
+            f"[{iso_now()}] refused: runner live mode requires "
+            "--runner-live-confirm-live YES"
+        )
+        return 2
+    if int(args.runner_live_max_new_orders) < 0:
+        logger.info(
+            f"[{iso_now()}] refused: runner live max new orders "
+            f"{int(args.runner_live_max_new_orders)} must be >= 0"
+        )
+        return 2
+    if float(args.runner_live_order_size_shares) <= 0.0:
+        logger.info(
+            f"[{iso_now()}] refused: runner live order size "
+            f"{float(args.runner_live_order_size_shares)} must be > 0"
+        )
+        return 2
+    if float(args.runner_live_max_daily_notional_usd) < 0.0:
+        logger.info(
+            f"[{iso_now()}] refused: runner live max daily notional "
+            f"{float(args.runner_live_max_daily_notional_usd)} must be >= 0"
+        )
+        return 2
+    if int(args.runner_live_max_open_positions) < 1:
+        logger.info(
+            f"[{iso_now()}] refused: runner live max open positions "
+            f"{int(args.runner_live_max_open_positions)} must be >= 1"
+        )
+        return 2
+    if float(args.runner_live_max_entry_no_price) <= 0.0 or float(args.runner_live_max_entry_no_price) >= 1.0:
+        logger.info(
+            f"[{iso_now()}] refused: runner live max entry no price "
+            f"{float(args.runner_live_max_entry_no_price)} must be within (0,1)"
+        )
+        return 2
+    if float(args.runner_live_price_buffer_cents) < 0.0:
+        logger.info(
+            f"[{iso_now()}] refused: runner live price buffer cents "
+            f"{float(args.runner_live_price_buffer_cents)} must be >= 0"
+        )
+        return 2
     if (
         float(args.realized_refresh_sec) > 0.0
         and int(args.realized_entry_top_n) > 0
@@ -643,7 +782,14 @@ def main() -> int:
         f"runner_gap_alert_7d={float(args.runner_gap_error_alert_rate_7d):.4f}/{int(args.runner_gap_error_alert_min_runs_7d)} "
         f"runner_fail_on_gap_scan={bool(args.runner_fail_on_gap_scan_error)} "
         f"runner_fail_on_gap_rate={bool(args.runner_fail_on_gap_error_rate_high)} "
-        f"runner_strict_band_only={bool(args.runner_strict_realized_band_only)}"
+        f"runner_strict_band_only={bool(args.runner_strict_realized_band_only)} "
+        f"runner_live_execute={bool(args.runner_live_execute)} "
+        f"runner_live_orders={int(args.runner_live_max_new_orders)} "
+        f"runner_live_size={float(args.runner_live_order_size_shares)} "
+        f"runner_live_cap={float(args.runner_live_max_daily_notional_usd)} "
+        f"runner_live_open_cap={int(args.runner_live_max_open_positions)} "
+        f"runner_live_no_max={float(args.runner_live_max_entry_no_price)} "
+        f"runner_live_screen={str(args.runner_live_screen_source)}"
     )
     logger.info(f"[{iso_now()}] log={args.log_file}")
     logger.info(f"[{iso_now()}] state={args.state_file}")

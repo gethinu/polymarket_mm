@@ -690,6 +690,61 @@ def _apply_simmer_ab_task_argument_guard(task_rows: List[dict]) -> None:
         return
 
 
+def _apply_event_driven_task_argument_guard(task_rows: List[dict]) -> None:
+    target_name = "EventDrivenDailyReport"
+    required_switch_flags = [
+        "-nobackground",
+    ]
+    forbidden_switch_flags = [
+        "-skipprofitwindow",
+    ]
+
+    for row in task_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("task_name") or "") != target_name:
+            continue
+        if not bool(row.get("exists")):
+            return
+        status = str(row.get("status") or "").upper()
+        if status in {"MISSING", "OPTIONAL_MISSING", "ERROR", "DISABLED", "SUPPRESSED_BY_SUPERVISOR"}:
+            return
+        args_raw = str(row.get("action_arguments") or "").strip()
+        if not args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "missing_action_arguments"
+            return
+        if "||" in args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "multiple_actions_detected"
+            return
+
+        def _switch_enabled(flag: str) -> bool:
+            pattern = rf"(?i)(?:^|\s){re.escape(flag)}(?:\s*:\s*(\$?true|\$?false))?(?=\s|$)"
+            for m in re.finditer(pattern, args_raw):
+                raw = str(m.group(1) or "").strip().lower().lstrip("$")
+                if not raw or raw == "true":
+                    return True
+                if raw == "false":
+                    continue
+                return True
+            return False
+
+        missing = [f for f in required_switch_flags if not _switch_enabled(f)]
+        forbidden = [f for f in forbidden_switch_flags if _switch_enabled(f)]
+        if not missing and not forbidden:
+            return
+
+        notes: List[str] = []
+        if missing:
+            notes.append("missing_required_flags=" + ",".join(missing))
+        if forbidden:
+            notes.append("forbidden_flags=" + ",".join(forbidden))
+        row["status"] = "INVALID_CONTENT"
+        row["status_note"] = "; ".join(notes)
+        return
+
+
 def _artifact_rows(specs: List[Tuple[str, float, bool]]) -> List[dict]:
     now = now_utc()
     out: List[dict] = []
@@ -742,6 +797,9 @@ def _extract_nested(payload: dict, dotted_key: str) -> tuple[bool, object]:
 def _apply_strategy_register_kpi_key_check(artifact_rows: List[dict]) -> None:
     target_suffix = r"logs\strategy_register_latest.json"
     required_keys = [
+        "kpi_core.daily_realized_pnl_usd",
+        "kpi_core.monthly_return_now_text",
+        "kpi_core.max_drawdown_30d_text",
         "no_longshot_status.monthly_return_now_text",
         "no_longshot_status.monthly_return_now_source",
         "no_longshot_status.monthly_return_now_new_condition_text",
@@ -794,12 +852,18 @@ def _apply_strategy_register_kpi_key_check(artifact_rows: List[dict]) -> None:
             row["status_note"] = "missing_or_empty_keys=" + ",".join(missing)
             return
 
-        ok_text, monthly_now_text_obj = _extract_nested(payload, "no_longshot_status.monthly_return_now_text")
-        ok_source, monthly_now_source_obj = _extract_nested(payload, "no_longshot_status.monthly_return_now_source")
+        ok_text, monthly_now_text_obj = _extract_nested(payload, "kpi_core.monthly_return_now_text")
+        ok_source, monthly_now_source_obj = _extract_nested(payload, "kpi_core.monthly_return_now_source")
+        if (not ok_text) or (not ok_source):
+            ok_text, monthly_now_text_obj = _extract_nested(payload, "no_longshot_status.monthly_return_now_text")
+            ok_source, monthly_now_source_obj = _extract_nested(payload, "no_longshot_status.monthly_return_now_source")
         monthly_now_text = str(monthly_now_text_obj or "").strip().lower() if ok_text else ""
         monthly_now_source = str(monthly_now_source_obj or "").strip() if ok_source else ""
         has_real_value = monthly_now_text not in na_tokens
-        source_ok = monthly_now_source.startswith("realized_rolling_30d")
+        source_ok = (
+            monthly_now_source.startswith("realized_rolling_30d")
+            or monthly_now_source == "realized_monthly_return.projected_monthly_return_text"
+        )
         if has_real_value and not source_ok:
             if bool(row.get("required", True)):
                 row["status"] = "INVALID_CONTENT"
@@ -1132,6 +1196,7 @@ def main() -> int:
     _apply_duplicate_run_guard(task_rows)
     _apply_morning_task_argument_guard(task_rows)
     _apply_simmer_ab_task_argument_guard(task_rows)
+    _apply_event_driven_task_argument_guard(task_rows)
 
     reasons: List[str] = []
     bad_task = [

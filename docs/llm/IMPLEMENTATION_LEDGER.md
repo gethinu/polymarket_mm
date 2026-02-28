@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `43`
-- worktree_changes: `18`
+- commits_scanned: `44`
+- worktree_changes: `15`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,20 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 28 | `2026-02-27 23:46` | `a229d5e8` | harden automation health task-argument guards |
+| `docs_llm` | 29 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 15 | `2026-02-27 20:37` | `00ba4dfe` | test: extend no-longshot mode switcher daemon/off coverage |
-| `security_or_ops` | 16 | `2026-02-27 23:46` | `a229d5e8` | harden automation health task-argument guards |
-| `simmer_clob` | 25 | `2026-02-27 22:13` | `c2f07a53` | feat: add fade observe watchdog auto-recovery task |
-| `strategy_register` | 11 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
-| `task_automation` | 19 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
+| `security_or_ops` | 17 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
+| `simmer_clob` | 26 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
+| `strategy_register` | 12 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
+| `task_automation` | 20 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
 | `weather_pipeline` | 7 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-27 23:48` | `c3d5a905` | `docs_llm,security_or_ops,simmer_clob,strategy_register,task_automation` | strengthen morning gates and extend event-driven observe tooling | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, +14 |
 | `2026-02-27 23:46` | `a229d5e8` | `docs_llm,security_or_ops` | harden automation health task-argument guards | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
 | `2026-02-27 23:38` | `cf0e06e8` | `docs_llm,security_or_ops` | fix: require -NoBackground for morning task guard | `docs/llm/STRATEGY.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
 | `2026-02-27 22:49` | `4b6eba99` | `docs_llm,security_or_ops,strategy_register,task_automation,weather_pipeline` | feat: tighten automation health guards and weather mutex wiring | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STRATEGY.md`, `scripts/install_weather_profit_window_weekly_task.ps1`, +5 |
@@ -80,24 +81,21 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
+| `M` | `docs/llm/ARCHITECTURE.md` |
+| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STATE.md` |
 | `M` | `docs/llm/STRATEGY.md` |
-| `M` | `scripts/check_morning_status.ps1` |
-| `M` | `scripts/check_morning_status.py` |
-| `M` | `scripts/install_event_driven_daily_task.ps1` |
-| `M` | `scripts/install_morning_status_daily_task.ps1` |
-| `M` | `scripts/lib/clob_arb_eval.py` |
-| `M` | `scripts/polymarket_clob_arb_realtime.py` |
+| `M` | `scripts/no_longshot_daily_daemon.py` |
+| `M` | `scripts/render_strategy_register_snapshot.py` |
 | `M` | `scripts/report_automation_health.py` |
-| `M` | `scripts/report_event_driven_profit_window.py` |
-| `M` | `scripts/report_uncorrelated_portfolio.py` |
-| `M` | `scripts/run_event_driven_daily_report.ps1` |
-| `M` | `scripts/run_morning_status_daily.ps1` |
-| `M` | `tests/test_clob_arb_eval.py` |
+| `M` | `scripts/run_no_longshot_daily_report.ps1` |
+| `M` | `tests/test_no_longshot_daily_daemon.py` |
 | `M` | `tests/test_report_automation_health.py` |
-| `??` | `tests/test_report_event_driven_profit_window.py` |
+| `??` | `scripts/execute_no_longshot_live.py` |
+| `??` | `tests/test_execute_no_longshot_live.py` |
+| `??` | `tests/test_render_strategy_register_snapshot.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

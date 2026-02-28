@@ -275,6 +275,62 @@ def test_apply_event_driven_supervisor_guard_marks_invalid_when_state_missing(mo
     assert "bot_supervisor_state check is missing" in str(task_rows[0].get("status_note") or "")
 
 
+def test_apply_event_driven_task_argument_guard_marks_invalid_when_required_missing():
+    rows = [
+        {
+            "task_name": "EventDrivenDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_event_driven_daily_report.ps1 -FailOnNoGo",
+        }
+    ]
+
+    mod._apply_event_driven_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "missing_required_flags=" in note
+    assert "-nobackground" in note
+
+
+def test_apply_event_driven_task_argument_guard_marks_invalid_when_skip_profit_window_present():
+    rows = [
+        {
+            "task_name": "EventDrivenDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_event_driven_daily_report.ps1 "
+                "-NoBackground -SkipProfitWindow -FailOnNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_event_driven_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "forbidden_flags=-skipprofitwindow" in note
+
+
+def test_apply_event_driven_task_argument_guard_keeps_ok_when_required_present():
+    rows = [
+        {
+            "task_name": "EventDrivenDailyReport",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_event_driven_daily_report.ps1 "
+                "-NoBackground -FailOnNoGo"
+            ),
+        }
+    ]
+
+    mod._apply_event_driven_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "OK"
+
+
 def test_apply_morning_kpi_marker_check_marks_invalid_when_missing(tmp_path):
     p = tmp_path / "logs" / "morning_status_daily_run.log"
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -390,6 +446,12 @@ def test_apply_strategy_register_kpi_key_check_keeps_fresh_when_keys_present(tmp
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
         """{
+  "kpi_core": {
+    "daily_realized_pnl_usd": 1.23,
+    "monthly_return_now_text": "+5.43%",
+    "monthly_return_now_source": "realized_rolling_30d_new_condition",
+    "max_drawdown_30d_text": "-1.10%"
+  },
   "no_longshot_status": {
     "monthly_return_now_text": "+5.43%",
     "monthly_return_now_source": "realized_rolling_30d_new_condition",
@@ -421,6 +483,12 @@ def test_apply_strategy_register_kpi_key_check_marks_invalid_when_source_is_not_
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(
         """{
+  "kpi_core": {
+    "daily_realized_pnl_usd": 0.12,
+    "monthly_return_now_text": "+4.20%",
+    "monthly_return_now_source": "guarded_oos_annualized_fallback",
+    "max_drawdown_30d_text": "-2.00%"
+  },
   "no_longshot_status": {
     "monthly_return_now_text": "+4.20%",
     "monthly_return_now_source": "guarded_oos_annualized_fallback",

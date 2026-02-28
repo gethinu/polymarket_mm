@@ -58,6 +58,19 @@ param(
   [int]$GapMaxPairsPerEvent = 20,
   [int]$GapTopN = 30,
   [switch]$Discord,
+  [switch]$LiveExecute,
+  [string]$LiveConfirm = "",
+  [int]$LiveMaxOrders = 1,
+  [double]$LiveOrderSizeShares = 5.0,
+  [double]$LiveMaxDailyNotionalUsd = 10.0,
+  [int]$LiveMaxOpenPositions = 10,
+  [double]$LiveMaxEntryNoPrice = 0.84,
+  [double]$LivePriceBufferCents = 0.2,
+  [ValidateSet("fast", "primary")]
+  [string]$LiveScreenSource = "fast",
+  [string]$LiveStateFile = "",
+  [string]$LiveExecLogFile = "",
+  [string]$LiveLogFile = "",
   [string]$RunLogPath = ""
 )
 
@@ -120,10 +133,32 @@ if (-not [string]::IsNullOrWhiteSpace($RunLogPath)) {
   }
 }
 $realizedTool = Join-Path $RepoRoot "scripts\record_no_longshot_realized_daily.py"
+$liveTool = Join-Path $RepoRoot "scripts\execute_no_longshot_live.py"
 $realizedPositionsJson = Join-Path $logDir "no_longshot_forward_positions.json"
 $realizedDailyJsonl = Join-Path $logDir "no_longshot_realized_daily.jsonl"
 $realizedLatestJson = Join-Path $logDir "no_longshot_realized_latest.json"
 $realizedMonthlyTxt = Join-Path $logDir "no_longshot_monthly_return_latest.txt"
+$liveStatePath = if ([string]::IsNullOrWhiteSpace($LiveStateFile)) {
+  Join-Path $logDir "no_longshot_live_state.json"
+} elseif ([System.IO.Path]::IsPathRooted($LiveStateFile)) {
+  $LiveStateFile
+} else {
+  Join-Path $RepoRoot $LiveStateFile
+}
+$liveExecLogPath = if ([string]::IsNullOrWhiteSpace($LiveExecLogFile)) {
+  Join-Path $logDir "no_longshot_live_executions.jsonl"
+} elseif ([System.IO.Path]::IsPathRooted($LiveExecLogFile)) {
+  $LiveExecLogFile
+} else {
+  Join-Path $RepoRoot $LiveExecLogFile
+}
+$liveLogPath = if ([string]::IsNullOrWhiteSpace($LiveLogFile)) {
+  Join-Path $logDir "no_longshot_live.log"
+} elseif ([System.IO.Path]::IsPathRooted($LiveLogFile)) {
+  $LiveLogFile
+} else {
+  Join-Path $RepoRoot $LiveLogFile
+}
 $realizedEntryTopN = 0
 $runLock = Join-Path $logDir "no_longshot_daily_run.lock"
 $script:RunLockPath = ""
@@ -141,6 +176,27 @@ if ($realizedFastMaxPages -lt 1) {
 }
 if ($realizedFastMaxHoursToEnd -le 0.0) {
   throw "Invalid RealizedFastMaxHoursToEnd: $realizedFastMaxHoursToEnd (expected >0)"
+}
+if ($LiveExecute.IsPresent -and [string]$LiveConfirm -ne "YES") {
+  throw "Refusing live mode: specify -LiveConfirm YES with -LiveExecute"
+}
+if ($LiveMaxOrders -lt 0) {
+  throw "Invalid LiveMaxOrders: $LiveMaxOrders (expected >=0)"
+}
+if ($LiveOrderSizeShares -le 0.0) {
+  throw "Invalid LiveOrderSizeShares: $LiveOrderSizeShares (expected >0)"
+}
+if ($LiveMaxDailyNotionalUsd -lt 0.0) {
+  throw "Invalid LiveMaxDailyNotionalUsd: $LiveMaxDailyNotionalUsd (expected >=0)"
+}
+if ($LiveMaxOpenPositions -lt 1) {
+  throw "Invalid LiveMaxOpenPositions: $LiveMaxOpenPositions (expected >=1)"
+}
+if ($LiveMaxEntryNoPrice -le 0.0 -or $LiveMaxEntryNoPrice -ge 1.0) {
+  throw "Invalid LiveMaxEntryNoPrice: $LiveMaxEntryNoPrice (expected 0<value<1)"
+}
+if ($LivePriceBufferCents -lt 0.0) {
+  throw "Invalid LivePriceBufferCents: $LivePriceBufferCents (expected >=0)"
 }
 
 $ExcludeKeywordsArg = ","
@@ -634,7 +690,7 @@ if (-not $discordRequested) {
   }
 }
 
-Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd strict_realized_band_only=$($StrictRealizedBandOnly.IsPresent) gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_scan=$($FailOnGapScanError.IsPresent) fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested"
+Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd strict_realized_band_only=$($StrictRealizedBandOnly.IsPresent) gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_scan=$($FailOnGapScanError.IsPresent) fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested live_execute=$($LiveExecute.IsPresent) live_screen=$LiveScreenSource live_max_orders=$LiveMaxOrders live_size=$LiveOrderSizeShares live_cap=$LiveMaxDailyNotionalUsd live_open_cap=$LiveMaxOpenPositions live_no_max=$LiveMaxEntryNoPrice"
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
@@ -1326,6 +1382,14 @@ $lines = @(
   ("- fast screen yes range: [{0},{1}]" -f [double]$realizedFastYesMin, [double]$realizedFastYesMax)
   ("- fast screen max hours to end: {0}" -f [double]$realizedFastMaxHoursToEnd)
   ("- strict_realized_band_only: {0}" -f [bool]$StrictRealizedBandOnly.IsPresent)
+  ("- live_execute: {0}" -f [bool]$LiveExecute.IsPresent)
+  ("- live_screen_source: {0}" -f [string]$LiveScreenSource)
+  ("- live_max_orders: {0}" -f [int]$LiveMaxOrders)
+  ("- live_order_size_shares: {0}" -f [double]$LiveOrderSizeShares)
+  ("- live_max_daily_notional_usd: {0}" -f [double]$LiveMaxDailyNotionalUsd)
+  ("- live_max_open_positions: {0}" -f [int]$LiveMaxOpenPositions)
+  ("- live_max_entry_no_price: {0}" -f [double]$LiveMaxEntryNoPrice)
+  ("- live_price_buffer_cents: {0}" -f [double]$LivePriceBufferCents)
   ("- fast screen status: {0}" -f $fastScreenStatus)
   ("- gap max pages: {0}" -f [int]$GapMaxPages)
   ("- gap fallback max pages: {0}" -f [int]$GapFallbackMaxPages)
@@ -1450,6 +1514,48 @@ if ($FailOnGapErrorRateHigh.IsPresent -and $gapErrorRateAlert7d) {
   Log ("fail: gap error rate high for tag={0} over 7d ({1})" -f $gapErrorStatsTag, $gapErrorRuns7dText)
   Release-RunLock
   exit 2
+}
+
+if ($LiveExecute.IsPresent) {
+  if (-not (Test-Path $liveTool)) {
+    Log ("fail: live helper not found path={0}" -f $liveTool)
+    Release-RunLock
+    exit 5
+  }
+  $liveScreenPath = $fastScreenCsv
+  if ([string]$LiveScreenSource -eq "primary") {
+    $liveScreenPath = $screenCsv
+  }
+  if (-not (Test-Path $liveScreenPath)) {
+    Log ("fail: live screen csv missing source={0} path={1}" -f $LiveScreenSource, $liveScreenPath)
+    Release-RunLock
+    exit 5
+  }
+
+  $liveCmd = @(
+    $liveTool,
+    "--screen-csv", $liveScreenPath,
+    "--state-file", $liveStatePath,
+    "--exec-log-file", $liveExecLogPath,
+    "--log-file", $liveLogPath,
+    "--max-new-orders", "$LiveMaxOrders",
+    "--order-size-shares", "$LiveOrderSizeShares",
+    "--max-daily-notional-usd", "$LiveMaxDailyNotionalUsd",
+    "--max-open-positions", "$LiveMaxOpenPositions",
+    "--max-entry-no-price", "$LiveMaxEntryNoPrice",
+    "--price-buffer-cents", "$LivePriceBufferCents",
+    "--execute",
+    "--confirm-live", "$LiveConfirm"
+  )
+  Log ("live entry start source={0} csv={1} max_orders={2} size={3} cap={4}" -f `
+    $LiveScreenSource, $liveScreenPath, [int]$LiveMaxOrders, [double]$LiveOrderSizeShares, [double]$LiveMaxDailyNotionalUsd)
+  $liveOk = Run-PythonSafe -CmdArgs $liveCmd -Label "no-longshot live entry"
+  if (-not $liveOk) {
+    Log "fail: no-longshot live entry failed"
+    Release-RunLock
+    exit 5
+  }
+  Log ("live entry done state={0} exec_log={1}" -f $liveStatePath, $liveExecLogPath)
 }
 
 Release-RunLock

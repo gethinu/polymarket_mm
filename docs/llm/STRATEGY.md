@@ -19,13 +19,17 @@ Always read the latest values from:
 
 Primary keys:
 
+- `kpi_core.daily_realized_pnl_usd`
+- `kpi_core.monthly_return_now_text`
+- `kpi_core.max_drawdown_30d_text`
+
+Secondary keys (diagnostics/compatibility):
+
 - `no_longshot_status.monthly_return_now_text`
 - `no_longshot_status.monthly_return_now_source`
 - `no_longshot_status.monthly_return_now_new_condition_text`
 - `no_longshot_status.monthly_return_now_all_text`
 - `no_longshot_status.rolling_30d_monthly_return_text`
-- `no_longshot_status.rolling_30d_monthly_return_new_condition_text`
-- `no_longshot_status.rolling_30d_monthly_return_all_text`
 - `realized_30d_gate.decision`
 
 ## Bankroll Policy
@@ -69,11 +73,13 @@ Primary keys:
 
 2. `no_longshot_daily_observe`
 
-- Status: `ADOPTED` (as of 2026-02-25, revalidated 2026-02-26, observe-only).
-- Scope: Polymarket no-longshot daily monitor + logical-gap scan + forward realized tracker, observe-only.
+- Status: `ADOPTED` (as of 2026-02-25, revalidated 2026-02-27, observe-first + live optional).
+- Scope: Polymarket no-longshot daily monitor + logical-gap scan + forward realized tracker, with explicit-flag small-size live NO entry.
 - Runtime:
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -StrictRealizedBandOnly -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedFastMaxPages 120`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -StrictRealizedBandOnly -LiveExecute -LiveConfirm YES -LiveMaxOrders 1 -LiveOrderSizeShares 5 -LiveMaxDailyNotionalUsd 10 -LiveMaxOpenPositions 10 -LiveMaxEntryNoPrice 0.84 -LivePriceBufferCents 0.2`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh --realized-refresh-sec 900 --realized-entry-top-n 0 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --runner-strict-realized-band-only`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --runner-strict-realized-band-only --runner-live-execute --runner-live-confirm-live YES --runner-live-max-new-orders 1 --runner-live-order-size-shares 5 --runner-live-max-daily-notional-usd 10 --runner-live-max-open-positions 10 --runner-live-max-entry-no-price 0.84`
 - Evidence snapshot (2026-02-25 daily summary):
   - Source summary: `logs/no_longshot_daily_summary.txt`
   - Read latest keys: `monthly_return_now`, `rolling_30d_monthly_return`, `monthly_return_now_source`
@@ -97,14 +103,14 @@ Primary keys:
   - Source summary: `logs/no_longshot_daily_summary.txt`
   - `strict_realized_band_only=True`, `realized_entry_source=fast_72h_lowyes`
   - `rolling_30d_monthly_return=+9.89%`, `rolling_30d_resolved_trades=21`（new-condition）
-- Decision note: keep this strategy in observe-only; run with fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent). Latest canonical monthly return snapshot (`logs/strategy_register_latest.json`, refreshed on 2026-02-27): new-condition `+9.89%` (`no_longshot_status.monthly_return_now_new_condition_text`) vs all-pop comparator `-14.82%` (`no_longshot_status.monthly_return_now_all_text`).
-- Operational gate: treat `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` as authority for monthly return; keep quality review active until resolved sample size is non-trivial, and mark `REVIEW` if the latest summary fast band drifts from `[0.16,0.2]`.
+- Decision note: maintain fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent) as the live/observe共通の entry policy. Live は明示 `LiveExecute + LiveConfirm YES` でのみ許可し、既定は observe-only を維持する。Latest canonical monthly return snapshot (`logs/strategy_register_latest.json`, refreshed on 2026-02-27): new-condition `+9.89%` (`no_longshot_status.monthly_return_now_new_condition_text`) vs all-pop comparator `-14.82%` (`no_longshot_status.monthly_return_now_all_text`).
+- Operational gate: authority は `logs/strategy_register_latest.json` の `kpi_core`（`daily_realized_pnl_usd`, `monthly_return_now_text`, `max_drawdown_30d_text`）を最優先とし、補助として `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` を参照する。latest summary の fast band が `[0.16,0.2]` から逸脱した場合は `REVIEW`。
 - Capital gate checkpoint (fixed on 2026-02-27):
   - Core threshold: `no_longshot_status.rolling_30d_resolved_trades >= 30`（new-condition basis）
   - Current: `21`（need `9` more）
   - Recent pace reference (new-condition resolved): `2026-02-25=9`, `2026-02-26=11`（`10/day`）
   - Fixed practical judgment date: `2026-03-02`（conservative half-speed assumption `5/day` + 1-day buffer）
-  - If threshold is still unmet on `2026-03-02`, keep observe-only and slide judgment date by `+3` calendar days.
+  - If threshold is still unmet on `2026-03-02`, keep live disabled and slide judgment date by `+3` calendar days.
 
 3. `link_intake_walletseed_cohort_observe`
 

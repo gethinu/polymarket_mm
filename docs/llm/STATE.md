@@ -297,7 +297,7 @@ Polymarket strategy register snapshot (observe-only):
 - Snapshot JSON: `logs/strategy_register_latest.json`
 - Snapshot HTML: `logs/strategy_register_latest.html`
 - Snapshot JSON には `bankroll_policy`、`realized_30d_gate`、`realized_monthly_return` を含む（`realized_30d_gate.decision` は30日最終判定の互換フィールド）。
-- Snapshot JSON には `kpi_core`（`daily_realized_pnl_usd`, `monthly_return_now_text`, `max_drawdown_30d_text`）を含む。
+- Snapshot JSON には `kpi_core`（`daily_realized_pnl_usd`, `daily_realized_pnl_usd_text`, `daily_realized_pnl_day`, `monthly_return_now_text`, `monthly_return_now_source`, `max_drawdown_30d_ratio`, `max_drawdown_30d_text`, `source`）を含む。
 - `bankroll_policy` は `docs/llm/STRATEGY.md` の `## Bankroll Policy` から抽出され、`initial_bankroll_usd`、`allocation_mode`、`live_max_daily_risk_ratio`、`live_max_daily_risk_usd`、`default_adopted_allocations` を保持する。
 - `realized_30d_gate` は `decision_3stage`（7日暫定 / 14日中間 / 30日確定）、`decision_3stage_label_ja`、`stage_label_ja`、`stages`（`label_ja` 含む）、`next_stage`（`label_ja` 含む）を含む。
 - `realized_monthly_return` は `strategy_realized_pnl_daily.jsonl` を優先し、未存在時は累積 snapshot の差分系列をフォールバック利用して計算される。

@@ -62,6 +62,18 @@ def _mk_main_args(tmp_path: Path, **overrides):
         "runner_fail_on_gap_scan_error": False,
         "runner_fail_on_gap_error_rate_high": False,
         "runner_strict_realized_band_only": False,
+        "runner_live_execute": False,
+        "runner_live_confirm_live": "",
+        "runner_live_max_new_orders": 1,
+        "runner_live_order_size_shares": 5.0,
+        "runner_live_max_daily_notional_usd": 10.0,
+        "runner_live_max_open_positions": 10,
+        "runner_live_max_entry_no_price": 0.84,
+        "runner_live_price_buffer_cents": 0.2,
+        "runner_live_screen_source": "fast",
+        "runner_live_state_file": "logs/no_longshot_live_state.json",
+        "runner_live_exec_log_file": "logs/no_longshot_live_executions.jsonl",
+        "runner_live_log_file": "logs/no_longshot_live.log",
         "python_exe": "python",
         "realized_refresh_sec": 0.0,
         "realized_timeout_sec": 240.0,
@@ -159,6 +171,59 @@ def test_run_daily_once_omits_optional_flags_when_disabled(monkeypatch, tmp_path
     assert "-FailOnGapScanError" not in cmd
     assert "-FailOnGapErrorRateHigh" not in cmd
     assert "-StrictRealizedBandOnly" not in cmd
+
+
+def test_run_daily_once_passes_live_flags(monkeypatch, tmp_path: Path):
+    repo_root = tmp_path
+    script_path = repo_root / "scripts" / "run_no_longshot_daily_report.ps1"
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+    script_path.write_text("# test\n", encoding="utf-8")
+
+    args = _mk_run_args(
+        repo_root,
+        "scripts/run_no_longshot_daily_report.ps1",
+        runner_live_execute=True,
+        runner_live_confirm_live="YES",
+        runner_live_max_new_orders=1,
+        runner_live_order_size_shares=5.0,
+        runner_live_max_daily_notional_usd=10.0,
+        runner_live_max_open_positions=10,
+        runner_live_max_entry_no_price=0.84,
+        runner_live_price_buffer_cents=0.2,
+        runner_live_screen_source="fast",
+        runner_live_state_file="logs/no_longshot_live_state.json",
+        runner_live_exec_log_file="logs/no_longshot_live_executions.jsonl",
+        runner_live_log_file="logs/no_longshot_live.log",
+    )
+    captured = {}
+
+    class _Proc:
+        pid = 1
+
+        @staticmethod
+        def poll():
+            return 0
+
+    def _fake_popen(cmd, cwd, stdout, stderr, shell):
+        captured["cmd"] = list(cmd)
+        return _Proc()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", _fake_popen)
+    rc, _ = mod.run_daily_once(args, _Logger())
+    assert rc == 0
+    cmd = captured["cmd"]
+    assert "-LiveExecute" in cmd
+    assert "-LiveConfirm" in cmd and "YES" in cmd
+    assert "-LiveMaxOrders" in cmd and "1" in cmd
+    assert "-LiveOrderSizeShares" in cmd and "5.0" in cmd
+    assert "-LiveMaxDailyNotionalUsd" in cmd and "10.0" in cmd
+    assert "-LiveMaxOpenPositions" in cmd and "10" in cmd
+    assert "-LiveMaxEntryNoPrice" in cmd and "0.84" in cmd
+    assert "-LivePriceBufferCents" in cmd and "0.2" in cmd
+    assert "-LiveScreenSource" in cmd and "fast" in cmd
+    assert "-LiveStateFile" in cmd
+    assert "-LiveExecLogFile" in cmd
+    assert "-LiveLogFile" in cmd
 
 
 def test_main_refuses_invalid_gap_error_alert_rate(monkeypatch, tmp_path: Path):

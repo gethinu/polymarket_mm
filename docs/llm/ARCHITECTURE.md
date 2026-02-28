@@ -120,6 +120,12 @@ Polymarket CLOB:
 - `scripts/set_no_longshot_daily_mode.ps1`
   - Observe-only mode switcher for no-longshot daily execution path (`Task Scheduler` vs `no_longshot_daily_daemon`)
   - Applies duplicate-run guard by toggling `NoLongshotDailyReport` task alongside supervisor daemon enablement
+- `scripts/run_no_longshot_daily_report.ps1`
+  - Observe-first daily no-longshot orchestrator (screen/gap/realized refresh)
+  - Optional small-size live NO entry step is available only with explicit `-LiveExecute -LiveConfirm YES`
+- `scripts/execute_no_longshot_live.py`
+  - One-shot no-longshot live entry helper from daily screen CSV
+  - Safe by default (observe-preview); live orders require `--execute --confirm-live YES`
 - `scripts/run_weather_24h_alarm_action.ps1`
   - One-shot alarm action (append log + marker + bounded notification)
 - `scripts/run_weather_24h_postcheck.ps1`
