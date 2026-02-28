@@ -215,11 +215,26 @@ Secondary keys (diagnostics/compatibility):
   - Robustness note: all-event monthly outputs are unstable due to near-expiry markets (e.g. `event_id=196733`, `days_to_end<1`), so only outlier-trim estimate is used for comparison.
 - Evidence snapshot:
   - Consolidated decision: `logs/clob-arb-adoption-summary-20260226.json` (`decision=NO_GO`).
-- Tuning proposal (coverage gate update, observe-only):
-  - Keep coverage acceptance on `distinct_events_threshold_raw >= 20` (now met) and treat `distinct_events_threshold_exec >= 20` as a stretch KPI.
-  - For coverage probes only, use `--min-edge-cents 0.5` and `--max-subscribe-tokens 2000`; keep adoption gate unchanged until execution-edge and Kelly conditions recover.
+- Coverage gate decision (2026-02-28, observe-only):
+  - Finalized acceptance gate: `distinct_events_threshold_raw >= 20` (currently satisfied).
+  - `distinct_events_threshold_exec >= 20` is tracked as a stretch KPI (latest: `19`) and is not an adoption gate by itself.
+  - Coverage probe profile is fixed to `--min-edge-cents 0.5 --max-subscribe-tokens 2000`; adoption gate remains execution-edge + Kelly based.
 - Decision note: prior ADOPTED decision (2026-02-25) was superseded by extended observe evidence on 2026-02-26; keep this strategy out of active operations.
 - Operational gate: only reconsider after multi-event evidence shows sustained positive execution edge and Kelly replay with `full_kelly > 0`.
+
+3. `no_longshot_strict_lite_observe_experiment`
+
+- Status: `REJECTED` (as of 2026-02-27, operator decision).
+- Scope: strict-lite no-longshot side experiment (`non-crypto`, shorter horizon focus) tracked in isolated logs, observe-only.
+- Runtime (experiment-only):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File logs/run_no_longshot_strict_lite_watch.ps1`
+  - `python scripts/record_no_longshot_realized_daily.py --screen-csv logs/no_longshot_strict_lite_screen_latest.csv --positions-json logs/no_longshot_strict_lite_forward_positions.json --out-daily-jsonl logs/no_longshot_strict_lite_realized_daily.jsonl --out-latest-json logs/no_longshot_strict_lite_realized_latest.json --out-monthly-txt logs/no_longshot_strict_lite_monthly_return_latest.txt --entry-top-n 4 --per-trade-cost 0.002`
+- Evidence snapshot (latest before stop):
+  - `logs/no_longshot_strict_lite_vs_baseline_latest.json`: strict-lite `-4.3520%` (`resolved=8`, `open=7`) vs baseline `-14.8190%` (`resolved=46`).
+  - `logs/no_longshot_strict_lite_outcome_range_latest.json`: all-open resolution range `worst=-47.9612%`, `best=+4.0776%`, `breakeven_wins_on_avg=7` (all wins required).
+  - `logs/no_longshot_strict_lite_watch.log`: guard entered `reason=freeze_negative_realized` with `entry_top_n=0`.
+- Decision note: operator rejected this experiment on 2026-02-27 (`ボツ`) due weak expected upside versus downside risk.
+- Operational gate: keep strict-lite watcher stopped and do not add new strict-lite entries; only reconsider with a materially different rule set and new dryrun evidence.
 
 ## Pending Strategies
 

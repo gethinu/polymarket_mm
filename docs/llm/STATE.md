@@ -31,6 +31,11 @@ No-longshot daily daemon (observe-first, live optional):
   - Realized daily series JSONL: `logs/no_longshot_realized_daily.jsonl`
   - Latest realized snapshot JSON: `logs/no_longshot_realized_latest.json`
   - Latest rolling-30d monthly return text: `logs/no_longshot_monthly_return_latest.txt`
+- Optional strict-lite experiment artifacts (rejected on 2026-02-27; kept for forensics, not active operation):
+  - Watcher script/log: `logs/run_no_longshot_strict_lite_watch.ps1`, `logs/no_longshot_strict_lite_watch.log`
+  - Screen artifacts: `logs/no_longshot_strict_lite_screen_latest.csv`, `logs/no_longshot_strict_lite_screen_latest.json`
+  - Ledger + realized artifacts: `logs/no_longshot_strict_lite_forward_positions.json`, `logs/no_longshot_strict_lite_realized_daily.jsonl`, `logs/no_longshot_strict_lite_realized_latest.json`, `logs/no_longshot_strict_lite_monthly_return_latest.txt`
+  - Comparison/range snapshots: `logs/no_longshot_strict_lite_vs_baseline_latest.json`, `logs/no_longshot_strict_lite_status_latest.txt`, `logs/no_longshot_strict_lite_outcome_range_latest.json`, `logs/no_longshot_strict_lite_outcome_range_latest.txt`
 - Optional no-longshot live helper runtime files:
   - Log: `logs/no_longshot_live.log`
   - State: `logs/no_longshot_live_state.json`

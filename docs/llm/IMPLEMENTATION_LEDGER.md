@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `44`
-- worktree_changes: `15`
+- commits_scanned: `45`
+- worktree_changes: `3`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,19 +20,20 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 29 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
+| `docs_llm` | 30 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
-| `no_longshot` | 15 | `2026-02-27 20:37` | `00ba4dfe` | test: extend no-longshot mode switcher daemon/off coverage |
-| `security_or_ops` | 17 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
+| `no_longshot` | 16 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
+| `security_or_ops` | 18 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
 | `simmer_clob` | 26 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
-| `strategy_register` | 12 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
-| `task_automation` | 20 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
+| `strategy_register` | 13 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
+| `task_automation` | 21 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
 | `weather_pipeline` | 7 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-28 12:21` | `3d9a8012` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation` | add guarded no-longshot live path and kpi-core checks | `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, +11 |
 | `2026-02-27 23:48` | `c3d5a905` | `docs_llm,security_or_ops,simmer_clob,strategy_register,task_automation` | strengthen morning gates and extend event-driven observe tooling | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, +14 |
 | `2026-02-27 23:46` | `a229d5e8` | `docs_llm,security_or_ops` | harden automation health task-argument guards | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
 | `2026-02-27 23:38` | `cf0e06e8` | `docs_llm,security_or_ops` | fix: require -NoBackground for morning task guard | `docs/llm/STRATEGY.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
@@ -81,21 +82,9 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `docs/llm/ARCHITECTURE.md` |
-| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STATE.md` |
 | `M` | `docs/llm/STRATEGY.md` |
-| `M` | `scripts/no_longshot_daily_daemon.py` |
-| `M` | `scripts/render_strategy_register_snapshot.py` |
-| `M` | `scripts/report_automation_health.py` |
-| `M` | `scripts/run_no_longshot_daily_report.ps1` |
-| `M` | `tests/test_no_longshot_daily_daemon.py` |
-| `M` | `tests/test_report_automation_health.py` |
-| `??` | `scripts/execute_no_longshot_live.py` |
-| `??` | `tests/test_execute_no_longshot_live.py` |
-| `??` | `tests/test_render_strategy_register_snapshot.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |
