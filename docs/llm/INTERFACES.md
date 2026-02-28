@@ -631,6 +631,95 @@ Polymarket strategy gate stage alarm (observe-only):
   - `--pretty`
   - practical gate は `rolling_30d_resolved_trades` の即時到達（`>=threshold`）と、判定日未達時の自動スライドを state/log に記録する。
 
+Polymarket pending-release checker (observe-only by default):
+- Check release lock conditions for `PENDING` strategies without re-running entry/adoption monthly screening:
+  - `python scripts/check_pending_release.py --strategy gamma_eventpair_exec_edge_filter_observe`
+  - `python scripts/check_pending_release.py --strategy gamma_eventpair_exec_edge_filter_observe --conservative-costs --conservative-cost-cents 2`
+  - `python scripts/check_pending_release.py --strategy gamma_eventpair_exec_edge_filter_observe --apply`
+- Output:
+  - prints one-line summary + one JSON object to stdout
+  - optional `--out-json` writes the JSON payload to a file
+- Release decision logic (fixed scope):
+  - `status != PENDING` -> `release_check=NOOP` (`reason_codes` includes `status_not_pending`)
+  - `execution-edge > 0` and `full_kelly > 0` (and conservative edge check when enabled) -> `RELEASE_READY`
+  - otherwise -> `HOLD`
+- Exit codes:
+  - `0`: `RELEASE_READY` or `NOOP`
+  - `10`: `HOLD`
+  - `20+`: input/refresh/apply errors
+- Key flags:
+  - `--strategy`（判定対象 strategy id）
+  - `--snapshot-json`（既定 `logs/strategy_register_latest.json`）
+  - `--strategy-md`（`--apply` 時に更新する canonical strategy markdown。既定 `docs/llm/STRATEGY.md`）
+  - `--monthly-json`, `--replay-json`（評価ソースを明示 override）
+  - `--min-gap-ms-per-event`, `--max-worst-stale-sec`（execution-edge 集計条件）
+  - `--conservative-costs`, `--conservative-cost-cents`（保守コスト前提の追加ロック）
+  - `--apply`（`RELEASE_READY` かつ `PENDING` の場合のみ `docs/llm/STRATEGY.md` の status を `ADOPTED` に更新し、`render_strategy_register_snapshot.py` と `render_implementation_ledger.py` を実行）
+  - `--out-json`, `--pretty`
+
+Polymarket pending-release transition alarm (observe-only):
+- Wrap `check_pending_release.py` and emit alarm only on state transitions:
+  - `python scripts/check_pending_release_alarm.py --strategy gamma_eventpair_exec_edge_filter_observe`
+  - `python scripts/check_pending_release_alarm.py --strategy gamma_eventpair_exec_edge_filter_observe --conservative-costs`
+  - `python scripts/check_pending_release_alarm.py --strategy gamma_eventpair_exec_edge_filter_observe --notify-on-reason-change`
+  - `python scripts/check_pending_release_alarm.py --strategy gamma_eventpair_exec_edge_filter_observe --discord`
+- Behavior:
+  - always runs checker in read-only mode (`--apply` is not exposed)
+  - persists last-seen result in `state-json`
+  - state is partitioned by context key (`strategy`, `conservative_costs`, `conservative_cost_cents`, monthly/replay overrides) so multiple monitor profiles do not overwrite each other
+  - appends one alarm event only when transition conditions are met
+  - release判定と通知処理は分離し、通知失敗は判定結果/exit code を上書きしない
+- Transition default:
+  - `release_check` changed, or
+  - `release_ready` changed
+  - optional: reason-code drift when `--notify-on-reason-change`
+- Exit codes:
+  - `0`: check completed (including `HOLD`, `NOOP`, `RELEASE_READY`)
+  - `2`: checker input/runtime error (`check_pending_release.py` returned `20+`)
+  - `4`: lock busy (`--lock-file` already held by another running instance)
+- Key flags:
+  - `--strategy`（対象 strategy id）
+  - `--snapshot-json`（既定 `logs/strategy_register_latest.json`）
+  - `--state-json`（既定 `logs/pending_release_alarm_state.json`）
+  - `--log-file`（既定 `logs/pending_release_alarm.log`）
+  - `--lock-file`（既定 `logs/pending_release_alarm.lock`。単一起動 guard）
+  - checker passthrough: `--monthly-json`, `--replay-json`, `--min-gap-ms-per-event`, `--max-worst-stale-sec`, `--conservative-costs`, `--conservative-cost-cents`
+  - `--notify-on-reason-change`（`release_check` 不変でも `reason_codes` 差分でアラーム）
+  - `--discord`（通知処理を有効化。未指定時は通知スキップ）
+  - `--discord-webhook-env`（通知先 webhook の環境変数名 override。未指定時は `POLYMARKET_PENDING_RELEASE_DISCORD_WEBHOOK`）
+  - `--pretty`
+- Notification output keys:
+  - `discord_enabled`
+  - `discord_webhook_env`
+  - `notification_attempted`
+  - `notification_status`（`sent` / `skipped` / `error`）
+  - `notification_reason`（例: `no_state_change`, `discord_disabled`, `webhook_env_missing`, `request_failed`）
+  - `notification_error_detail`（`notification_status=error` の補助情報）
+
+Polymarket pending-release batch runner (observe-only scheduler wrapper):
+- Run one or more pending-release alarm checks with normalized scheduler exit handling:
+  - `python scripts/run_pending_release_alarm_batch.py --strategy gamma_eventpair_exec_edge_filter_observe`
+  - `python scripts/run_pending_release_alarm_batch.py --strategy gamma_eventpair_exec_edge_filter_observe --run-conservative`
+  - `python scripts/run_pending_release_alarm_batch.py --strategy gamma_eventpair_exec_edge_filter_observe --run-conservative --discord`
+- Behavior:
+  - executes `check_pending_release_alarm.py` per strategy/context via subprocess (no strategy logic duplicated)
+  - contexts: `base` always, plus `conservative` when `--run-conservative`
+  - aggregates result levels by exit code policy (`0/10=ok`, `4=warn`, others=error)
+  - child `notification_status=error` は batch warning に集約するが、最終 exit は本体判定（lock-busy/error policy）を優先
+  - writes latest batch summary JSON (default `logs/pending_release_batch_latest.json`)
+- Batch runner exit codes:
+  - `0`: no hard errors (including HOLD, NOOP, RELEASE_READY, and warn-by-default lock-busy runs)
+  - `4`: warning fail-fast mode when lock-busy exists and `--fail-on-lock-busy` is set
+  - `20`: one or more hard errors (checker/alarm failure or malformed child output)
+- Key flags:
+  - `--strategy`（repeatable。省略時は `gamma_eventpair_exec_edge_filter_observe`）
+  - `--run-conservative`, `--conservative-cost-cents`
+  - `--child-timeout-sec`（各 subprocess の最大待機秒。timeout は error 扱い）
+  - passthrough: `--snapshot-json`, `--state-json`, `--log-file`, `--lock-file`, `--monthly-json`, `--replay-json`
+  - notify passthrough: `--discord`, `--discord-webhook-env`, `--notify-on-reason-change`
+  - scheduler behavior: `--fail-on-lock-busy`
+  - runtime/output: `--python-exe`, `--out-json`, `--pretty`
+
 Morning strategy gate check (observe-only):
 - Run one command to refresh and print concise gate status:
   - `python scripts/check_morning_status.py`

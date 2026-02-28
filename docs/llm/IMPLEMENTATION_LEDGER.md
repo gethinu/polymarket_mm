@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `45`
-- worktree_changes: `3`
+- commits_scanned: `46`
+- worktree_changes: `15`
 - link_intake_sessions: `8`
 
 ## Purpose
@@ -20,7 +20,7 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 30 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
+| `docs_llm` | 31 | `2026-02-28 13:12` | `7b4688d3` | docs: update strategy/state and refresh implementation ledger |
 | `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 16 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
@@ -33,6 +33,7 @@
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-02-28 13:12` | `7b4688d3` | `docs_llm` | docs: update strategy/state and refresh implementation ledger | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md` |
 | `2026-02-28 12:21` | `3d9a8012` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation` | add guarded no-longshot live path and kpi-core checks | `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, +11 |
 | `2026-02-27 23:48` | `c3d5a905` | `docs_llm,security_or_ops,simmer_clob,strategy_register,task_automation` | strengthen morning gates and extend event-driven observe tooling | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, +14 |
 | `2026-02-27 23:46` | `a229d5e8` | `docs_llm,security_or_ops` | harden automation health task-argument guards | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `scripts/report_automation_health.py`, `tests/test_report_automation_health.py` |
@@ -82,9 +83,21 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
+| `M` | `docs/SIMMER_PINGPONG.md` |
+| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
+| `M` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STATE.md` |
 | `M` | `docs/llm/STRATEGY.md` |
+| `M` | `scripts/simmer_pingpong_mm.py` |
+| `??` | `docs/memo0228_1.txt` |
+| `??` | `scripts/check_pending_release.py` |
+| `??` | `scripts/check_pending_release_alarm.py` |
+| `??` | `scripts/run_pending_release_alarm_batch.py` |
+| `??` | `tests/test_check_pending_release.py` |
+| `??` | `tests/test_check_pending_release_alarm.py` |
+| `??` | `tests/test_run_pending_release_alarm_batch.py` |
+| `??` | `tests/test_simmer_pingpong_mm.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

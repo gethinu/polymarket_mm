@@ -113,6 +113,8 @@ Simmer ping-pong:
 - State: `logs/simmer_pingpong_state.json`
 - Instance lock: `logs/simmer_pingpong_state.json.lock`
 - Metrics: `logs/simmer-pingpong-metrics.jsonl`
+- Discord summary dedupe state: `logs/simmer_discord_summary_dedupe_state.json`
+- Discord summary dedupe lock: `logs/simmer_discord_summary_dedupe_state.json.lock`
 - Optional dedicated supervisor config: `configs/bot_supervisor.simmer_main.observe.json`
 - Optional dedicated supervisor runtime files:
   - `logs/simmer_main_supervisor.log`
@@ -330,6 +332,17 @@ Polymarket strategy gate stage alarm (observe-only):
     - `no_longshot_practical_threshold_met`
     - `no_longshot_practical_rollover_count`
     - `no_longshot_practical_last_rollover_on`
+
+Polymarket pending-release transition alarm (observe-only):
+- Alarm log JSONL: `logs/pending_release_alarm.log`
+- Alarm state JSON: `logs/pending_release_alarm_state.json`
+- Instance lock file: `logs/pending_release_alarm.lock`
+- `scripts/check_pending_release_alarm.py` uses checker output (`release_check`, `release_ready`, `reason_codes`) and emits transition alarms only when state changes.
+- state JSON writes use temp-file atomic replace and keep per-context slots (strategy + conservative settings + override inputs) to avoid cross-profile overwrite.
+
+Polymarket pending-release batch runner (observe-only):
+- Latest batch summary JSON: `logs/pending_release_batch_latest.json`
+- `scripts/run_pending_release_alarm_batch.py` runs one or more pending-release alarm checks and aggregates scheduler-facing exit/decision.
 
 Automation health report (observe-only):
 - Latest health JSON: `logs/automation_health_latest.json`

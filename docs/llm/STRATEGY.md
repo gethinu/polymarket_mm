@@ -7,7 +7,7 @@ For operational source-of-truth workflow, follow `docs/llm/CANON.md`.
 
 - `ADOPTED`: usable in current operations.
 - `REJECTED`: remove from active operation.
-- `PENDING`: not enough evidence yet.
+- `PENDING`: not enough evidence yet (includes `REVIEW`-equivalent hold state).
 
 ## Current KPI
 
@@ -178,51 +178,7 @@ Secondary keys (diagnostics/compatibility):
 - Status: `REJECTED`.
 - Reason: low usefulness in this workspace run; switched to `buckets` as default.
 
-2. `gamma_eventpair_exec_edge_filter_observe`
-
-- Status: `REJECTED` (as of 2026-02-26, observe-only).
-- Scope: Polymarket gamma-active event-pair strategy with observe-only exec-edge suppression (`event-yes` filter).
-- Runtime:
-  - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --gamma-limit 1500 --gamma-min-liquidity 0 --gamma-min-volume24hr 0 --gamma-scan-max-markets 40000 --gamma-max-days-to-end 0 --max-markets-per-event 5 --max-subscribe-tokens 400 --metrics-log-all-candidates --observe-exec-edge-filter --observe-exec-edge-min-usd 0 --observe-exec-edge-strike-limit 2 --observe-exec-edge-cooldown-sec 90 --observe-exec-edge-filter-strategies event-yes`
-  - `python scripts/replay_clob_arb_kelly.py --metrics-file logs/clob-arb-metrics-eventpair-long2-20260226_091045.jsonl --require-threshold-pass --fill-ratio-mode min --miss-penalty 0.005 --stale-grace-sec 2 --stale-penalty-per-sec 0.001 --max-worst-stale-sec 10 --scales 0.1,0.25,0.5,0.75,1.0 --bootstrap-iters 3000 --pretty --out-json logs/clob-arb-kelly-replay-eventpair-long2-exec.json`
-- Runtime note: revalidation only, not active operation.
-- Evidence snapshot (2026-02-26 coverage gate refresh, observe-only):
-  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-coverage-gate-refresh-20260226.jsonl`
-  - Source coverage summaries: `logs/clob-arb-eventpair-metrics-coverage-latest.json`, `logs/clob-arb-eventpair-distinct-events-current-latest.json`, `logs/clob-arb-eventpair-coverage-tuning-latest.json`
-  - `rows_total=5017`, `distinct_events_all=99`, `distinct_events_threshold_raw=25`, `distinct_events_threshold_exec=14` (raw coverage gate target 20 met)
-- Evidence snapshot (2026-02-26 latest metrics-glob aggregate, observe-only):
-  - Source summary: `logs/clob-arb-eventpair-distinct-events-current-latest.json` (latest run `logs/clob-arb-monitor-metrics-eventpair-coverage-gate-refresh-edge0p5-maxsub2000-20260226.jsonl`)
-  - `rows_total=14306`, `distinct_events_all=338`, `distinct_events_threshold_raw=45`, `distinct_events_threshold_exec=19` (`exec>=20` is still short by 1)
-- Evidence snapshot (2026-02-26 parameter checks, observe-only):
-  - Source metrics (`max_subscribe_tokens` A/B on strict profile): `logs/clob-arb-monitor-metrics-eventpair-tuned-maxsub400-probe-20260226.jsonl`, `logs/clob-arb-monitor-metrics-eventpair-tuned-maxsub1200-probe-20260226.jsonl`
-  - Both runs remained `Loaded baskets=40` / `Subscribed token IDs=80` and `distinct_events_threshold_raw=3`; raising `max_subscribe_tokens` alone did not expand strict-profile coverage.
-  - Source metrics (strict high-scan probe): `logs/clob-arb-monitor-metrics-eventpair-strict-highscan-maxsub1200-20260226.jsonl`
-  - Even with `gamma_limit=5000` / `gamma_scan_max_markets=100000`, run stayed `Loaded baskets=12` / `Subscribed token IDs=24`, with `distinct_events_threshold_raw=4`, `distinct_events_threshold_exec=3`.
-  - Source metrics (`min_edge=0.5` with token-cap sweep): `logs/clob-arb-monitor-metrics-eventpair-coverage-gate-refresh-edge0p5-20260226.jsonl`, `logs/clob-arb-monitor-metrics-eventpair-coverage-gate-refresh-edge0p5-maxsub1200-20260226.jsonl`, `logs/clob-arb-monitor-metrics-eventpair-coverage-gate-refresh-edge0p5-maxsub2000-20260226.jsonl`
-  - `distinct_events_threshold_raw` improved `29 -> 40 -> 45`, but `distinct_events_threshold_exec` stayed `19` across all token caps.
-  - `polymarket_clob_arb_realtime.py` rejects `--gamma-pages` / `--gamma-page-size` as unrecognized arguments; scan-depth control is `--gamma-limit` + `--gamma-scan-max-markets`.
-- Evidence snapshot (2026-02-26 long-run):
-  - Source metrics: `logs/clob-arb-metrics-eventpair-long-20260225_220258.jsonl`, `logs/clob-arb-metrics-eventpair-long2-20260226_091045.jsonl`
-  - `exec_mean_edge_usd` remained negative (`-0.245768`, `-0.245639`) and `exec_positive_count=0` in both runs.
-- Evidence snapshot (2026-02-26 Kelly replay):
-  - Source replay: `logs/clob-arb-kelly-replay-eventpair-long2-raw.json`, `logs/clob-arb-kelly-replay-eventpair-long2-exec.json`, `logs/clob-arb-kelly-replay-yesno-moneyline-raw.json`, `logs/clob-arb-kelly-replay-yesno-moneyline-exec.json`
-  - Both event-pair and yes/no baselines reported negative mean edge with `full_kelly=0.0`.
-- Evidence snapshot (2026-02-27 strict revalidation probe, observe-only):
-  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-tuned3m-20260227_233912.jsonl` (`rows_total=1865`, `reason_threshold=515`, `reason_observe_exec_filter_blocked=418`, `reason_candidate=932`)
-  - Replay summaries: `logs/clob-arb-kelly-replay-eventpair-tuned3m-20260227_233912-gap5s.json`, `logs/clob-arb-kelly-replay-eventpair-tuned38m-20260227-gap5s.json`
-  - Monthly estimate (3m strict): `logs/clob-arb-eventpair-monthly-estimate-tuned3m-20260227_233912.json` (`weighted_monthly_trim_edgepct_le_25=+4.07%`, `sample_count=76`, `event_count=7`)
-  - Monthly estimate (38m combined strict): `logs/clob-arb-eventpair-monthly-estimate-tuned38m-20260227.json` (`weighted_monthly_trim_edgepct_le_25=+5.47%`, `sample_count=212`, `event_count=7`)
-  - Robustness note: all-event monthly outputs are unstable due to near-expiry markets (e.g. `event_id=196733`, `days_to_end<1`), so only outlier-trim estimate is used for comparison.
-- Evidence snapshot:
-  - Consolidated decision: `logs/clob-arb-adoption-summary-20260226.json` (`decision=NO_GO`).
-- Coverage gate decision (2026-02-28, observe-only):
-  - Finalized acceptance gate: `distinct_events_threshold_raw >= 20` (currently satisfied).
-  - `distinct_events_threshold_exec >= 20` is tracked as a stretch KPI (latest: `19`) and is not an adoption gate by itself.
-  - Coverage probe profile is fixed to `--min-edge-cents 0.5 --max-subscribe-tokens 2000`; adoption gate remains execution-edge + Kelly based.
-- Decision note: prior ADOPTED decision (2026-02-25) was superseded by extended observe evidence on 2026-02-26; keep this strategy out of active operations.
-- Operational gate: only reconsider after multi-event evidence shows sustained positive execution edge and Kelly replay with `full_kelly > 0`.
-
-3. `no_longshot_strict_lite_observe_experiment`
+2. `no_longshot_strict_lite_observe_experiment`
 
 - Status: `REJECTED` (as of 2026-02-27, operator decision).
 - Scope: strict-lite no-longshot side experiment (`non-crypto`, shorter horizon focus) tracked in isolated logs, observe-only.
@@ -238,7 +194,52 @@ Secondary keys (diagnostics/compatibility):
 
 ## Pending Strategies
 
-1. `social_profit_claim_validation_observe`
+1. `gamma_eventpair_exec_edge_filter_observe`
+
+- Status: `PENDING` (as of 2026-02-28, review-hold, observe-only).
+- Scope: Polymarket gamma-active event-pair strategy with observe-only exec-edge suppression (`event-yes` filter).
+- Runtime:
+  - `python scripts/polymarket_clob_arb_realtime.py --universe gamma-active --strategy event-pair --gamma-limit 1500 --gamma-min-liquidity 0 --gamma-min-volume24hr 0 --gamma-scan-max-markets 40000 --gamma-max-days-to-end 60 --max-markets-per-event 5 --max-subscribe-tokens 400 --metrics-log-all-candidates --observe-exec-edge-filter --observe-exec-edge-min-usd 0.01 --observe-exec-edge-strike-limit 1 --observe-exec-edge-cooldown-sec 180 --observe-exec-edge-filter-strategies event-yes --min-edge-cents 10`
+  - `python scripts/replay_clob_arb_kelly.py --metrics-file logs/clob-arb-monitor-metrics-eventpair-tuned-20260226-20260226_204500.jsonl,logs/clob-arb-monitor-metrics-eventpair-tuned30m-20260226-20260226_205340.jsonl,logs/clob-arb-monitor-metrics-eventpair-tuned3m-20260227_233912.jsonl --require-threshold-pass --fill-ratio-mode min --miss-penalty 0.005 --stale-grace-sec 2 --stale-penalty-per-sec 0.001 --max-worst-stale-sec 10 --min-gap-ms-per-event 5000 --scales 0.1,0.25,0.5,0.75,1.0 --bootstrap-iters 3000 --pretty --out-json logs/clob-arb-kelly-replay-eventpair-tuned38m-20260227-gap5s.json`
+- Evidence snapshot (2026-02-27 strict revalidation):
+  - Source metrics: `logs/clob-arb-monitor-metrics-eventpair-tuned3m-20260227_233912.jsonl` (`rows_total=1865`, `reason_threshold=515`, `distinct_events_threshold=7`)
+  - Monthly estimate (3m strict): `logs/clob-arb-eventpair-monthly-estimate-tuned3m-20260227_233912.json` (`weighted_monthly_trim_edgepct_le_25=+4.07%`)
+  - Monthly estimate (38m combined strict): `logs/clob-arb-eventpair-monthly-estimate-tuned38m-20260227.json` (`weighted_monthly_trim_edgepct_le_25=+5.47%`)
+- Evidence snapshot (risk-transferability constraints):
+  - Long-run NO_GO baseline: `logs/clob-arb-adoption-summary-20260226.json` (`decision=NO_GO`)
+  - Prior long-run replay showed negative execution-edge regime (`full_kelly=0.0`): `logs/clob-arb-kelly-replay-eventpair-long2-exec.json`
+- Adoption policy (`2026-02-28`, monthly-first + safety lock):
+  - Principle:
+    - monthly return is the primary screening signal
+    - execution-edge + Kelly are mandatory safety locks for promotion to `ADOPTED`
+  - Threshold policy:
+    - keep `3m strict >= 0.7 x 38m combined strict` as-is (no immediate retune)
+    - do not retune this ratio from a single refresh window
+    - diagnostic recency bands (review aid, not standalone adoption gate): `>=0.85` strong, `[0.65,0.85)` watch, `<0.65` weak
+  - MUST:
+    - use outlier-trim monthly metric (`weighted_monthly_trim_edgepct_le_25`)
+    - `3m strict > 0`
+    - `38m combined strict > 0`
+    - `3m strict >= 0.7 x 38m combined strict`
+    - multi-event execution-edge remains positive in latest strict probe window
+    - Kelly replay has `full_kelly > 0`
+  - NICE TO HAVE:
+    - `3m strict >= 38m combined strict`
+    - no single-event concentration in trimmed monthly estimate
+    - conservative cost/slippage assumptions keep execution-edge positive
+- Decision rule:
+  - IF all MUST conditions pass THEN `ADOPTED`
+  - IF monthly conditions pass but any safety-lock condition fails THEN keep `PENDING` (`REVIEW`-equivalent hold)
+  - IF monthly conditions pass and safety-lock is pending, keep observe-only and run periodic refresh (do not promote by monthly-only evidence)
+  - IF either strict monthly metric is non-positive THEN `REJECTED`
+- Decision note: monthly estimate has improved and is positive, but transferability/safety conditions are not fully stable; keep review-hold state.
+- PENDING release conditions:
+  - `execution-edge > 0` on refreshed multi-event strict evidence
+  - Kelly replay `full_kelly > 0` on refreshed strict evidence
+  - conservative cost/slippage check still keeps execution-edge positive
+- Operational gate: keep observe-only while `PENDING`; promote only after PENDING release conditions are met.
+
+2. `social_profit_claim_validation_observe`
 
 - Status: `PENDING` (as of 2026-02-25).
 - Scope: social/X performance claims around Polymarket bot profitability, observe-only.

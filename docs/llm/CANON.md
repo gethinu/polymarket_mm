@@ -129,3 +129,35 @@ Preferred mode switch command (enforces task/daemon/off consistently):
 - Daemon mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode daemon`
 - Off mode: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1 -NoBackground -Mode off`
 - `-Mode task` / `-Mode off` は、repo配下で実行中の `no_longshot_daily_daemon.py`（pythonプロセス）も停止して片系運用を強制する。
+
+## 9. Pending Release Runbook (gamma event-pair)
+
+Use this flow for `PENDING` strategy release monitoring and manual promotion.
+
+1. Scheduled monitoring (read-only, thin wrapper):
+   - Base monitor (higher frequency):
+     - `python scripts/run_pending_release_alarm_batch.py --strategy gamma_eventpair_exec_edge_filter_observe`
+   - Conservative monitor (lower frequency):
+     - `python scripts/run_pending_release_alarm_batch.py --strategy gamma_eventpair_exec_edge_filter_observe --run-conservative`
+2. Optional transition notification:
+   - `python scripts/run_pending_release_alarm_batch.py --strategy gamma_eventpair_exec_edge_filter_observe --discord`
+3. Scheduler exit policy:
+   - treat `0` as normal (includes `HOLD` / `NOOP` / `RELEASE_READY`)
+   - treat `4` (lock busy) as warning; use `--fail-on-lock-busy` only when strict failure is required
+   - treat `20` as hard error
+4. When transition to release-ready is detected:
+   - Re-check directly with checker JSON:
+     - `python scripts/check_pending_release.py --strategy gamma_eventpair_exec_edge_filter_observe --pretty`
+   - Confirm `release_check == "RELEASE_READY"` and `release_ready == true` from JSON payload.
+5. Manual promotion only (no auto-apply in alarm wrapper):
+   - `python scripts/check_pending_release.py --strategy gamma_eventpair_exec_edge_filter_observe --apply --pretty`
+6. Post-apply verification:
+   - `python scripts/render_strategy_register_snapshot.py --pretty`
+   - Verify status in `logs/strategy_register_latest.json`.
+   - If code/docs changed, run `python scripts/render_implementation_ledger.py`.
+
+Notes:
+- `check_pending_release.py` exit code `0` includes both `NOOP` and `RELEASE_READY`; automation must branch on JSON `release_check` / `release_ready`.
+- `check_pending_release_alarm.py` is read-only and uses `logs/pending_release_alarm.lock` to avoid concurrent run overwrite.
+- `--discord` 指定時の既定 webhook env は `POLYMARKET_PENDING_RELEASE_DISCORD_WEBHOOK`。`--discord-webhook-env` 指定時は override を優先する。
+- webhook 未設定/送信失敗は通知経路の問題として扱い、release 判定の exit code を変更しない。
