@@ -1143,11 +1143,24 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Profit-window report (observe-only):
   - `python scripts/report_event_driven_profit_window.py --hours 24 --pretty`
   - `python scripts/report_event_driven_profit_window.py --hours 24 --thresholds-cents "0.8,1,2,3,5" --capture-ratios "0.25,0.35,0.50" --target-monthly-return-pct 12 --assumed-bankroll-usd 60 --pretty`
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --assumed-bankroll-usd 60 --max-stake-usd 5 --pretty`
+- Guarded micro-live helper (observe-preview by default):
+  - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --max-stake-usd 5 --max-new-orders 1 --signal-max-age-min 30 --repeat-cooldown-min 360`
+  - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --execute --confirm-live YES --max-stake-usd 5 --max-new-orders 1 --max-daily-notional-usd 5`
+  - key flags: `--signals-file`, `--state-file`, `--exec-log-file`, `--log-file`, `--max-new-orders`, `--max-stake-usd`, `--max-daily-notional-usd`, `--max-open-positions`, `--repeat-cooldown-min`, `--signal-max-age-min`, `--min-edge-cents`, `--min-confidence`, `--max-entry-price`, `--price-buffer-cents`, `--min-liquidity`, `--min-volume-24h`, `--execute`, `--confirm-live`, `--clob-host`, `--chain-id`, `--pretty`
+  - 既定は observe preview（注文未送信）。live 注文は `--execute --confirm-live YES` の同時指定が必須。
+  - `--repeat-cooldown-min` は同じ `market_id + side` の preview / submit を短時間で繰り返さないための recent-action cooldown。`0` で無効。
+- Realtime dashboard (local web):
+  - `python scripts/event_driven_monitor_dashboard.py`
+  - `python scripts/event_driven_monitor_dashboard.py --host 127.0.0.1 --port 8788 --window-minutes 180 --max-signals 18`
+  - key flags: `--host`, `--port`, `--signals-file`, `--metrics-file`, `--log-file`, `--profit-json`, `--summary-txt`, `--window-minutes`, `--tail-lines`, `--max-signals`, `--refresh-ms`
 - Daily runner (PowerShell, background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -MaxPages 12 -MinEdgeCents 0.8 -TopN 20`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -IncludeRegex "acquire|approve|court|lawsuit" -Discord`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitTargetMonthlyReturnPct 12 -FailOnNoGo`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitAssumedBankrollUsd 60 -ProfitMaxStakeUsd 5`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -LivePreview -LiveMaxStakeUsd 5 -LiveMaxNewOrders 1 -LiveRepeatCooldownMin 360`
 - Daily task installer (PowerShell):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground -StartTime 00:15 -RunNow`
@@ -1155,11 +1168,14 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Key flags (runner / installer):
   - runner: `-MaxPages`, `-PageSize`, `-MinLiquidity`, `-MinVolume24h`, `-MinEdgeCents`, `-TopN`, `-ReportHours`
   - runner: `-IncludeRegex`, `-ExcludeRegex`, `-IncludeNonEvent`, `-ThresholdsCents`, `-Discord`
-  - runner profit-window: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-SkipProfitWindow`, `-FailOnNoGo`
-  - profit-window CLI: `--episode-merge-gap-sec`, `--thresholds-cents`, `--capture-ratios`, `--target-monthly-return-pct`, `--assumed-bankroll-usd`, `--max-ev-multiple-of-stake`, `--fail-on-no-go`, `--out-json`, `--out-txt`
+  - runner profit-window: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-ProfitMaxStakeUsd`, `-SkipProfitWindow`, `-FailOnNoGo`
+  - runner guarded live passthrough: `-LivePreview`, `-LiveExecute`, `-LiveConfirm`, `-LiveMaxNewOrders`, `-LiveMaxStakeUsd`, `-LiveMaxDailyNotionalUsd`, `-LiveMaxOpenPositions`, `-LiveRepeatCooldownMin`, `-LiveSignalMaxAgeMin`, `-LiveMinEdgeCents`, `-LiveMinConfidence`, `-LiveMaxEntryPrice`, `-LivePriceBufferCents`, `-LiveMinLiquidity`, `-LiveMinVolume24h`
+  - profit-window CLI: `--episode-merge-gap-sec`, `--thresholds-cents`, `--capture-ratios`, `--target-monthly-return-pct`, `--assumed-bankroll-usd`, `--max-ev-multiple-of-stake`, `--max-stake-usd`, `--fail-on-no-go`, `--out-json`, `--out-txt`
   - `--assumed-bankroll-usd` / `-ProfitAssumedBankrollUsd` を省略した場合は、`logs/strategy_register_latest.json.bankroll_policy.initial_bankroll_usd`（fallback: `docs/llm/STRATEGY.md` の `## Bankroll Policy`）を既定 bankroll として解決する。
+  - `--max-stake-usd` / `-ProfitMaxStakeUsd` は observe 利用時の 1 signal あたり想定 stake 上限。`<=0` は無効で、既存の suggested stake をそのまま使う。
   - installer: `-TaskName`, `-StartTime`, `-MaxPages`, `-MinLiquidity`, `-MinVolume24h`, `-MinEdgeCents`, `-TopN`, `-ReportHours`, `-PrincipalMode`, `-ActionMode`, `-RunNow`
-  - installer profit-window passthrough: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-SkipProfitWindow`, `-FailOnNoGo`
+  - installer profit-window passthrough: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-ProfitMaxStakeUsd`, `-SkipProfitWindow`, `-FailOnNoGo`
+  - installer guarded live passthrough: `-LivePreview`, `-LiveExecute`, `-LiveConfirm`, `-LiveMaxNewOrders`, `-LiveMaxStakeUsd`, `-LiveMaxDailyNotionalUsd`, `-LiveMaxOpenPositions`, `-LiveRepeatCooldownMin`, `-LiveSignalMaxAgeMin`, `-LiveMinEdgeCents`, `-LiveMinConfidence`, `-LiveMaxEntryPrice`, `-LivePriceBufferCents`, `-LiveMinLiquidity`, `-LiveMinVolume24h`
   - installer principal mode: `auto` / `default` / `s4u` / `interactive`（`s4u` は環境により権限不足で失敗する場合あり）
   - installer action mode 既定値は `powershell`（`cmd` wrapper 経由にも切替可）
   - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。

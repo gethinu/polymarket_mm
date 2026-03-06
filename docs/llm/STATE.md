@@ -48,6 +48,11 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Optional signal dedupe state JSON: `logs/event-driven-observe-signal-state.json`
 - Profit-window summary JSON: `logs/event_driven_profit_window_latest.json`
 - Profit-window summary TXT: `logs/event_driven_profit_window_latest.txt`
+- Optional guarded micro-live state JSON: `logs/event_driven_live_state.json`
+  - tracks open positions, daily notional, and recent preview/submit keys for repeat cooldown
+- Optional guarded micro-live execution log JSONL: `logs/event_driven_live_executions.jsonl`
+- Optional guarded micro-live log: `logs/event_driven_live.log`
+- Optional local dashboard (read-only web): `scripts/event_driven_monitor_dashboard.py` (default `http://127.0.0.1:8788`)
 
 Polymarket CLOB MM:
 - Log: `logs/clob-mm.log`

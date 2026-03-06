@@ -29,6 +29,22 @@ param(
   [double]$ProfitTargetMonthlyReturnPct = 12,
   [double]$ProfitAssumedBankrollUsd = [double]::NaN,
   [double]$ProfitMaxEvMultipleOfStake = 0.35,
+  [double]$ProfitMaxStakeUsd = 5,
+  [switch]$LivePreview,
+  [switch]$LiveExecute,
+  [string]$LiveConfirm = "",
+  [int]$LiveMaxNewOrders = 1,
+  [double]$LiveMaxStakeUsd = 5,
+  [double]$LiveMaxDailyNotionalUsd = 5,
+  [int]$LiveMaxOpenPositions = 2,
+  [double]$LiveRepeatCooldownMin = 360,
+  [double]$LiveSignalMaxAgeMin = 30,
+  [double]$LiveMinEdgeCents = 5,
+  [double]$LiveMinConfidence = 0.80,
+  [double]$LiveMaxEntryPrice = 0.35,
+  [double]$LivePriceBufferCents = 0.2,
+  [double]$LiveMinLiquidity = 5000,
+  [double]$LiveMinVolume24h = 250,
   [switch]$SkipProfitWindow,
   [switch]$FailOnNoGo,
   [switch]$Discord
@@ -127,6 +143,7 @@ function Run-Python([string[]]$CmdArgs) {
 $observeScript = Join-Path $RepoRoot "scripts\polymarket_event_driven_observe.py"
 $reportScript = Join-Path $RepoRoot "scripts\report_event_driven_observation.py"
 $profitReportScript = Join-Path $RepoRoot "scripts\report_event_driven_profit_window.py"
+$liveScript = Join-Path $RepoRoot "scripts\execute_event_driven_live.py"
 $logDir = Join-Path $RepoRoot "logs"
 $runLog = Join-Path $logDir "event_driven_daily_run.log"
 $summaryTxt = Join-Path $logDir "event_driven_daily_summary.txt"
@@ -147,6 +164,9 @@ if (-not (Test-Path $reportScript)) {
 }
 if (-not $SkipProfitWindow.IsPresent -and -not (Test-Path $profitReportScript)) {
   throw "profit report script not found: $profitReportScript"
+}
+if (($LivePreview.IsPresent -or $LiveExecute.IsPresent) -and -not (Test-Path $liveScript)) {
+  throw "live helper script not found: $liveScript"
 }
 
 $discordRequested = $Discord.IsPresent
@@ -228,6 +248,9 @@ if (-not $SkipProfitWindow.IsPresent) {
     "--out-txt", $profitTxt,
     "--pretty"
   )
+  if ($ProfitMaxStakeUsd -gt 0) {
+    $profitArgs += @("--max-stake-usd", "$ProfitMaxStakeUsd")
+  }
   if (-not [double]::IsNaN($ProfitAssumedBankrollUsd)) {
     $profitArgs += @("--assumed-bankroll-usd", "$ProfitAssumedBankrollUsd")
   } else {
@@ -269,6 +292,37 @@ if (-not $SkipProfitWindow.IsPresent) {
       }
     }
   }
+}
+
+$liveRequested = $LivePreview.IsPresent -or $LiveExecute.IsPresent
+if ($liveRequested) {
+  $liveArgs = @(
+    $liveScript,
+    "--signals-file", $signalsFile,
+    "--max-new-orders", "$LiveMaxNewOrders",
+    "--max-stake-usd", "$LiveMaxStakeUsd",
+    "--max-daily-notional-usd", "$LiveMaxDailyNotionalUsd",
+    "--max-open-positions", "$LiveMaxOpenPositions",
+    "--repeat-cooldown-min", "$LiveRepeatCooldownMin",
+    "--signal-max-age-min", "$LiveSignalMaxAgeMin",
+    "--min-edge-cents", "$LiveMinEdgeCents",
+    "--min-confidence", "$LiveMinConfidence",
+    "--max-entry-price", "$LiveMaxEntryPrice",
+    "--price-buffer-cents", "$LivePriceBufferCents",
+    "--min-liquidity", "$LiveMinLiquidity",
+    "--min-volume-24h", "$LiveMinVolume24h",
+    "--pretty"
+  )
+  if ($LiveExecute.IsPresent) {
+    $liveArgs += @("--execute", "--confirm-live", "$LiveConfirm")
+  }
+  Log ("event-driven live helper start mode={0}" -f $(if ($LiveExecute.IsPresent) { "LIVE" } else { "preview" }))
+  $liveOutput = & $PythonExe @liveArgs 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    throw "event-driven live helper failed with code ${LASTEXITCODE}"
+  }
+  Write-Host ($liveOutput -join [Environment]::NewLine)
+  Log "event-driven live helper done"
 }
 
 $summaryText = ($summaryParts -join [Environment]::NewLine)

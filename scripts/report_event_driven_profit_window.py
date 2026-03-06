@@ -325,12 +325,25 @@ def project_monthly_return(
     }
 
 
+def apply_stake_cap_to_ev(ev_usd: float, stake_usd: float, max_stake_usd: float) -> tuple[float, float]:
+    ev = float(ev_usd)
+    stake = max(0.0, float(stake_usd))
+    cap = max(0.0, float(max_stake_usd))
+    if cap <= 0.0 or stake <= 0.0:
+        return ev, stake
+    effective_stake = min(stake, cap)
+    if effective_stake == stake:
+        return ev, stake
+    return ev * (effective_stake / stake), effective_stake
+
+
 def threshold_stats(
     episodes: List[Episode],
     threshold_cents: float,
     capture_ratios: List[float],
     base_capture_ratio: float,
     max_ev_multiple_of_stake: float,
+    max_stake_usd: float,
     span_days: float,
     max_assumed_trades_per_day: float,
     days_per_month: float,
@@ -340,7 +353,12 @@ def threshold_stats(
     for e in episodes:
         if e.edge_cents_median < threshold_cents:
             continue
-        ev_cap = capped_ev_usd(e.ev_usd_median, e.stake_usd_median, max_ev_multiple_of_stake)
+        ev_scaled, stake_scaled = apply_stake_cap_to_ev(
+            e.ev_usd_median,
+            e.stake_usd_median,
+            max_stake_usd,
+        )
+        ev_cap = capped_ev_usd(ev_scaled, stake_scaled, max_ev_multiple_of_stake)
         if ev_cap <= 0.0:
             continue
         hit_rows.append((e, ev_cap))
@@ -514,6 +532,13 @@ def build_text_report(result: dict) -> str:
         f"Assumed bankroll=${float(settings.get('assumed_bankroll_usd') or 0.0):.2f} "
         f"(source={str(settings.get('assumed_bankroll_source') or '-')})"
     )
+    max_stake_usd = float(settings.get("max_stake_usd") or 0.0)
+    if max_stake_usd > 0.0:
+        lines.append(
+            f"Stake median raw/effective=${float(summary.get('stake_usd_median_raw') or 0.0):.2f}/"
+            f"${float(summary.get('stake_usd_median_effective') or 0.0):.2f} | "
+            f"cap=${max_stake_usd:.2f}"
+        )
 
     if metrics:
         lines.append(
@@ -637,6 +662,7 @@ def main() -> int:
     p.add_argument("--capture-ratios", default="0.25,0.35,0.50")
     p.add_argument("--base-capture-ratio", type=float, default=0.35)
     p.add_argument("--max-ev-multiple-of-stake", type=float, default=0.35)
+    p.add_argument("--max-stake-usd", type=float, default=0.0)
     p.add_argument("--days-per-month", type=float, default=30.0)
     p.add_argument(
         "--assumed-bankroll-usd",
@@ -712,6 +738,7 @@ def main() -> int:
             capture_ratios=capture_ratios,
             base_capture_ratio=float(args.base_capture_ratio),
             max_ev_multiple_of_stake=float(args.max_ev_multiple_of_stake),
+            max_stake_usd=float(args.max_stake_usd),
             span_days=span_days,
             max_assumed_trades_per_day=float(args.max_assumed_trades_per_day),
             days_per_month=float(args.days_per_month),
@@ -727,11 +754,22 @@ def main() -> int:
         min_hit_ratio=float(args.min_hit_ratio_pct) / 100.0,
     )
 
-    ev_vals = [
-        capped_ev_usd(e.ev_usd_median, e.stake_usd_median, float(args.max_ev_multiple_of_stake))
-        for e in episodes
-        if e.ev_usd_median == e.ev_usd_median
-    ]
+    ev_vals: List[float] = []
+    raw_stakes: List[float] = []
+    effective_stakes: List[float] = []
+    for e in episodes:
+        if e.ev_usd_median != e.ev_usd_median:
+            continue
+        ev_scaled, stake_scaled = apply_stake_cap_to_ev(
+            e.ev_usd_median,
+            e.stake_usd_median,
+            float(args.max_stake_usd),
+        )
+        ev_vals.append(capped_ev_usd(ev_scaled, stake_scaled, float(args.max_ev_multiple_of_stake)))
+        if e.stake_usd_median > 0.0:
+            raw_stakes.append(float(e.stake_usd_median))
+        if stake_scaled > 0.0:
+            effective_stakes.append(float(stake_scaled))
     edge_vals = [e.edge_cents_median for e in episodes]
     pos_ev_count = len([x for x in ev_vals if x > 0.0])
     pos_ev_ratio = (float(pos_ev_count) / float(len(episodes))) if episodes else 0.0
@@ -833,6 +871,7 @@ def main() -> int:
             "capture_ratios": capture_ratios,
             "base_capture_ratio": float(args.base_capture_ratio),
             "max_ev_multiple_of_stake": float(args.max_ev_multiple_of_stake),
+            "max_stake_usd": float(args.max_stake_usd),
             "days_per_month": float(args.days_per_month),
             "assumed_bankroll_usd": float(assumed_bankroll_usd),
             "assumed_bankroll_source": assumed_bankroll_source,
@@ -858,6 +897,8 @@ def main() -> int:
             "ev_usd_p90": percentile(ev_vals, 0.90, 0.0),
             "edge_cents_median": safe_median(edge_vals, 0.0),
             "edge_cents_p90": percentile(edge_vals, 0.90, 0.0),
+            "stake_usd_median_raw": safe_median(raw_stakes, 0.0),
+            "stake_usd_median_effective": safe_median(effective_stakes, 0.0),
             "class_counts": class_counts(episodes),
             "metrics_window": {
                 "runs": len(metrics),

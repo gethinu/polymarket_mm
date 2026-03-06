@@ -146,18 +146,24 @@ Secondary keys (diagnostics/compatibility):
 - Decision note: expanded-asset calibration run met sample and edge gates; promote to active observe calibration monitoring.
 - Operational gate: keep observe-only and revert to `REVIEW` when either `qualified_samples < 200` or `edge_empirical_minus_price <= 0` on the latest 7-day-equivalent calibration run.
 
-5. `event_driven_mispricing_observe`
+3. `event_driven_mispricing_observe`
 
-- Status: `ADOPTED` (as of 2026-02-26, revalidated 2026-02-27, observe-only).
-- Scope: event-driven Polymarket mispricing monitor (political/geopolitical/legal/regulatory/macropolicy classes), observe-only.
+- Status: `ADOPTED` (as of 2026-02-26, revalidated 2026-03-06, observe-first with guarded micro-live helper available).
+- Scope: event-driven Polymarket mispricing monitor (political/geopolitical/legal/regulatory/macropolicy classes). Default operation remains observe-only; guarded micro-live helper is available but disabled by default.
 - Runtime:
   - `python scripts/polymarket_event_driven_observe.py --max-pages 12 --poll-sec 120 --min-edge-cents 0.8 --max-days-to-end 180 --top-n 20 --signal-cooldown-sec 7200 --signal-state-file logs/event-driven-observe-signal-state.json`
-  - `python scripts/report_event_driven_profit_window.py --hours 24 --pretty`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitTargetMonthlyReturnPct 12`
-- Evidence snapshot (2026-02-27 daily refresh / profit-window latest):
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --assumed-bankroll-usd 60 --max-stake-usd 5 --pretty`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitTargetMonthlyReturnPct 12 -ProfitMaxStakeUsd 5`
+  - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --max-stake-usd 5 --max-new-orders 1 --repeat-cooldown-min 360`
+- Evidence snapshot (2026-03-06 daily refresh / practical cap policy):
   - Source artifacts: `logs/event_driven_profit_window_latest.json`, `logs/event_driven_profit_window_latest.txt`
-  - `decision=GO`, `projected_monthly_return=+936.35%` (base capture `35%`, threshold `>=5.00c`)
-  - Quality gates met: `runs=436`, `episodes=114`, `unique_events=7`, `positive_ev_ratio=93.0%`
+  - `decision=GO`, `projected_monthly_return=+183.75%` (base capture `35%`, threshold `>=5.00c`, assumed bankroll `$60`, capped stake `$5`)
+  - Quality gates met: `runs=54`, `episodes=15`, `unique_events=8`, `positive_ev_ratio=93.3%`
+- Practical policy note (2026-03-06):
+  - Use `ProfitMaxStakeUsd=5` as the default practical projection cap for the local `$60` bankroll policy.
+  - Treat uncapped profit-window output as diagnostic only; do not use it for micro-live sizing decisions.
+  - Use `repeat-cooldown-min=360` on guarded preview/live runs so the same market side is not re-proposed continuously inside the same session.
+  - Guarded live helper remains opt-in only and requires explicit `--execute --confirm-live YES`.
 - Evidence snapshot (2026-02-27 class/diversity probe):
   - Source artifacts: `logs/event-driven-probe-postclass2-metrics.jsonl`, `logs/event-driven-probe-postclass2-signals.jsonl`
   - `event_count=42`, `candidate_count=14`, `top_written=14`

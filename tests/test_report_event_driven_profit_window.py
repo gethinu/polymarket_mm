@@ -63,10 +63,29 @@ def test_build_text_report_includes_assumed_bankroll_source():
     txt = mod.build_text_report(
         {
             "window": {"hours": 24},
-            "summary": {"runs_window": 0, "episodes": 0, "event_count": 0, "ev_usd_p90": 0, "edge_cents_median": 0},
+            "summary": {
+                "runs_window": 0,
+                "episodes": 0,
+                "event_count": 0,
+                "ev_usd_p90": 0,
+                "edge_cents_median": 0,
+                "stake_usd_median_raw": 0,
+                "stake_usd_median_effective": 0,
+            },
             "decision": {"decision": "NO_GO", "reasons": []},
             "selected_threshold": {"base_scenario": {"projected_monthly_return": 0}},
-            "settings": {"assumed_bankroll_usd": 100.0, "assumed_bankroll_source": "cli_arg"},
+            "settings": {
+                "assumed_bankroll_usd": 100.0,
+                "assumed_bankroll_source": "cli_arg",
+                "max_stake_usd": 10.0,
+            },
         }
     )
     assert "Assumed bankroll=$100.00 (source=cli_arg)" in txt
+    assert "Stake median raw/effective=$0.00/$0.00 | cap=$10.00" in txt
+
+
+def test_apply_stake_cap_to_ev_scales_ev_linearly():
+    ev, stake = mod.apply_stake_cap_to_ev(18.0, 60.0, 10.0)
+    assert ev == 3.0
+    assert stake == 10.0

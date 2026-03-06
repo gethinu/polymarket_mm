@@ -18,6 +18,22 @@ param(
   [double]$ProfitTargetMonthlyReturnPct = 12,
   [double]$ProfitAssumedBankrollUsd = [double]::NaN,
   [double]$ProfitMaxEvMultipleOfStake = 0.35,
+  [double]$ProfitMaxStakeUsd = 5,
+  [switch]$LivePreview,
+  [switch]$LiveExecute,
+  [string]$LiveConfirm = "",
+  [int]$LiveMaxNewOrders = 1,
+  [double]$LiveMaxStakeUsd = 5,
+  [double]$LiveMaxDailyNotionalUsd = 5,
+  [int]$LiveMaxOpenPositions = 2,
+  [double]$LiveRepeatCooldownMin = 360,
+  [double]$LiveSignalMaxAgeMin = 30,
+  [double]$LiveMinEdgeCents = 5,
+  [double]$LiveMinConfidence = 0.80,
+  [double]$LiveMaxEntryPrice = 0.35,
+  [double]$LivePriceBufferCents = 0.2,
+  [double]$LiveMinLiquidity = 5000,
+  [double]$LiveMinVolume24h = 250,
   [switch]$SkipProfitWindow,
   [switch]$FailOnNoGo,
   [ValidateSet("auto", "default", "s4u", "interactive")]
@@ -144,6 +160,9 @@ $runnerArgList = @(
   "-ProfitTargetMonthlyReturnPct", "$ProfitTargetMonthlyReturnPct",
   "-ProfitMaxEvMultipleOfStake", "$ProfitMaxEvMultipleOfStake"
 )
+if ($ProfitMaxStakeUsd -gt 0) {
+  $runnerArgList += @("-ProfitMaxStakeUsd", "$ProfitMaxStakeUsd")
+}
 if (-not [double]::IsNaN($ProfitAssumedBankrollUsd)) {
   $runnerArgList += @("-ProfitAssumedBankrollUsd", "$ProfitAssumedBankrollUsd")
 }
@@ -155,6 +174,50 @@ if (-not [string]::IsNullOrWhiteSpace($ExcludeRegex)) {
 }
 if ($IncludeNonEvent.IsPresent) {
   $runnerArgList += "-IncludeNonEvent"
+}
+if ($LivePreview.IsPresent -or $LiveExecute.IsPresent) {
+  if ($LivePreview.IsPresent) {
+    $runnerArgList += "-LivePreview"
+  }
+  if ($LiveExecute.IsPresent) {
+    $runnerArgList += @("-LiveExecute", "-LiveConfirm", "$LiveConfirm")
+  }
+  if ($LiveMaxNewOrders -gt 0) {
+    $runnerArgList += @("-LiveMaxNewOrders", "$LiveMaxNewOrders")
+  }
+  if ($LiveMaxStakeUsd -gt 0) {
+    $runnerArgList += @("-LiveMaxStakeUsd", "$LiveMaxStakeUsd")
+  }
+  if ($LiveMaxDailyNotionalUsd -gt 0) {
+    $runnerArgList += @("-LiveMaxDailyNotionalUsd", "$LiveMaxDailyNotionalUsd")
+  }
+  if ($LiveMaxOpenPositions -gt 0) {
+    $runnerArgList += @("-LiveMaxOpenPositions", "$LiveMaxOpenPositions")
+  }
+  if ($LiveRepeatCooldownMin -gt 0) {
+    $runnerArgList += @("-LiveRepeatCooldownMin", "$LiveRepeatCooldownMin")
+  }
+  if ($LiveSignalMaxAgeMin -gt 0) {
+    $runnerArgList += @("-LiveSignalMaxAgeMin", "$LiveSignalMaxAgeMin")
+  }
+  if ($LiveMinEdgeCents -gt 0) {
+    $runnerArgList += @("-LiveMinEdgeCents", "$LiveMinEdgeCents")
+  }
+  if ($LiveMinConfidence -gt 0) {
+    $runnerArgList += @("-LiveMinConfidence", "$LiveMinConfidence")
+  }
+  if ($LiveMaxEntryPrice -gt 0) {
+    $runnerArgList += @("-LiveMaxEntryPrice", "$LiveMaxEntryPrice")
+  }
+  if ($LivePriceBufferCents -ge 0) {
+    $runnerArgList += @("-LivePriceBufferCents", "$LivePriceBufferCents")
+  }
+  if ($LiveMinLiquidity -gt 0) {
+    $runnerArgList += @("-LiveMinLiquidity", "$LiveMinLiquidity")
+  }
+  if ($LiveMinVolume24h -gt 0) {
+    $runnerArgList += @("-LiveMinVolume24h", "$LiveMinVolume24h")
+  }
 }
 if ($SkipProfitWindow.IsPresent) {
   $runnerArgList += "-SkipProfitWindow"
