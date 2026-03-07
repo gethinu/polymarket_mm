@@ -35,6 +35,8 @@ DEFAULT_TASKS = [
 DEFAULT_OPTIONAL_TASKS = [
     "WalletAutopsyDailyReport",
     "EventDrivenDailyReport",
+    "EventDrivenLiveExitCheck60m",
+    "FadeRegimeStagedChecks30m",
 ]
 
 DEFAULT_ARTIFACT_SPECS = [
@@ -49,6 +51,7 @@ DEFAULT_ARTIFACT_SPECS = [
     "?logs/event_driven_daily_run.log:30",
     "?logs/event_driven_daily_summary.txt:30",
     "?logs/event_driven_profit_window_latest.json:30",
+    "?logs/event_driven_live_exit_check.log:6",
     "?logs/wallet_autopsy_daily_run.log:30",
     "?logs/simmer-ab-daily-report.log:30",
     "logs/simmer-ab-daily-compare-latest.txt:30",
@@ -57,6 +60,8 @@ DEFAULT_ARTIFACT_SPECS = [
     "?logs/simmer-ab-decision-latest.json:30",
     "?logs/simmer_ab_supervisor_state.json:6",
     "?logs/bot_supervisor_state.json:6",
+    "?logs/fade_regime_staged_checks_run.log:6",
+    "?logs/fade_regime_staged_decision_latest.json:6",
 ]
 
 
@@ -389,6 +394,8 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
     simmer_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\simmer-ab-daily-report.log")
     morning_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\morning_status_daily_run.log")
     event_driven_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\event_driven_daily_run.log")
+    event_driven_exit_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\event_driven_live_exit_check.log")
+    fade_regime_staged_log_fresh = _is_fresh_artifact(artifact_rows, r"logs\fade_regime_staged_checks_run.log")
     interrupted_codes = {3221225786, 267014}
 
     for row in task_rows:
@@ -433,6 +440,14 @@ def _apply_soft_fail_overrides(task_rows: List[dict], artifact_rows: List[dict])
         elif name == "EventDrivenDailyReport" and event_driven_log_fresh:
             row["status"] = "SOFT_FAIL_INTERRUPTED"
             row["status_note"] = f"last_result={code} indicates interrupted task host but event-driven runner log is fresh"
+        elif name == "EventDrivenLiveExitCheck60m" and event_driven_exit_log_fresh:
+            row["status"] = "SOFT_FAIL_INTERRUPTED"
+            row["status_note"] = (
+                f"last_result={code} indicates interrupted task host but event-driven live exit-check log is fresh"
+            )
+        elif name == "FadeRegimeStagedChecks30m" and fade_regime_staged_log_fresh:
+            row["status"] = "SOFT_FAIL_INTERRUPTED"
+            row["status_note"] = f"last_result={code} indicates interrupted task host but fade regime staged runner log is fresh"
 
 
 def _apply_supervisor_overrides(task_rows: List[dict]) -> None:
@@ -748,6 +763,62 @@ def _apply_event_driven_task_argument_guard(task_rows: List[dict]) -> None:
             notes.append("missing_required_flags=" + ",".join(missing))
         if forbidden:
             notes.append("forbidden_flags=" + ",".join(forbidden))
+        row["status"] = "INVALID_CONTENT"
+        row["status_note"] = "; ".join(notes)
+        return
+
+
+def _apply_fade_regime_staged_task_argument_guard(task_rows: List[dict]) -> None:
+    target_name = "FadeRegimeStagedChecks30m"
+    required_switch_flags = [
+        "-nobackground",
+    ]
+    required_script_token = "run_fade_regime_staged_checks.ps1"
+
+    for row in task_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("task_name") or "") != target_name:
+            continue
+        if not bool(row.get("exists")):
+            return
+        status = str(row.get("status") or "").upper()
+        if status in {"MISSING", "OPTIONAL_MISSING", "ERROR", "DISABLED"}:
+            return
+        args_raw = str(row.get("action_arguments") or "").strip()
+        if not args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "missing_action_arguments"
+            return
+        if "||" in args_raw:
+            row["status"] = "INVALID_CONTENT"
+            row["status_note"] = "multiple_actions_detected"
+            return
+
+        def _switch_enabled(flag: str) -> bool:
+            pattern = rf"(?i)(?:^|\s){re.escape(flag)}(?:\s*:\s*(\$?true|\$?false))?(?=\s|$)"
+            for m in re.finditer(pattern, args_raw):
+                raw = str(m.group(1) or "").strip().lower().lstrip("$")
+                if not raw or raw == "true":
+                    return True
+                if raw == "false":
+                    continue
+                return True
+            return False
+
+        missing = [f for f in required_switch_flags if not _switch_enabled(f)]
+        lower_args = args_raw.lower().replace("/", "\\")
+        invalid_values: List[str] = []
+        if required_script_token not in lower_args:
+            invalid_values.append(f"missing_runner_script={required_script_token}")
+        if not missing and not invalid_values:
+            return
+
+        notes: List[str] = []
+        if missing:
+            notes.append("missing_required_flags=" + ",".join(missing))
+        if invalid_values:
+            notes.append("invalid_values=" + ",".join(invalid_values))
         row["status"] = "INVALID_CONTENT"
         row["status_note"] = "; ".join(notes)
         return
@@ -1205,6 +1276,7 @@ def main() -> int:
     _apply_morning_task_argument_guard(task_rows)
     _apply_simmer_ab_task_argument_guard(task_rows)
     _apply_event_driven_task_argument_guard(task_rows)
+    _apply_fade_regime_staged_task_argument_guard(task_rows)
 
     reasons: List[str] = []
     bad_task = [

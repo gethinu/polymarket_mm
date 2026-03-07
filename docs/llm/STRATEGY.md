@@ -158,8 +158,11 @@ Out-of-register support pipelines (not counted in strategy register totals):
 - Runtime:
   - `python scripts/polymarket_event_driven_observe.py --max-pages 12 --poll-sec 120 --min-edge-cents 0.8 --max-days-to-end 180 --top-n 20 --signal-cooldown-sec 7200 --signal-state-file logs/event-driven-observe-signal-state.json`
   - `python scripts/report_event_driven_profit_window.py --hours 24 --assumed-bankroll-usd 60 --max-stake-usd 5 --pretty`
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --assumed-bankroll-usd 60 --max-stake-usd 5 --max-dte-days 7 --min-unique-events 2 --pretty`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitTargetMonthlyReturnPct 12 -ProfitMaxStakeUsd 5`
-  - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --max-stake-usd 5 --max-new-orders 1 --repeat-cooldown-min 360`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitAssumedBankrollUsd 60 -ProfitMaxStakeUsd 5 -ProfitMaxDteDays 7 -ProfitMinUniqueEvents 2 -LivePreview -LiveMaxDteDays 7`
+  - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --max-stake-usd 5 --max-new-orders 1 --repeat-cooldown-min 360 --max-dte-days 7`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_live_exit_check.ps1 -NoBackground -LiveExecute -LiveConfirm YES`
 - Evidence snapshot (2026-03-06 daily refresh / practical cap policy):
   - Source artifacts: `logs/event_driven_profit_window_latest.json`, `logs/event_driven_profit_window_latest.txt`
   - `decision=GO`, `projected_monthly_return=+183.75%` (base capture `35%`, threshold `>=5.00c`, assumed bankroll `$60`, capped stake `$5`)
@@ -167,8 +170,14 @@ Out-of-register support pipelines (not counted in strategy register totals):
 - Practical policy note (2026-03-06):
   - Use `ProfitMaxStakeUsd=5` as the default practical projection cap for the local `$60` bankroll policy.
   - Treat uncapped profit-window output as diagnostic only; do not use it for micro-live sizing decisions.
+  - Read the profit-window naive monthly return as an observe-side upper bound; the report now also emits a hold-to-resolution lock-up proxy because long-dated event positions can consume bankroll for weeks/months.
+  - For short-horizon screening, use `report_event_driven_profit_window.py --max-dte-days <N>` to compare `<=7d` / `<=14d` subsets against the unrestricted baseline before changing live scope.
+  - Current short-horizon operational profile is `<=7d` with `min_unique_events=2`; on the 2026-03-07 refresh it flipped the capped `$60/$5` subset back to `GO` with `lockup-adjusted projected_monthly=+183.75%`, `episodes=15`, `unique_events=2`, and `median_dte=1.76d`.
+  - That short-horizon profile is only valid when live entry applies the same DTE cap (`--max-dte-days 7` / `-LiveMaxDteDays 7`); otherwise the live book can drift back into long-dated lock-up.
   - Use `repeat-cooldown-min=360` on guarded preview/live runs so the same market side is not re-proposed continuously inside the same session.
   - Guarded micro-live BUY execution uses CLOB best ask + visible ask depth clipping and `FAK` immediate-or-cancel handling so actual filled size is recorded even when only part of the requested `$5` notional is immediately available.
+  - Local live cadence policy is split: entry discovery remains on the daily runner, while resolution checks are delegated to a dedicated `60m` exit-only task (`EventDrivenLiveExitCheck60m`).
+  - The hourly exit-only check is not a discretionary sell bot; it refreshes resolved/near-resolved state using `win_threshold=0.99`, `lose_threshold=0.01`.
   - Guarded live helper remains opt-in only and requires explicit `--execute --confirm-live YES`.
 - Evidence snapshot (2026-02-27 class/diversity probe):
   - Source artifacts: `logs/event-driven-probe-postclass2-metrics.jsonl`, `logs/event-driven-probe-postclass2-signals.jsonl`

@@ -1190,13 +1190,21 @@ Polymarket event-driven mispricing monitor (observe-only):
   - `python scripts/report_event_driven_profit_window.py --hours 24 --pretty`
   - `python scripts/report_event_driven_profit_window.py --hours 24 --thresholds-cents "0.8,1,2,3,5" --capture-ratios "0.25,0.35,0.50" --target-monthly-return-pct 12 --assumed-bankroll-usd 60 --pretty`
   - `python scripts/report_event_driven_profit_window.py --hours 24 --assumed-bankroll-usd 60 --max-stake-usd 5 --pretty`
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --assumed-bankroll-usd 60 --max-stake-usd 5 --max-dte-days 14 --pretty`
+  - `python scripts/report_event_driven_profit_window.py --hours 24 --assumed-bankroll-usd 60 --max-stake-usd 5 --max-dte-days 7 --min-unique-events 2 --pretty`
+  - output now includes a hold-to-resolution lock-up proxy: selected-threshold `dte` stats, steady-state capital required at naive cadence, lockup-capped `opp/day`, and `lockup-adjusted` monthly return alongside the naive observe projection
+  - `--max-dte-days > 0` filters episodes by median `days_to_end` before threshold selection, so short-horizon-only monthly return can be compared against the unrestricted baseline
+  - `--min-unique-events` remains `4` by default; short-horizon-only probes can lower it (for example `2` with `--max-dte-days 7`) when the intent is to test a deliberately narrow event cohort rather than the broad baseline gate
 - Guarded micro-live helper (observe-preview by default):
   - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --max-stake-usd 5 --max-new-orders 1 --signal-max-age-min 30 --repeat-cooldown-min 360`
+  - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --max-stake-usd 5 --max-new-orders 1 --signal-max-age-min 30 --repeat-cooldown-min 360 --max-dte-days 7`
   - `python scripts/execute_event_driven_live.py --signals-file logs/event-driven-observe-signals.jsonl --execute --confirm-live YES --max-stake-usd 5 --max-new-orders 1 --max-daily-notional-usd 5`
-  - key flags: `--signals-file`, `--state-file`, `--exec-log-file`, `--log-file`, `--max-new-orders`, `--max-stake-usd`, `--max-daily-notional-usd`, `--max-open-positions`, `--repeat-cooldown-min`, `--signal-max-age-min`, `--min-edge-cents`, `--min-confidence`, `--max-entry-price`, `--price-buffer-cents`, `--min-liquidity`, `--min-volume-24h`, `--execute`, `--confirm-live`, `--clob-host`, `--chain-id`, `--pretty`
+  - `python scripts/execute_event_driven_live.py --state-file logs/event_driven_live_state.json --exec-log-file logs/event_driven_live_executions.jsonl --exit-only --execute --confirm-live YES`
+  - key flags: `--signals-file`, `--state-file`, `--exec-log-file`, `--log-file`, `--max-new-orders`, `--max-stake-usd`, `--max-daily-notional-usd`, `--max-open-positions`, `--repeat-cooldown-min`, `--signal-max-age-min`, `--max-dte-days`, `--min-edge-cents`, `--min-confidence`, `--max-entry-price`, `--price-buffer-cents`, `--min-liquidity`, `--min-volume-24h`, `--win-threshold`, `--lose-threshold`, `--exit-only`, `--execute`, `--confirm-live`, `--clob-host`, `--chain-id`, `--pretty`
   - 既定は observe preview（注文未送信）。live 注文は `--execute --confirm-live YES` の同時指定が必須。
   - `--repeat-cooldown-min` は同じ `market_id + side` の preview / submit を短時間で繰り返さないための recent-action cooldown。`0` で無効。
   - live BUY path uses CLOB best ask + visible ask depth clip and submits `FAK` immediate-or-cancel market orders; execution log rows distinguish `filled` vs `no_fill`, and state rows record actual filled size/notional with requested-size audit fields when partial fills occur.
+  - `--exit-only` は新規 entry を試さず、既存 live position の resolution / threshold check だけを行う。これは discretionary sell 注文ではなく、state / exec log の解像度更新用。
 - Realtime dashboard (local web):
   - `python scripts/event_driven_monitor_dashboard.py`
   - `python scripts/event_driven_monitor_dashboard.py --host 127.0.0.1 --port 8788 --window-minutes 180 --max-signals 18`
@@ -1207,27 +1215,34 @@ Polymarket event-driven mispricing monitor (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -IncludeRegex "acquire|approve|court|lawsuit" -Discord`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitTargetMonthlyReturnPct 12 -FailOnNoGo`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitAssumedBankrollUsd 60 -ProfitMaxStakeUsd 5`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -ProfitAssumedBankrollUsd 60 -ProfitMaxStakeUsd 5 -ProfitMaxDteDays 7 -ProfitMinUniqueEvents 2 -LivePreview -LiveMaxDteDays 7`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_daily_report.ps1 -NoBackground -LivePreview -LiveMaxStakeUsd 5 -LiveMaxNewOrders 1 -LiveRepeatCooldownMin 360`
 - Daily task installer (PowerShell):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground -StartTime 00:15 -RunNow`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground -PrincipalMode default`
+- Hourly live exit-check runner/task (PowerShell):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_event_driven_live_exit_check.ps1 -NoBackground -LiveExecute -LiveConfirm YES`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_live_exit_check_task.ps1 -NoBackground -IntervalMinutes 60 -RunNow`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_live_exit_check_task.ps1 -NoBackground -PrincipalMode default`
 - Key flags (runner / installer):
   - runner: `-MaxPages`, `-PageSize`, `-MinLiquidity`, `-MinVolume24h`, `-MinEdgeCents`, `-TopN`, `-ReportHours`
   - runner: `-IncludeRegex`, `-ExcludeRegex`, `-IncludeNonEvent`, `-ThresholdsCents`, `-Discord`
-  - runner profit-window: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-ProfitMaxStakeUsd`, `-SkipProfitWindow`, `-FailOnNoGo`
-  - runner guarded live passthrough: `-LivePreview`, `-LiveExecute`, `-LiveConfirm`, `-LiveMaxNewOrders`, `-LiveMaxStakeUsd`, `-LiveMaxDailyNotionalUsd`, `-LiveMaxOpenPositions`, `-LiveRepeatCooldownMin`, `-LiveSignalMaxAgeMin`, `-LiveMinEdgeCents`, `-LiveMinConfidence`, `-LiveMaxEntryPrice`, `-LivePriceBufferCents`, `-LiveMinLiquidity`, `-LiveMinVolume24h`
-  - profit-window CLI: `--episode-merge-gap-sec`, `--thresholds-cents`, `--capture-ratios`, `--target-monthly-return-pct`, `--assumed-bankroll-usd`, `--max-ev-multiple-of-stake`, `--max-stake-usd`, `--fail-on-no-go`, `--out-json`, `--out-txt`
+  - runner profit-window: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-ProfitMaxStakeUsd`, `-ProfitMaxDteDays`, `-ProfitMinUniqueEvents`, `-SkipProfitWindow`, `-FailOnNoGo`
+  - runner guarded live passthrough: `-LivePreview`, `-LiveExecute`, `-LiveConfirm`, `-LiveMaxNewOrders`, `-LiveMaxStakeUsd`, `-LiveMaxDailyNotionalUsd`, `-LiveMaxOpenPositions`, `-LiveRepeatCooldownMin`, `-LiveSignalMaxAgeMin`, `-LiveMaxDteDays`, `-LiveMinEdgeCents`, `-LiveMinConfidence`, `-LiveMaxEntryPrice`, `-LivePriceBufferCents`, `-LiveMinLiquidity`, `-LiveMinVolume24h`
+  - profit-window CLI: `--episode-merge-gap-sec`, `--thresholds-cents`, `--capture-ratios`, `--target-monthly-return-pct`, `--assumed-bankroll-usd`, `--max-ev-multiple-of-stake`, `--max-stake-usd`, `--max-dte-days`, `--min-unique-events`, `--fail-on-no-go`, `--out-json`, `--out-txt`
   - `--assumed-bankroll-usd` / `-ProfitAssumedBankrollUsd` を省略した場合は、`logs/strategy_register_latest.json.bankroll_policy.initial_bankroll_usd`（fallback: `docs/llm/STRATEGY.md` の `## Bankroll Policy`）を既定 bankroll として解決する。
   - `--max-stake-usd` / `-ProfitMaxStakeUsd` は observe 利用時の 1 signal あたり想定 stake 上限。`<=0` は無効で、既存の suggested stake をそのまま使う。
   - installer: `-TaskName`, `-StartTime`, `-MaxPages`, `-MinLiquidity`, `-MinVolume24h`, `-MinEdgeCents`, `-TopN`, `-ReportHours`, `-PrincipalMode`, `-ActionMode`, `-RunNow`
-  - installer profit-window passthrough: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-ProfitMaxStakeUsd`, `-SkipProfitWindow`, `-FailOnNoGo`
-  - installer guarded live passthrough: `-LivePreview`, `-LiveExecute`, `-LiveConfirm`, `-LiveMaxNewOrders`, `-LiveMaxStakeUsd`, `-LiveMaxDailyNotionalUsd`, `-LiveMaxOpenPositions`, `-LiveRepeatCooldownMin`, `-LiveSignalMaxAgeMin`, `-LiveMinEdgeCents`, `-LiveMinConfidence`, `-LiveMaxEntryPrice`, `-LivePriceBufferCents`, `-LiveMinLiquidity`, `-LiveMinVolume24h`
+  - installer profit-window passthrough: `-ProfitThresholdsCents`, `-ProfitCaptureRatios`, `-ProfitTargetMonthlyReturnPct`, `-ProfitAssumedBankrollUsd`, `-ProfitMaxEvMultipleOfStake`, `-ProfitMaxStakeUsd`, `-ProfitMaxDteDays`, `-ProfitMinUniqueEvents`, `-SkipProfitWindow`, `-FailOnNoGo`
+  - installer guarded live passthrough: `-LivePreview`, `-LiveExecute`, `-LiveConfirm`, `-LiveMaxNewOrders`, `-LiveMaxStakeUsd`, `-LiveMaxDailyNotionalUsd`, `-LiveMaxOpenPositions`, `-LiveRepeatCooldownMin`, `-LiveSignalMaxAgeMin`, `-LiveMaxDteDays`, `-LiveMinEdgeCents`, `-LiveMinConfidence`, `-LiveMaxEntryPrice`, `-LivePriceBufferCents`, `-LiveMinLiquidity`, `-LiveMinVolume24h`
+  - hourly exit-check runner: `-LiveExecute`, `-LiveConfirm`, `-SignalsFile`, `-StateFile`, `-ExecLogFile`, `-LiveLogFile`, `-RunLogFile`, `-WinThreshold`, `-LoseThreshold`, `-ApiTimeoutSec`
+  - hourly exit-check installer: `-TaskName`, `-IntervalMinutes`, `-DurationDays`, `-LiveConfirm`, `-WinThreshold`, `-LoseThreshold`, `-ApiTimeoutSec`, `-PrincipalMode`, `-RunNow`
   - installer principal mode: `auto` / `default` / `s4u` / `interactive`（`s4u` は環境により権限不足で失敗する場合あり）
   - installer action mode 既定値は `powershell`（`cmd` wrapper 経由にも切替可）
   - installer の `-RunNow` は Scheduled Task の即時起動ではなく、runner を `-NoBackground` で直接1回実行する（ヘッドレス環境での `LastTaskResult=0xC000013A` 汚染回避）。
   - `EVENT_DRIVEN_DAILY_DISCORD=1` でも Discord 投稿を有効化可能（Webhook は `CLOBBOT_DISCORD_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL`）
-  - artifacts: `logs/event_driven_daily_summary.txt`, `logs/event_driven_daily_run.log`, `logs/event_driven_profit_window_latest.json`, `logs/event_driven_profit_window_latest.txt`
+  - artifacts: `logs/event_driven_daily_summary.txt`, `logs/event_driven_daily_run.log`, `logs/event_driven_profit_window_latest.json`, `logs/event_driven_profit_window_latest.txt`, `logs/event_driven_live_exit_check.log`
 
 Polymarket late-resolution high-probability validator (observe-only):
 - Active screener:

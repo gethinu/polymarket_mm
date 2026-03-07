@@ -537,6 +537,191 @@ def _fmt_ratio_pct(ratio: Optional[float], digits: int = 2) -> str:
     return f"{ratio:+.{max(0, int(digits))}%}"
 
 
+def _parse_yes_range(raw: str) -> Optional[Tuple[float, float]]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    m = re.match(r"^\[\s*([+-]?[0-9]+(?:\.[0-9]+)?)\s*,\s*([+-]?[0-9]+(?:\.[0-9]+)?)\s*\]$", s)
+    if not m:
+        return None
+    a = _as_float(m.group(1))
+    b = _as_float(m.group(2))
+    if a is None or b is None:
+        return None
+    lo = min(float(a), float(b))
+    hi = max(float(a), float(b))
+    return (lo, hi)
+
+
+def _as_iso_day(raw: object) -> Optional[str]:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        return dt.date.fromisoformat(s).isoformat()
+    except Exception:
+        return None
+
+
+def _load_no_longshot_daily_rows_from_jsonl(path: Path) -> List[dict]:
+    if not path.exists():
+        return []
+    out: List[dict] = []
+    for line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        try:
+            row = json.loads(s)
+        except Exception:
+            continue
+        if not isinstance(row, dict):
+            continue
+        day = _as_iso_day(row.get("day"))
+        if not day:
+            continue
+        pnl = _as_float(row.get("realized_pnl_usd"))
+        cost = _as_float(row.get("realized_cost_basis_usd"))
+        ret = _as_float(row.get("realized_return_pct"))
+        out.append(
+            {
+                "day": day,
+                "realized_pnl_usd": float(pnl) if pnl is not None else 0.0,
+                "realized_cost_basis_usd": float(cost) if cost is not None else None,
+                "realized_return_pct": float(ret) if ret is not None else None,
+            }
+        )
+    return out
+
+
+def _load_no_longshot_band_daily_rows_from_positions(path: Path, yes_min: float, yes_max: float) -> List[dict]:
+    payload = _read_json(path)
+    if payload is None:
+        return []
+    rows = payload.get("positions") if isinstance(payload.get("positions"), list) else payload
+    if not isinstance(rows, list):
+        return []
+
+    day_acc: Dict[str, dict] = {}
+    lo = min(float(yes_min), float(yes_max))
+    hi = max(float(yes_min), float(yes_max))
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status") or "").strip().lower() != "resolved":
+            continue
+        entry_yes = _as_float(row.get("entry_yes_price"))
+        if entry_yes is None or entry_yes < lo or entry_yes > hi:
+            continue
+        day = _as_iso_day(row.get("resolved_day"))
+        if not day:
+            continue
+        pnl = _as_float(row.get("pnl_per_share"))
+        cost = _as_float(row.get("cost_basis_per_share"))
+        if pnl is None or cost is None:
+            continue
+        rec = day_acc.setdefault(
+            day,
+            {
+                "day": day,
+                "realized_pnl_usd": 0.0,
+                "realized_cost_basis_usd": 0.0,
+            },
+        )
+        rec["realized_pnl_usd"] = float(rec.get("realized_pnl_usd") or 0.0) + float(pnl)
+        rec["realized_cost_basis_usd"] = float(rec.get("realized_cost_basis_usd") or 0.0) + float(cost)
+
+    out: List[dict] = []
+    for day in sorted(day_acc.keys()):
+        rec = day_acc[day]
+        pnl = _as_float(rec.get("realized_pnl_usd")) or 0.0
+        cost = _as_float(rec.get("realized_cost_basis_usd")) or 0.0
+        ret = (pnl / cost) if cost > 1e-12 else None
+        out.append(
+            {
+                "day": day,
+                "realized_pnl_usd": float(pnl),
+                "realized_cost_basis_usd": float(cost),
+                "realized_return_pct": float(ret) if ret is not None else None,
+            }
+        )
+    return out
+
+
+def _summarize_no_longshot_daily_rows(rows: List[dict], today_utc: Optional[dt.date] = None) -> dict:
+    today = today_utc or now_utc().date()
+    start = today - dt.timedelta(days=29)
+    by_day: Dict[str, dict] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        day = _as_iso_day(row.get("day"))
+        if not day:
+            continue
+        try:
+            day_dt = dt.date.fromisoformat(day)
+        except Exception:
+            continue
+        if day_dt < start or day_dt > today:
+            continue
+        rec = by_day.setdefault(
+            day,
+            {
+                "day": day,
+                "realized_pnl_usd": 0.0,
+                "realized_cost_basis_usd": 0.0,
+                "has_cost": False,
+            },
+        )
+        pnl = _as_float(row.get("realized_pnl_usd"))
+        cost = _as_float(row.get("realized_cost_basis_usd"))
+        if pnl is not None:
+            rec["realized_pnl_usd"] = float(rec.get("realized_pnl_usd") or 0.0) + float(pnl)
+        if cost is not None:
+            rec["realized_cost_basis_usd"] = float(rec.get("realized_cost_basis_usd") or 0.0) + float(cost)
+            rec["has_cost"] = True
+
+    days = sorted(by_day.keys())
+    latest_day = days[-1] if days else ""
+    latest_daily = None
+    if latest_day:
+        latest_daily = _as_float(by_day.get(latest_day, {}).get("realized_pnl_usd"))
+
+    eq = 1.0
+    peak = 1.0
+    worst_dd = 0.0
+    saw_return = False
+    for day in days:
+        rec = by_day.get(day) or {}
+        cost = _as_float(rec.get("realized_cost_basis_usd"))
+        pnl = _as_float(rec.get("realized_pnl_usd"))
+        daily_ret = None
+        if cost is not None and cost > 1e-12 and pnl is not None:
+            daily_ret = float(pnl) / float(cost)
+        if daily_ret is None:
+            continue
+        saw_return = True
+        if daily_ret <= -1.0:
+            eq = 0.0
+        else:
+            eq = eq * (1.0 + daily_ret)
+        if eq > peak:
+            peak = eq
+        if peak > 0:
+            dd = (eq / peak) - 1.0
+            if dd < worst_dd:
+                worst_dd = dd
+
+    max_dd = float(worst_dd) if saw_return else None
+    return {
+        "window_days": len(days),
+        "latest_day": latest_day,
+        "daily_realized_pnl_usd_latest": float(latest_daily) if latest_daily is not None else None,
+        "max_drawdown_30d_ratio": max_dd,
+        "max_drawdown_30d_text": _fmt_ratio_pct(max_dd, digits=2),
+    }
+
+
 def _gate_stage_label_ja(stage: str, min_days: int) -> str:
     s = str(stage or "").strip().upper()
     d = max(1, int(min_days))
@@ -563,6 +748,8 @@ def _gate_decision_label_ja(decision: str, tentative_days: int, interim_days: in
 
 
 def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, monthly_txt_path: Path) -> dict:
+    default_daily_jsonl_path = logs_dir() / "no_longshot_realized_daily.jsonl"
+    default_positions_json_path = logs_dir() / "no_longshot_forward_positions.json"
     out: dict = {
         "summary_path": str(summary_path),
         "summary_exists": summary_path.exists(),
@@ -570,6 +757,10 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
         "realized_latest_exists": realized_latest_path.exists(),
         "monthly_txt_path": str(monthly_txt_path),
         "monthly_txt_exists": monthly_txt_path.exists(),
+        "daily_jsonl_path": str(default_daily_jsonl_path),
+        "daily_jsonl_exists": default_daily_jsonl_path.exists(),
+        "positions_json_path": str(default_positions_json_path),
+        "positions_json_exists": default_positions_json_path.exists(),
         "monthly_return_now_text": "n/a",
         "monthly_return_now_ratio": None,
         "monthly_return_now_source": "",
@@ -599,12 +790,19 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
         "resolved_positions_new_condition": None,
         "realized_latest_rolling_30d_return_text": "n/a",
         "realized_latest_rolling_30d_return_ratio": None,
+        "daily_realized_pnl_usd_latest": None,
+        "daily_realized_pnl_day": "",
+        "daily_realized_pnl_source": "",
+        "rolling_30d_max_drawdown_ratio": None,
+        "rolling_30d_max_drawdown_text": "n/a",
+        "rolling_30d_max_drawdown_source": "",
+        "monthly_return_new_condition_entry_yes_range": "",
     }
 
+    line_map: Dict[str, str] = {}
     if summary_path.exists():
         try:
             text = summary_path.read_text(encoding="utf-8")
-            line_map: Dict[str, str] = {}
             for raw in text.splitlines():
                 m = re.match(r"^\s*-\s*([A-Za-z0-9_]+)\s*:\s*(.+?)\s*$", raw)
                 if m:
@@ -672,6 +870,9 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
                 out["open_positions"] = out.get("open_positions_new_condition")
             if out.get("resolved_positions_new_condition") is not None:
                 out["resolved_positions"] = out.get("resolved_positions_new_condition")
+            out["monthly_return_new_condition_entry_yes_range"] = str(
+                line_map.get("monthly_return_new_condition_entry_yes_range") or ""
+            ).strip()
         except Exception:
             pass
 
@@ -696,6 +897,8 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
             pass
 
     realized = _read_json(realized_latest_path)
+    positions_json_path = default_positions_json_path
+    daily_jsonl_path = default_daily_jsonl_path
     if isinstance(realized, dict):
         try:
             metrics = realized.get("metrics") if isinstance(realized.get("metrics"), dict) else {}
@@ -709,8 +912,52 @@ def load_no_longshot_status(summary_path: Path, realized_latest_path: Path, mont
                 out["open_positions"] = _as_int(metrics.get("open_positions"))
             if out.get("resolved_positions") is None:
                 out["resolved_positions"] = _as_int(metrics.get("resolved_positions"))
+            artifacts = realized.get("artifacts") if isinstance(realized.get("artifacts"), dict) else {}
+            daily_jsonl_raw = str(artifacts.get("daily_jsonl") or "").strip()
+            if daily_jsonl_raw:
+                p = Path(daily_jsonl_raw)
+                if not p.is_absolute():
+                    p = repo_root() / p
+                daily_jsonl_path = p
+            positions_json_raw = str(artifacts.get("positions_json") or "").strip()
+            if positions_json_raw:
+                p = Path(positions_json_raw)
+                if not p.is_absolute():
+                    p = repo_root() / p
+                positions_json_path = p
         except Exception:
             pass
+
+    out["daily_jsonl_path"] = str(daily_jsonl_path)
+    out["daily_jsonl_exists"] = daily_jsonl_path.exists()
+    out["positions_json_path"] = str(positions_json_path)
+    out["positions_json_exists"] = positions_json_path.exists()
+
+    monthly_source = str(out.get("monthly_return_now_source") or "").strip().lower()
+    metrics_summary: dict = {}
+    if "new_condition" in monthly_source:
+        yr = _parse_yes_range(str(out.get("monthly_return_new_condition_entry_yes_range") or ""))
+        if yr is not None:
+            band_rows = _load_no_longshot_band_daily_rows_from_positions(
+                positions_json_path,
+                yes_min=float(yr[0]),
+                yes_max=float(yr[1]),
+            )
+            metrics_summary = _summarize_no_longshot_daily_rows(band_rows)
+            if metrics_summary.get("window_days"):
+                out["daily_realized_pnl_source"] = "positions_band_rolling_30d_new_condition"
+                out["rolling_30d_max_drawdown_source"] = "positions_band_rolling_30d_new_condition"
+    if not metrics_summary:
+        all_rows = _load_no_longshot_daily_rows_from_jsonl(daily_jsonl_path)
+        metrics_summary = _summarize_no_longshot_daily_rows(all_rows)
+        if metrics_summary.get("window_days"):
+            out["daily_realized_pnl_source"] = "daily_jsonl_rolling_30d_all"
+            out["rolling_30d_max_drawdown_source"] = "daily_jsonl_rolling_30d_all"
+
+    out["daily_realized_pnl_usd_latest"] = metrics_summary.get("daily_realized_pnl_usd_latest")
+    out["daily_realized_pnl_day"] = str(metrics_summary.get("latest_day") or "")
+    out["rolling_30d_max_drawdown_ratio"] = metrics_summary.get("max_drawdown_30d_ratio")
+    out["rolling_30d_max_drawdown_text"] = str(metrics_summary.get("max_drawdown_30d_text") or "n/a")
 
     return out
 
@@ -1154,12 +1401,25 @@ def summarize_realized_monthly_return(min_days: int, series: Optional[dict] = No
 def build_kpi_core(no_longshot: dict, realized_monthly: dict) -> dict:
     no = no_longshot if isinstance(no_longshot, dict) else {}
     rm = realized_monthly if isinstance(realized_monthly, dict) else {}
-    daily = _as_float(rm.get("daily_realized_pnl_usd_latest"))
-    daily_day = str(rm.get("latest_day") or "")
-    monthly_now_text = str(no.get("monthly_return_now_text") or rm.get("projected_monthly_return_text") or "n/a")
-    monthly_now_source = str(no.get("monthly_return_now_source") or "realized_monthly_return.projected_monthly_return_text")
-    max_dd_ratio = _as_float(rm.get("max_drawdown_30d_ratio"))
-    max_dd_text = str(rm.get("max_drawdown_30d_text") or _fmt_ratio_pct(max_dd_ratio, digits=2))
+    daily = _as_float(no.get("daily_realized_pnl_usd_latest"))
+    daily_day = str(no.get("daily_realized_pnl_day") or "")
+    if daily is None:
+        daily = _as_float(rm.get("daily_realized_pnl_usd_latest"))
+    if not daily_day:
+        daily_day = str(rm.get("latest_day") or "")
+    monthly_now_text = str(no.get("monthly_return_now_text") or "").strip()
+    monthly_now_source = str(no.get("monthly_return_now_source") or "").strip()
+    if (not monthly_now_text) or (monthly_now_text.lower() in {"n/a", "na", "none", "null", "-"}):
+        monthly_now_text = str(rm.get("projected_monthly_return_text") or "n/a")
+        monthly_now_source = "realized_monthly_return.projected_monthly_return_text"
+    elif not monthly_now_source:
+        monthly_now_source = "realized_rolling_30d_new_condition"
+    max_dd_ratio = _as_float(no.get("rolling_30d_max_drawdown_ratio"))
+    max_dd_text = str(no.get("rolling_30d_max_drawdown_text") or "")
+    if max_dd_ratio is None:
+        max_dd_ratio = _as_float(rm.get("max_drawdown_30d_ratio"))
+    if not max_dd_text or max_dd_text.strip().lower() == "n/a":
+        max_dd_text = str(rm.get("max_drawdown_30d_text") or _fmt_ratio_pct(max_dd_ratio, digits=2))
 
     daily_text = "n/a"
     if daily is not None:

@@ -23,6 +23,8 @@ param(
   [double]$RealizedFastYesMax = 0.20,
   [double]$RealizedFastMaxHoursToEnd = 72.0,
   [switch]$StrictRealizedBandOnly,
+  [int]$RealizedEntryTopN = 0,
+  [switch]$AllowRealizedEntryIngest,
   [double]$ScreenMinLiquidity = 50000,
   [double]$ScreenMinVolume24h = 1000,
   [int]$GapMaxPages = 6,
@@ -159,7 +161,7 @@ $liveLogPath = if ([string]::IsNullOrWhiteSpace($LiveLogFile)) {
 } else {
   Join-Path $RepoRoot $LiveLogFile
 }
-$realizedEntryTopN = 0
+$realizedEntryTopN = [int]$RealizedEntryTopN
 $runLock = Join-Path $logDir "no_longshot_daily_run.lock"
 $script:RunLockPath = ""
 $script:RunLockHeld = $false
@@ -176,6 +178,12 @@ if ($realizedFastMaxPages -lt 1) {
 }
 if ($realizedFastMaxHoursToEnd -le 0.0) {
   throw "Invalid RealizedFastMaxHoursToEnd: $realizedFastMaxHoursToEnd (expected >0)"
+}
+if ($realizedEntryTopN -lt 0) {
+  throw "Invalid RealizedEntryTopN: $realizedEntryTopN (expected >=0)"
+}
+if ($realizedEntryTopN -gt 0 -and -not $AllowRealizedEntryIngest.IsPresent) {
+  throw "Refusing realized entry ingest: RealizedEntryTopN=$realizedEntryTopN requires -AllowRealizedEntryIngest"
 }
 if ($LiveExecute.IsPresent -and [string]$LiveConfirm -ne "YES") {
   throw "Refusing live mode: specify -LiveConfirm YES with -LiveExecute"
@@ -690,7 +698,7 @@ if (-not $discordRequested) {
   }
 }
 
-Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd strict_realized_band_only=$($StrictRealizedBandOnly.IsPresent) gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_scan=$($FailOnGapScanError.IsPresent) fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested live_execute=$($LiveExecute.IsPresent) live_screen=$LiveScreenSource live_max_orders=$LiveMaxOrders live_size=$LiveOrderSizeShares live_cap=$LiveMaxDailyNotionalUsd live_open_cap=$LiveMaxOpenPositions live_no_max=$LiveMaxEntryNoPrice"
+Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints stale<=$MaxStaleHours open<=$MaxOpenPositions cat_open<=$MaxOpenPerCategory guard_open<=$GuardMaxOpenPositions guard_cat_open<=$GuardMaxOpenPerCategory all_n>=($AllMinTrainN/$AllMinTestN) guard_n>=($GuardMinTrainN/$GuardMinTestN) screen_pages=$ScreenMaxPages fast_screen_pages=$realizedFastMaxPages fast_yes=[$realizedFastYesMin,$realizedFastYesMax] fast_max_h=$realizedFastMaxHoursToEnd strict_realized_band_only=$($StrictRealizedBandOnly.IsPresent) realized_entry_top_n=$realizedEntryTopN allow_realized_entry_ingest=$($AllowRealizedEntryIngest.IsPresent) gap_pages=$GapMaxPages/$GapFallbackMaxPages gap=yes[$GapYesMin,$GapYesMax] gap_liq>=$GapMinLiquidity gap_vol>=$GapMinVolume24h gross>=$GapMinGrossEdgeCents net>=$GapMinNetEdgeCents summary_base_net>=$GapSummaryMinNetEdgeCents summary_mode=$GapSummaryMode summary_target_mode=$GapSummaryTargetMode summary_target_base=$GapSummaryTargetUniqueEvents summary_target_ratio=$GapSummaryTargetEventsRatio summary_target_minmax=[$GapSummaryTargetUniqueEventsMin,$GapSummaryTargetUniqueEventsMax] max_d=$GapMaxDaysToEnd/$GapFallbackMaxDaysToEnd max_h=$GapMaxHoursToEnd fallback_h=$GapFallbackMaxHoursToEnd fallback_no_cap=$($GapFallbackNoHourCap.IsPresent) rel=$GapRelation gap_tag=$GapOutcomeTag gap_alert_7d=$GapErrorAlertRate7d/$GapErrorAlertMinRuns7d fail_on_gap_scan=$($FailOnGapScanError.IsPresent) fail_on_gap_rate=$($FailOnGapErrorRateHigh.IsPresent) discord_req=$discordRequested live_execute=$($LiveExecute.IsPresent) live_screen=$LiveScreenSource live_max_orders=$LiveMaxOrders live_size=$LiveOrderSizeShares live_cap=$LiveMaxDailyNotionalUsd live_open_cap=$LiveMaxOpenPositions live_no_max=$LiveMaxEntryNoPrice"
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
@@ -1382,6 +1390,7 @@ $lines = @(
   ("- fast screen yes range: [{0},{1}]" -f [double]$realizedFastYesMin, [double]$realizedFastYesMax)
   ("- fast screen max hours to end: {0}" -f [double]$realizedFastMaxHoursToEnd)
   ("- strict_realized_band_only: {0}" -f [bool]$StrictRealizedBandOnly.IsPresent)
+  ("- allow_realized_entry_ingest: {0}" -f [bool]$AllowRealizedEntryIngest.IsPresent)
   ("- live_execute: {0}" -f [bool]$LiveExecute.IsPresent)
   ("- live_screen_source: {0}" -f [string]$LiveScreenSource)
   ("- live_max_orders: {0}" -f [int]$LiveMaxOrders)

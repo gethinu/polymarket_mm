@@ -15,6 +15,14 @@ def test_default_optional_tasks_include_event_driven_daily_report():
     assert "EventDrivenDailyReport" in mod.DEFAULT_OPTIONAL_TASKS
 
 
+def test_default_optional_tasks_include_event_driven_live_exit_check():
+    assert "EventDrivenLiveExitCheck60m" in mod.DEFAULT_OPTIONAL_TASKS
+
+
+def test_default_optional_tasks_include_fade_regime_staged_checks():
+    assert "FadeRegimeStagedChecks30m" in mod.DEFAULT_OPTIONAL_TASKS
+
+
 def test_parse_artifact_specs_supports_optional_prefix():
     rows = mod._parse_artifact_specs(
         [
@@ -34,7 +42,13 @@ def test_default_artifacts_include_optional_event_driven_and_supervisor_state():
     assert "?logs/event_driven_daily_run.log:30" in mod.DEFAULT_ARTIFACT_SPECS
     assert "?logs/event_driven_daily_summary.txt:30" in mod.DEFAULT_ARTIFACT_SPECS
     assert "?logs/event_driven_profit_window_latest.json:30" in mod.DEFAULT_ARTIFACT_SPECS
+    assert "?logs/event_driven_live_exit_check.log:6" in mod.DEFAULT_ARTIFACT_SPECS
     assert "?logs/bot_supervisor_state.json:6" in mod.DEFAULT_ARTIFACT_SPECS
+
+
+def test_default_artifacts_include_optional_fade_regime_staged_files():
+    assert "?logs/fade_regime_staged_checks_run.log:6" in mod.DEFAULT_ARTIFACT_SPECS
+    assert "?logs/fade_regime_staged_decision_latest.json:6" in mod.DEFAULT_ARTIFACT_SPECS
 
 
 def test_default_artifacts_include_no_longshot_daily_summary():
@@ -157,6 +171,48 @@ def test_soft_fail_override_for_event_driven_daily_report():
 
     assert task_rows[0]["status"] == "SOFT_FAIL_INTERRUPTED"
     assert "event-driven runner log is fresh" in str(task_rows[0].get("status_note") or "")
+
+
+def test_soft_fail_override_for_event_driven_live_exit_check():
+    task_rows = [
+        {
+            "task_name": "EventDrivenLiveExitCheck60m",
+            "status": "LAST_RUN_FAILED",
+            "last_task_result": 267014,
+        }
+    ]
+    artifact_rows = [
+        {
+            "path": r"C:\Repos\polymarket_mm\logs\event_driven_live_exit_check.log",
+            "status": "FRESH",
+        }
+    ]
+
+    mod._apply_soft_fail_overrides(task_rows, artifact_rows)
+
+    assert task_rows[0]["status"] == "SOFT_FAIL_INTERRUPTED"
+    assert "event-driven live exit-check log is fresh" in str(task_rows[0].get("status_note") or "")
+
+
+def test_soft_fail_override_for_fade_regime_staged_checks():
+    task_rows = [
+        {
+            "task_name": "FadeRegimeStagedChecks30m",
+            "status": "LAST_RUN_FAILED",
+            "last_task_result": 267014,
+        }
+    ]
+    artifact_rows = [
+        {
+            "path": r"C:\Repos\polymarket_mm\logs\fade_regime_staged_checks_run.log",
+            "status": "FRESH",
+        }
+    ]
+
+    mod._apply_soft_fail_overrides(task_rows, artifact_rows)
+
+    assert task_rows[0]["status"] == "SOFT_FAIL_INTERRUPTED"
+    assert "fade regime staged runner log is fresh" in str(task_rows[0].get("status_note") or "")
 
 
 def test_duplicate_run_guard_marks_no_longshot_conflict(monkeypatch):
@@ -339,6 +395,75 @@ def test_apply_event_driven_task_argument_guard_keeps_ok_when_required_present()
     mod._apply_event_driven_task_argument_guard(rows)
 
     assert rows[0]["status"] == "OK"
+
+
+def test_apply_fade_regime_staged_task_argument_guard_marks_invalid_when_no_background_missing():
+    rows = [
+        {
+            "task_name": "FadeRegimeStagedChecks30m",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_fade_regime_staged_checks.ps1",
+        }
+    ]
+
+    mod._apply_fade_regime_staged_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "missing_required_flags=" in note
+    assert "-nobackground" in note
+
+
+def test_apply_fade_regime_staged_task_argument_guard_marks_invalid_when_runner_missing():
+    rows = [
+        {
+            "task_name": "FadeRegimeStagedChecks30m",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_event_driven_daily_report.ps1 -NoBackground",
+        }
+    ]
+
+    mod._apply_fade_regime_staged_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    note = str(rows[0].get("status_note") or "")
+    assert "invalid_values=missing_runner_script=run_fade_regime_staged_checks.ps1" in note
+
+
+def test_apply_fade_regime_staged_task_argument_guard_keeps_ok_when_required_present():
+    rows = [
+        {
+            "task_name": "FadeRegimeStagedChecks30m",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": "-NoLogo -File scripts/run_fade_regime_staged_checks.ps1 -NoBackground",
+        }
+    ]
+
+    mod._apply_fade_regime_staged_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "OK"
+
+
+def test_apply_fade_regime_staged_task_argument_guard_marks_invalid_when_multiple_actions_detected():
+    rows = [
+        {
+            "task_name": "FadeRegimeStagedChecks30m",
+            "exists": True,
+            "status": "OK",
+            "action_arguments": (
+                "-NoLogo -File scripts/run_fade_regime_staged_checks.ps1 -NoBackground "
+                "|| -NoLogo -File scripts/run_fade_regime_staged_checks.ps1 -NoBackground"
+            ),
+        }
+    ]
+
+    mod._apply_fade_regime_staged_task_argument_guard(rows)
+
+    assert rows[0]["status"] == "INVALID_CONTENT"
+    assert rows[0].get("status_note") == "multiple_actions_detected"
 
 
 def test_apply_morning_kpi_marker_check_marks_invalid_when_missing(tmp_path):

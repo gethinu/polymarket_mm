@@ -51,8 +51,11 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Optional guarded micro-live state JSON: `logs/event_driven_live_state.json`
   - tracks open positions, daily notional, and recent preview/fill keys for repeat cooldown
   - open position rows store actual filled `size_shares` / `notional_usd`; partial-fill audit fields may include `requested_size_shares`, `requested_notional_usd`, and `order_status`
+  - `last_run.mode` may be `LIVE`, `observe`, `LIVE_EXIT_ONLY`, or `OBSERVE_EXIT_ONLY`
 - Optional guarded micro-live execution log JSONL: `logs/event_driven_live_executions.jsonl`
 - Optional guarded micro-live log: `logs/event_driven_live.log`
+- Optional guarded live exit-check runner log: `logs/event_driven_live_exit_check.log`
+  - hourly task writes cadence/probe status here; no new entry orders are placed from this runner
 - Optional local dashboard (read-only web): `scripts/event_driven_monitor_dashboard.py` (default `http://127.0.0.1:8788`)
 
 Polymarket CLOB MM:

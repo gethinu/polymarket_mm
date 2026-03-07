@@ -14,6 +14,8 @@ param(
   [switch]$FailOnGapScanError,
   [switch]$FailOnGapErrorRateHigh,
   [switch]$StrictRealizedBandOnly,
+  [int]$RealizedEntryTopN = 0,
+  [switch]$AllowRealizedEntryIngest,
   [switch]$SkipRefresh,
   [switch]$Discord,
   [switch]$RunNow,
@@ -25,7 +27,7 @@ $ErrorActionPreference = "Stop"
 
 function Show-Usage {
   Write-Host "Usage:"
-  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-RealizedFastYesMin 0.16] [-RealizedFastYesMax 0.20] [-RealizedFastMaxHoursToEnd 72] [-RealizedFastMaxPages 120] [-GapOutcomeTag prod] [-GapErrorAlertRate7d 0.2] [-GapErrorAlertMinRuns7d 5] [-FailOnGapScanError] [-FailOnGapErrorRateHigh] [-StrictRealizedBandOnly] [-SkipRefresh] [-Discord] [-RunNow]"
+  Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground [-TaskName NoLongshotDailyReport] [-StartTime 00:05] [-RealizedFastYesMin 0.16] [-RealizedFastYesMax 0.20] [-RealizedFastMaxHoursToEnd 72] [-RealizedFastMaxPages 120] [-GapOutcomeTag prod] [-GapErrorAlertRate7d 0.2] [-GapErrorAlertMinRuns7d 5] [-FailOnGapScanError] [-FailOnGapErrorRateHigh] [-StrictRealizedBandOnly] [-RealizedEntryTopN 2 -AllowRealizedEntryIngest] [-SkipRefresh] [-Discord] [-RunNow]"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?"
 }
 
@@ -101,6 +103,12 @@ if ($GapErrorAlertRate7d -lt 0.0 -or $GapErrorAlertRate7d -gt 1.0) {
 if ($GapErrorAlertMinRuns7d -lt 1) {
   throw "GapErrorAlertMinRuns7d must be >= 1"
 }
+if ($RealizedEntryTopN -lt 0) {
+  throw "RealizedEntryTopN must be >= 0"
+}
+if ($RealizedEntryTopN -gt 0 -and -not $AllowRealizedEntryIngest.IsPresent) {
+  throw "Refusing realized entry ingest: RealizedEntryTopN=$RealizedEntryTopN requires -AllowRealizedEntryIngest"
+}
 
 $parsed = $null
 try {
@@ -160,6 +168,13 @@ if ($FailOnGapScanError.IsPresent) {
 }
 if ($StrictRealizedBandOnly.IsPresent) {
   $argList += "-StrictRealizedBandOnly"
+}
+if ($PSBoundParameters.ContainsKey("RealizedEntryTopN")) {
+  $argList += "-RealizedEntryTopN"
+  $argList += [string]$RealizedEntryTopN
+}
+if ($AllowRealizedEntryIngest.IsPresent) {
+  $argList += "-AllowRealizedEntryIngest"
 }
 $actionArgs = ($argList -join " ")
 
@@ -242,6 +257,13 @@ if ($RunNow.IsPresent) {
   }
   if ($StrictRealizedBandOnly.IsPresent) {
     $runArgs += "-StrictRealizedBandOnly"
+  }
+  if ($PSBoundParameters.ContainsKey("RealizedEntryTopN")) {
+    $runArgs += "-RealizedEntryTopN"
+    $runArgs += [string]$RealizedEntryTopN
+  }
+  if ($AllowRealizedEntryIngest.IsPresent) {
+    $runArgs += "-AllowRealizedEntryIngest"
   }
   Write-Host "RunNow: executing runner directly (observe-only) ..."
   & $PowerShellExe @runArgs
