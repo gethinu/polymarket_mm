@@ -360,6 +360,9 @@ def build_snapshot(cfg: Config, minutes: Optional[float]) -> dict:
                 "filled_size_shares": as_float(row.get("filled_size_shares"), 0.0),
                 "filled_notional_usd": as_float(row.get("filled_notional_usd"), 0.0),
                 "filled_avg_price": as_float(row.get("filled_avg_price"), 0.0),
+                "resolution": str(row.get("resolution") or "")[:60],
+                "resolved_yes_price": as_float(row.get("resolved_yes_price"), 0.0),
+                "resolved_no_price": as_float(row.get("resolved_no_price"), 0.0),
                 "reason": str(row.get("reason") or "")[:120],
             }
         )
@@ -415,7 +418,11 @@ def build_snapshot(cfg: Config, minutes: Optional[float]) -> dict:
             "observe_only_note": "Projected EV only. Not realized PnL or live win rate.",
             "projected_monthly_profit_usd": as_float(base_scenario.get("monthly_profit_usd"), 0.0),
             "projected_monthly_return": as_float(decision.get("projected_monthly_return"), 0.0),
+            "projected_monthly_return_lockup_adjusted": as_float(
+                decision.get("projected_monthly_return_lockup_adjusted"), 0.0
+            ),
             "target_monthly_return": as_float(decision.get("target_monthly_return"), 0.0),
+            "decision_lockup_adjusted": str(decision.get("decision_lockup_adjusted") or "N/A"),
             "assumed_bankroll_usd": as_float(settings.get("assumed_bankroll_usd"), 0.0),
             "max_stake_usd": as_float(settings.get("max_stake_usd"), 0.0),
             "selected_threshold_cents": as_float(selected.get("threshold_cents"), 0.0),
@@ -424,6 +431,24 @@ def build_snapshot(cfg: Config, minutes: Optional[float]) -> dict:
             "selected_episodes_total": as_int(selected.get("episodes_total"), 0),
             "selected_unique_events": as_int(selected.get("unique_events"), 0),
             "selected_opp_per_day": as_float(selected.get("opportunities_per_day_capped"), 0.0),
+            "selected_opp_per_day_lockup": as_float(
+                ((selected.get("hold_to_resolution_proxy") if isinstance(selected.get("hold_to_resolution_proxy"), dict) else {}) or {}).get(
+                    "opportunities_per_day_lockup_capped"
+                ),
+                0.0,
+            ),
+            "hold_days_median": as_float(
+                ((selected.get("hold_to_resolution_proxy") if isinstance(selected.get("hold_to_resolution_proxy"), dict) else {}) or {}).get(
+                    "hold_days_median"
+                ),
+                0.0,
+            ),
+            "capital_required_steady_state_usd": as_float(
+                ((selected.get("hold_to_resolution_proxy") if isinstance(selected.get("hold_to_resolution_proxy"), dict) else {}) or {}).get(
+                    "capital_required_steady_state_usd"
+                ),
+                0.0,
+            ),
             "reasons": [str(x)[:180] for x in reasons[:8]],
         },
         "live": {
@@ -435,7 +460,7 @@ def build_snapshot(cfg: Config, minutes: Optional[float]) -> dict:
             "open_rows": open_rows,
             "recent_execs": list(reversed(recent_live)),
             "last_fill": last_fill,
-            "exit_note": "Live exit / resolution checks run when execute_event_driven_live.py runs. Current local task policy is daily, not realtime.",
+            "exit_note": "Dedicated exit-only resolution checks target 60m cadence via EventDrivenLiveExitCheck60m. Entry remains daily. This does not place discretionary sell orders.",
         },
         "summary_text": summary,
     }
@@ -472,7 +497,7 @@ pre{margin:0;max-height:220px;overflow:auto;border:1px solid #21455b;border-radi
 <div class="card"><div class="k">Write Rate</div><div id="stWrite" class="v">-</div></div>
 <div class="card"><div class="k">Suppressed Rate</div><div id="stSupp" class="v">-</div></div>
 <div class="card"><div class="k">Observe Gate</div><div id="stDec" class="v">-</div></div>
-<div class="card"><div class="k">Projected EV / Month</div><div id="stProj" class="v">-</div></div>
+<div class="card"><div class="k">Projected EV / Month (Naive)</div><div id="stProj" class="v">-</div></div>
 <div class="card"><div class="k">Episode Pass / Basis</div><div id="stUniq" class="v">-</div></div>
 <div class="card"><div class="k">Last Run Age</div><div id="stAge" class="v">-</div></div>
 </section>
@@ -504,13 +529,13 @@ function render(s){const t=s.totals||{}, p=s.profit||{}, live=s.live||{}, cls=Ar
  const lf=live.last_fill||{}, openRows=Array.isArray(live.open_rows)?live.open_rows:[], liveExecs=Array.isArray(live.recent_execs)?live.recent_execs:[];
  el('liveState').innerHTML=`<div class="evt"><b>open positions</b>: ${Number(live.open_positions||0)} | <b>daily deployed</b>: $${Number(live.daily_notional_usd||0).toFixed(2)}</div><div class="evt"><b>last live run</b>: mode=${esc(live.last_run_mode||'-')} attempted=${Number(live.last_run_attempted||0)} filled=${Number(live.last_run_submitted||0)}</div><div class="evt"><b>last fill</b>: ${lf.ts?esc(lf.ts):'-'} ${esc(lf.side||'-')} ${Number(lf.filled_size_shares||0).toFixed(2)} @ ${Number(lf.filled_avg_price||0).toFixed(3)} = $${Number(lf.filled_notional_usd||0).toFixed(2)}</div><div class="evt"><b>exit cadence</b>: ${esc(live.exit_note||'-')}</div>`;
  el('liveOpen').innerHTML=openRows.length?openRows.map(x=>`<div class="evt"><div><b>${esc(x.side||'-')}</b> ${Number(x.size_shares||0).toFixed(2)} @ ${Number(x.entry_price||0).toFixed(3)} = $${Number(x.notional_usd||0).toFixed(2)}</div><div>${esc(String(x.question||''))}</div><div>requested=$${Number(x.requested_notional_usd||0).toFixed(2)} | age=${Number(x.age_hours||0).toFixed(1)}h | status=${esc(x.status||'-')}</div></div>`).join(''):'<div class="evt">no open live positions</div>';
- el('liveExec').innerHTML=liveExecs.length?liveExecs.map(x=>`<div class="evt ${esc(x.status||'')}"><div>${esc(x.ts||'-')} | ${esc(String(x.status||'-').toUpperCase())} | ${esc(x.side||'-')}</div><div>${esc(String(x.question||''))}</div><div>${Number(x.filled_size_shares||0)>0?`filled ${Number(x.filled_size_shares||0).toFixed(2)} @ ${Number(x.filled_avg_price||0).toFixed(3)} = $${Number(x.filled_notional_usd||0).toFixed(2)}`:esc(x.reason||'no fill')}</div></div>`).join(''):'<div class="evt">no live executions yet</div>';
+ el('liveExec').innerHTML=liveExecs.length?liveExecs.map(x=>`<div class="evt ${esc(x.status||'')}"><div>${esc(x.ts||'-')} | ${esc(String(x.status||'-').toUpperCase())} | ${esc(x.side||'-')}</div><div>${esc(String(x.question||''))}</div><div>${String(x.status||'').toLowerCase()==='resolved'?`resolution ${esc(x.resolution||'-')} | yes=${Number(x.resolved_yes_price||0).toFixed(3)} no=${Number(x.resolved_no_price||0).toFixed(3)}`:(Number(x.filled_size_shares||0)>0?`filled ${Number(x.filled_size_shares||0).toFixed(2)} @ ${Number(x.filled_avg_price||0).toFixed(3)} = $${Number(x.filled_notional_usd||0).toFixed(2)}`:esc(x.reason||'no fill'))}</div></div>`).join(''):'<div class="evt">no live executions yet</div>';
  draw(el('cRun'),[{v:s.series?.candidate,c:'#5bd3ff',w:2.1},{v:s.series?.written,c:'#1fd08f',w:1.8},{v:s.series?.suppressed,c:'#ff6b78',w:1.4}]);
  draw(el('cSig'),[{v:s.series?.signal_edge,c:'#ffb84d',w:2.0},{v:(s.series?.signal_conf||[]).map(x=>Number(x||0)*30),c:'#5bd3ff',w:1.3}]);
  el('classes').innerHTML=cls.length?cls.map(x=>`<div class="row"><span>${esc(x.name)}</span><b>${Number(x.count||0)}</b></div>`).join(''):'<div class="row"><span>-</span><b>0</b></div>';
  el('sigRows').innerHTML=rs.length?rs.map(x=>`<tr><td>${esc(x.ts||'')}</td><td class="${x.side==='YES'?'up':'down'}">${esc(x.side||'-')}</td><td class="${Number(x.edge_cents||0)>=0?'up':'down'}">${(Number(x.edge_cents||0)>=0?'+':'')+Number(x.edge_cents||0).toFixed(2)}c</td><td>${pct(x.confidence||0)}</td><td>$${Number(x.stake||0).toFixed(2)}</td><td>${esc(x.event_class||'-')}</td><td>${esc(String(x.question||'').slice(0,140))}</td></tr>`).join(''):'<tr><td colspan="7">no signals in window</td></tr>';
  el('events').innerHTML=ev.length?ev.slice().reverse().map(x=>`<div class="evt ${esc(x.kind||'')}"><div>${esc(x.ts||'-')} | ${esc(String(x.kind||'info').toUpperCase())}</div><div>${esc(x.text||'')}</div></div>`).join(''):'<div class="evt">no recent log events</div>';
- const reasons=Array.isArray(p.reasons)?p.reasons:[]; el('profit').innerHTML=`<div class="evt"><b>observe-only</b>: ${esc(p.observe_only_note||'Projected EV only')}</div><div class="evt"><b>gate</b>: ${esc(d)} | <b>threshold</b>: ${Number(p.selected_threshold_cents||0).toFixed(2)}c</div><div class="evt"><b>projected EV</b>: $${Number(p.projected_monthly_profit_usd||0).toFixed(2)} / ${pct(p.projected_monthly_return||0)} | <b>target</b>: ${pct(p.target_monthly_return||0)}</div><div class="evt"><b>basis</b>: bankroll=$${bk.toFixed(2)} | stake_cap=$${cap.toFixed(2)}</div><div class="evt"><b>episode pass</b>: ${epHit}/${epTotal} = ${pct(p.selected_hit_ratio||0)} | <b>events</b>: ${Number(p.selected_unique_events||0)} | <b>opp/day</b>: ${Number(p.selected_opp_per_day||0).toFixed(2)}</div>${reasons.map(r=>`<div class="evt">${esc(r)}</div>`).join('')||'<div class="evt">no decision reasons</div>'}`;
+ const reasons=Array.isArray(p.reasons)?p.reasons:[]; el('profit').innerHTML=`<div class="evt"><b>observe-only</b>: ${esc(p.observe_only_note||'Projected EV only')}</div><div class="evt"><b>gate</b>: ${esc(d)} | <b>threshold</b>: ${Number(p.selected_threshold_cents||0).toFixed(2)}c</div><div class="evt"><b>projected EV</b>: $${Number(p.projected_monthly_profit_usd||0).toFixed(2)} / ${pct(p.projected_monthly_return||0)} | <b>target</b>: ${pct(p.target_monthly_return||0)}</div><div class="evt"><b>hold-to-resolution adj</b>: ${pct(p.projected_monthly_return_lockup_adjusted||0)} | <b>gate</b>: ${esc(String(p.decision_lockup_adjusted||'N/A').toUpperCase())}</div><div class="evt"><b>basis</b>: bankroll=$${bk.toFixed(2)} | stake_cap=$${cap.toFixed(2)} | <b>dte median</b>: ${Number(p.hold_days_median||0).toFixed(1)}d</div><div class="evt"><b>episode pass</b>: ${epHit}/${epTotal} = ${pct(p.selected_hit_ratio||0)} | <b>events</b>: ${Number(p.selected_unique_events||0)} | <b>opp/day naive/adj</b>: ${Number(p.selected_opp_per_day||0).toFixed(2)} / ${Number(p.selected_opp_per_day_lockup||0).toFixed(2)}</div><div class="evt"><b>steady-state capital needed</b>: $${Number(p.capital_required_steady_state_usd||0).toFixed(2)}</div>${reasons.map(r=>`<div class="evt">${esc(r)}</div>`).join('')||'<div class="evt">no decision reasons</div>'}`;
  el('summary').textContent=String(s.summary_text||'-'); el('mA').textContent=`metrics: avg_runtime=${Number(t.avg_runtime_sec||0).toFixed(2)}s edge_median=${(Number(t.edge_median_cents||0)>=0?'+':'')+Number(t.edge_median_cents||0).toFixed(2)}c conf_mean=${pct(t.confidence_mean||0)}`;
  el('mB').textContent=`projected_ev: $${Number(p.projected_monthly_profit_usd||0).toFixed(2)} / ${pct(p.projected_monthly_return||0)} (not realized)`; el('hb').textContent=`updated ${s.generated_at||'-'} | window ${Number(s.window_minutes||0)}m`;}
 async function tick(){try{const m=Number(el('win').value||180); const r=await fetch(`/api/snapshot?minutes=${encodeURIComponent(m)}`,{cache:'no-store'}); if(!r.ok)throw new Error(`HTTP ${r.status}`); render(await r.json());}catch(err){el('hb').textContent=`error ${String(err).slice(0,80)}`;}}

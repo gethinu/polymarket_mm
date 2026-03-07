@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
+import sys
 
 import execute_event_driven_live as mod
 
@@ -16,7 +18,7 @@ class _Book:
         self.asks = asks
 
 
-def _row(market_id: str, side: str, minutes_ago: int, edge_cents: float) -> dict:
+def _row(market_id: str, side: str, minutes_ago: int, edge_cents: float, days_to_end: float | None = None) -> dict:
     return {
         "market_id": market_id,
         "side": side,
@@ -28,6 +30,7 @@ def _row(market_id: str, side: str, minutes_ago: int, edge_cents: float) -> dict
         "event_class": "election_politics",
         "liquidity_num": 5000.0,
         "volume_24h": 250.0,
+        "days_to_end": days_to_end,
     }
 
 
@@ -199,3 +202,111 @@ def test_prune_recent_actions_keeps_only_unexpired_keys():
     assert out == [
         {"position_key": "m1:YES", "ts_utc": "2026-03-06T14:30:00+00:00", "status": "observe_preview"}
     ]
+
+
+def test_row_within_max_dte_days_rejects_long_or_unknown_rows():
+    assert mod.row_within_max_dte_days(_row("m1", "YES", 5, 6.0, days_to_end=1.5), 7.0) is True
+    assert mod.row_within_max_dte_days(_row("m2", "YES", 5, 6.0, days_to_end=10.0), 7.0) is False
+    assert mod.row_within_max_dte_days(_row("m3", "YES", 5, 6.0, days_to_end=None), 7.0) is False
+    assert mod.row_within_max_dte_days(_row("m4", "YES", 5, 6.0, days_to_end=None), 0.0) is True
+
+
+def test_refresh_resolved_positions_returns_resolution_events():
+    positions = [
+        {
+            "market_id": "m1",
+            "side": "YES",
+            "status": "open",
+            "question": "Q?",
+            "event_class": "election_politics",
+            "entry_price": 0.14,
+            "size_shares": 35.0,
+            "notional_usd": 4.9,
+        }
+    ]
+
+    def _market(_market_id: str, timeout_sec: float):
+        return {"outcomes": '["Yes","No"]', "outcomePrices": '["1.0","0.0"]'}
+
+    orig = mod.fetch_market_by_id
+    mod.fetch_market_by_id = _market
+    try:
+        out = mod.refresh_resolved_positions(positions, timeout_sec=5.0, win_threshold=0.99, lose_threshold=0.01)
+    finally:
+        mod.fetch_market_by_id = orig
+
+    assert len(out) == 1
+    assert out[0]["status"] == "resolved"
+    assert out[0]["resolution"] == "YES_WIN"
+    assert positions[0]["status"] == "resolved"
+
+
+def test_main_exit_only_skips_entry_and_client_init(tmp_path, monkeypatch):
+    state_path = tmp_path / "state.json"
+    exec_path = tmp_path / "exec.jsonl"
+    log_path = tmp_path / "live.log"
+    signals_path = tmp_path / "signals.jsonl"
+    state_path.write_text(
+        json.dumps(
+            {
+                "day": mod.day_key_utc(),
+                "daily_notional_usd": 4.9,
+                "positions": [
+                    {
+                        "market_id": "m1",
+                        "side": "YES",
+                        "status": "open",
+                        "question": "Q?",
+                        "event_class": "election_politics",
+                        "entry_price": 0.14,
+                        "size_shares": 35.0,
+                        "notional_usd": 4.9,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    signals_path.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(
+        mod,
+        "fetch_market_by_id",
+        lambda market_id, timeout_sec: {"outcomes": '["Yes","No"]', "outcomePrices": '["1.0","0.0"]'},
+    )
+
+    def _should_not_call(*args, **kwargs):
+        raise AssertionError("should not be called in exit-only mode")
+
+    monkeypatch.setattr(mod, "build_clob_client_from_env", _should_not_call)
+    monkeypatch.setattr(mod, "load_signal_rows", _should_not_call)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "execute_event_driven_live.py",
+            "--signals-file",
+            str(signals_path),
+            "--state-file",
+            str(state_path),
+            "--exec-log-file",
+            str(exec_path),
+            "--log-file",
+            str(log_path),
+            "--exit-only",
+            "--execute",
+            "--confirm-live",
+            "YES",
+            "--pretty",
+        ],
+    )
+
+    rc = mod.main()
+    assert rc == 0
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["positions"][0]["status"] == "resolved"
+    assert state["last_run"]["mode"] == "LIVE_EXIT_ONLY"
+    rows = [json.loads(line) for line in exec_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert rows[-1]["status"] == "resolved"
+    assert rows[-1]["mode"] == "LIVE_EXIT_ONLY"

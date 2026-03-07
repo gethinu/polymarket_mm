@@ -298,6 +298,38 @@ def build_episodes(rows: List[SignalRow], merge_gap_sec: float) -> List[Episode]
     return out
 
 
+def filter_episodes_by_max_dte(episodes: List[Episode], max_dte_days: float) -> tuple[List[Episode], dict]:
+    cap = as_optional_float(max_dte_days)
+    if cap is None or cap <= 0.0:
+        return list(episodes), {
+            "enabled": False,
+            "max_dte_days": 0.0,
+            "episodes_before": len(episodes),
+            "episodes_after": len(episodes),
+            "dte_known_before": len([e for e in episodes if e.dte_median == e.dte_median and math.isfinite(e.dte_median)]),
+            "dte_unknown_before": len([e for e in episodes if not (e.dte_median == e.dte_median and math.isfinite(e.dte_median))]),
+        }
+    out: List[Episode] = []
+    known = 0
+    unknown = 0
+    for e in episodes:
+        d = e.dte_median
+        if not (d == d and math.isfinite(d)):
+            unknown += 1
+            continue
+        known += 1
+        if float(d) <= float(cap):
+            out.append(e)
+    return out, {
+        "enabled": True,
+        "max_dte_days": float(cap),
+        "episodes_before": len(episodes),
+        "episodes_after": len(out),
+        "dte_known_before": known,
+        "dte_unknown_before": unknown,
+    }
+
+
 def project_monthly_return(
     ev_usd_per_trade: float,
     opportunities_per_day: float,
@@ -325,6 +357,63 @@ def project_monthly_return(
     }
 
 
+def hold_to_resolution_proxy(
+    effective_stakes: List[float],
+    hold_days: List[float],
+    opportunities_per_day: float,
+    assumed_bankroll_usd: float,
+) -> dict:
+    rows: List[tuple[float, float]] = []
+    for stake, dte in zip(effective_stakes, hold_days):
+        s = as_optional_float(stake)
+        d = as_optional_float(dte)
+        if s is None or d is None:
+            continue
+        if s <= 0.0 or d <= 0.0:
+            continue
+        rows.append((float(s), float(d)))
+
+    if not rows or opportunities_per_day <= 0.0 or assumed_bankroll_usd <= 0.0:
+        return {
+            "coverage_count": len(rows),
+            "hold_days_median": 0.0,
+            "hold_days_mean": 0.0,
+            "hold_days_p90": 0.0,
+            "capital_days_per_entry_mean": 0.0,
+            "capital_days_per_entry_p90": 0.0,
+            "capital_required_steady_state_usd": 0.0,
+            "max_entries_per_day_by_capital": 0.0,
+            "opportunities_per_day_lockup_capped": 0.0,
+            "lockup_multiplier": 0.0,
+            "capital_constrained": False,
+        }
+
+    hold_vals = [x[1] for x in rows]
+    cap_days = [x[0] * x[1] for x in rows]
+    cap_days_mean = safe_mean(cap_days, 0.0)
+    steady_capital = float(opportunities_per_day) * cap_days_mean
+    if cap_days_mean <= 0.0:
+        max_entries = float(opportunities_per_day)
+    else:
+        max_entries = float(assumed_bankroll_usd) / cap_days_mean
+    opp_lockup = min(float(opportunities_per_day), max(0.0, max_entries))
+    multiplier = (opp_lockup / float(opportunities_per_day)) if opportunities_per_day > 0.0 else 0.0
+
+    return {
+        "coverage_count": len(rows),
+        "hold_days_median": safe_median(hold_vals, 0.0),
+        "hold_days_mean": safe_mean(hold_vals, 0.0),
+        "hold_days_p90": percentile(hold_vals, 0.90, 0.0),
+        "capital_days_per_entry_mean": float(cap_days_mean),
+        "capital_days_per_entry_p90": percentile(cap_days, 0.90, 0.0),
+        "capital_required_steady_state_usd": float(steady_capital),
+        "max_entries_per_day_by_capital": float(max_entries),
+        "opportunities_per_day_lockup_capped": float(opp_lockup),
+        "lockup_multiplier": float(multiplier),
+        "capital_constrained": bool(opp_lockup + 1e-12 < float(opportunities_per_day)),
+    }
+
+
 def apply_stake_cap_to_ev(ev_usd: float, stake_usd: float, max_stake_usd: float) -> tuple[float, float]:
     ev = float(ev_usd)
     stake = max(0.0, float(stake_usd))
@@ -349,7 +438,7 @@ def threshold_stats(
     days_per_month: float,
     assumed_bankroll_usd: float,
 ) -> dict:
-    hit_rows: List[tuple[Episode, float]] = []
+    hit_rows: List[tuple[Episode, float, float]] = []
     for e in episodes:
         if e.edge_cents_median < threshold_cents:
             continue
@@ -361,7 +450,7 @@ def threshold_stats(
         ev_cap = capped_ev_usd(ev_scaled, stake_scaled, max_ev_multiple_of_stake)
         if ev_cap <= 0.0:
             continue
-        hit_rows.append((e, ev_cap))
+        hit_rows.append((e, ev_cap, stake_scaled))
     hits = [x[0] for x in hit_rows]
     hit_ratio = (float(len(hits)) / float(len(episodes))) if episodes else 0.0
     unique_events = len({(e.event_slug or e.market_id) for e in hits})
@@ -373,6 +462,14 @@ def threshold_stats(
     ev_mean = safe_mean(ev_vals, 0.0)
     edge_med = safe_median([e.edge_cents_median for e in hits], 0.0)
     conf_mean = safe_mean([e.confidence_mean for e in hits], 0.0)
+    effective_stakes = [x[2] for x in hit_rows]
+    hold_days = [x[0].dte_median for x in hit_rows]
+    lockup = hold_to_resolution_proxy(
+        effective_stakes=effective_stakes,
+        hold_days=hold_days,
+        opportunities_per_day=opp_day_cap,
+        assumed_bankroll_usd=assumed_bankroll_usd,
+    )
 
     scenarios: List[dict] = []
     for c in capture_ratios:
@@ -392,10 +489,38 @@ def threshold_stats(
             }
         )
 
+    lockup_scenarios: List[dict] = []
+    for c in capture_ratios:
+        proj = project_monthly_return(
+            ev_usd_per_trade=ev_median,
+            opportunities_per_day=float(lockup.get("opportunities_per_day_lockup_capped") or 0.0),
+            capture_ratio=c,
+            days_per_month=days_per_month,
+            assumed_bankroll_usd=assumed_bankroll_usd,
+        )
+        lockup_scenarios.append(
+            {
+                "capture_ratio": float(c),
+                "monthly_profit_usd": float(proj["monthly_profit_usd"]),
+                "monthly_return": float(proj["monthly_return"]),
+                "monthly_return_pct": float(proj["monthly_return_pct"]),
+            }
+        )
+
     if scenarios:
         base = min(scenarios, key=lambda x: abs(float(x["capture_ratio"]) - float(base_capture_ratio)))
     else:
         base = {
+            "capture_ratio": float(base_capture_ratio),
+            "monthly_profit_usd": 0.0,
+            "monthly_return": 0.0,
+            "monthly_return_pct": 0.0,
+        }
+
+    if lockup_scenarios:
+        lockup_base = min(lockup_scenarios, key=lambda x: abs(float(x["capture_ratio"]) - float(base_capture_ratio)))
+    else:
+        lockup_base = {
             "capture_ratio": float(base_capture_ratio),
             "monthly_profit_usd": 0.0,
             "monthly_return": 0.0,
@@ -416,6 +541,9 @@ def threshold_stats(
         "confidence_mean": float(conf_mean),
         "scenarios": scenarios,
         "base_scenario": base,
+        "hold_to_resolution_proxy": lockup,
+        "lockup_scenarios": lockup_scenarios,
+        "lockup_base_scenario": lockup_base,
     }
 
 
@@ -507,6 +635,8 @@ def build_text_report(result: dict) -> str:
     settings = result.get("settings") or {}
     selected = result.get("selected_threshold") or {}
     base = selected.get("base_scenario") if isinstance(selected, dict) else None
+    lockup = selected.get("hold_to_resolution_proxy") if isinstance(selected, dict) else None
+    lockup_base = selected.get("lockup_base_scenario") if isinstance(selected, dict) else None
     metrics = summary.get("metrics_window") if isinstance(summary.get("metrics_window"), dict) else {}
 
     lines: List[str] = []
@@ -519,6 +649,13 @@ def build_text_report(result: dict) -> str:
         f"Signals={int(summary.get('signals') or 0)} | episodes={int(summary.get('episodes') or 0)} | "
         f"dedupe_ratio={float(summary.get('signal_to_episode_ratio') or 0.0):.2f}"
     )
+    dte_filter = summary.get("dte_filter") if isinstance(summary.get("dte_filter"), dict) else None
+    if isinstance(dte_filter, dict) and bool(dte_filter.get("enabled")):
+        lines.append(
+            f"DTE filter: <= {float(dte_filter.get('max_dte_days') or 0.0):.2f}d | "
+            f"episodes kept={int(dte_filter.get('episodes_after') or 0)}/{int(dte_filter.get('episodes_before') or 0)} "
+            f"(known={int(dte_filter.get('dte_known_before') or 0)} unknown_drop={int(dte_filter.get('dte_unknown_before') or 0)})"
+        )
     lines.append(
         f"Events={int(summary.get('unique_events') or 0)} | markets={int(summary.get('unique_markets') or 0)} | "
         f"positive_ev_ratio={float(summary.get('positive_ev_ratio') or 0.0) * 100.0:.1f}%"
@@ -560,10 +697,33 @@ def build_text_report(result: dict) -> str:
                 f"  base capture={float(base.get('capture_ratio') or 0.0) * 100.0:.0f}% "
                 f"=> projected monthly={float(base.get('monthly_return_pct') or 0.0):+.2f}%"
             )
+        if isinstance(lockup, dict):
+            lines.append(
+                f"  hold-to-resolution proxy: dte median={float(lockup.get('hold_days_median') or 0.0):.2f}d "
+                f"mean={float(lockup.get('hold_days_mean') or 0.0):.2f}d p90={float(lockup.get('hold_days_p90') or 0.0):.2f}d"
+            )
+            lines.append(
+                f"  capital lock-up: naive steady-state capital=${float(lockup.get('capital_required_steady_state_usd') or 0.0):.2f} "
+                f"| opp/day(lockup-capped)={float(lockup.get('opportunities_per_day_lockup_capped') or 0.0):.2f} "
+                f"| multiplier={float(lockup.get('lockup_multiplier') or 0.0) * 100.0:.1f}%"
+            )
+        if isinstance(lockup_base, dict):
+            lines.append(
+                f"  lockup-adjusted base capture={float(lockup_base.get('capture_ratio') or 0.0) * 100.0:.0f}% "
+                f"=> projected monthly={float(lockup_base.get('monthly_return_pct') or 0.0):+.2f}%"
+            )
         scenarios = selected.get("scenarios") if isinstance(selected, dict) else []
         if isinstance(scenarios, list) and scenarios:
             lines.append("  scenarios:")
             for x in scenarios:
+                lines.append(
+                    f"    capture {float(x.get('capture_ratio') or 0.0) * 100.0:.0f}% "
+                    f"=> monthly {float(x.get('monthly_return_pct') or 0.0):+.2f}%"
+                )
+        lockup_scenarios = selected.get("lockup_scenarios") if isinstance(selected, dict) else []
+        if isinstance(lockup_scenarios, list) and lockup_scenarios:
+            lines.append("  lockup-adjusted scenarios:")
+            for x in lockup_scenarios:
                 lines.append(
                     f"    capture {float(x.get('capture_ratio') or 0.0) * 100.0:.0f}% "
                     f"=> monthly {float(x.get('monthly_return_pct') or 0.0):+.2f}%"
@@ -573,9 +733,17 @@ def build_text_report(result: dict) -> str:
         f"Decision: {decision.get('decision', 'NO_GO')} | "
         f"target_monthly={float((decision.get('target_monthly_return') or 0.0) * 100.0):.2f}%"
     )
+    if "decision_lockup_adjusted" in decision:
+        lines.append(
+            f"Lockup-adjusted decision: {decision.get('decision_lockup_adjusted', 'NO_GO')} | "
+            f"projected_monthly={float((decision.get('projected_monthly_return_lockup_adjusted') or 0.0) * 100.0):+.2f}%"
+        )
     reasons = decision.get("reasons") if isinstance(decision.get("reasons"), list) else []
     for r in reasons:
         lines.append(f"  - {str(r)}")
+    lockup_reasons = decision.get("lockup_adjusted_reasons") if isinstance(decision.get("lockup_adjusted_reasons"), list) else []
+    for r in lockup_reasons:
+        lines.append(f"  - lockup: {str(r)}")
     return "\n".join(lines)
 
 
@@ -663,6 +831,7 @@ def main() -> int:
     p.add_argument("--base-capture-ratio", type=float, default=0.35)
     p.add_argument("--max-ev-multiple-of-stake", type=float, default=0.35)
     p.add_argument("--max-stake-usd", type=float, default=0.0)
+    p.add_argument("--max-dte-days", type=float, default=0.0, help="When >0, keep only episodes with median days_to_end <= this cap.")
     p.add_argument("--days-per-month", type=float, default=30.0)
     p.add_argument(
         "--assumed-bankroll-usd",
@@ -710,7 +879,8 @@ def main() -> int:
         print(f"no rows in window; signals={signals_file} metrics={metrics_file}")
         return 2
 
-    episodes = build_episodes(signals, merge_gap_sec=max(0.0, float(args.episode_merge_gap_sec)))
+    episodes_all = build_episodes(signals, merge_gap_sec=max(0.0, float(args.episode_merge_gap_sec)))
+    episodes, dte_filter_info = filter_episodes_by_max_dte(episodes_all, float(args.max_dte_days))
 
     if signals:
         signal_start = min(r.ts for r in signals)
@@ -784,59 +954,94 @@ def main() -> int:
 
     target_monthly = float(args.target_monthly_return_pct) / 100.0
     selected_base_monthly = 0.0
+    selected_lockup_monthly = 0.0
     reasons: List[str] = []
+    lockup_reasons: List[str] = []
     hard_ok = True
+    hard_ok_lockup = True
 
     if span_hours < float(args.min_window_hours):
         hard_ok = False
+        hard_ok_lockup = False
         reasons.append(
+            f"span_hours {span_hours:.2f} < min_window_hours {float(args.min_window_hours):.2f}"
+        )
+        lockup_reasons.append(
             f"span_hours {span_hours:.2f} < min_window_hours {float(args.min_window_hours):.2f}"
         )
     else:
         reasons.append(
             f"span_hours {span_hours:.2f} >= min_window_hours {float(args.min_window_hours):.2f}"
         )
+        lockup_reasons.append(
+            f"span_hours {span_hours:.2f} >= min_window_hours {float(args.min_window_hours):.2f}"
+        )
 
     if len(metrics) < int(args.min_runs):
         hard_ok = False
+        hard_ok_lockup = False
         reasons.append(f"runs {len(metrics)} < min_runs {int(args.min_runs)}")
+        lockup_reasons.append(f"runs {len(metrics)} < min_runs {int(args.min_runs)}")
     else:
         reasons.append(f"runs {len(metrics)} >= min_runs {int(args.min_runs)}")
+        lockup_reasons.append(f"runs {len(metrics)} >= min_runs {int(args.min_runs)}")
 
     if len(episodes) < int(args.min_episodes):
         hard_ok = False
+        hard_ok_lockup = False
         reasons.append(f"episodes {len(episodes)} < min_episodes {int(args.min_episodes)}")
+        lockup_reasons.append(f"episodes {len(episodes)} < min_episodes {int(args.min_episodes)}")
     else:
         reasons.append(f"episodes {len(episodes)} >= min_episodes {int(args.min_episodes)}")
+        lockup_reasons.append(f"episodes {len(episodes)} >= min_episodes {int(args.min_episodes)}")
 
     if unique_events < int(args.min_unique_events):
         hard_ok = False
+        hard_ok_lockup = False
         reasons.append(f"unique_events {unique_events} < min_unique_events {int(args.min_unique_events)}")
+        lockup_reasons.append(f"unique_events {unique_events} < min_unique_events {int(args.min_unique_events)}")
     else:
         reasons.append(f"unique_events {unique_events} >= min_unique_events {int(args.min_unique_events)}")
+        lockup_reasons.append(f"unique_events {unique_events} >= min_unique_events {int(args.min_unique_events)}")
 
     min_pos_ev_ratio = float(args.min_positive_ev_ratio_pct) / 100.0
     if pos_ev_ratio < min_pos_ev_ratio:
         hard_ok = False
+        hard_ok_lockup = False
         reasons.append(
+            f"positive_ev_ratio {pos_ev_ratio * 100.0:.1f}% < min_positive_ev_ratio_pct {float(args.min_positive_ev_ratio_pct):.1f}%"
+        )
+        lockup_reasons.append(
             f"positive_ev_ratio {pos_ev_ratio * 100.0:.1f}% < min_positive_ev_ratio_pct {float(args.min_positive_ev_ratio_pct):.1f}%"
         )
     else:
         reasons.append(
             f"positive_ev_ratio {pos_ev_ratio * 100.0:.1f}% >= min_positive_ev_ratio_pct {float(args.min_positive_ev_ratio_pct):.1f}%"
         )
+        lockup_reasons.append(
+            f"positive_ev_ratio {pos_ev_ratio * 100.0:.1f}% >= min_positive_ev_ratio_pct {float(args.min_positive_ev_ratio_pct):.1f}%"
+        )
 
     if not selected:
         hard_ok = False
+        hard_ok_lockup = False
         reasons.append("no threshold stats available")
+        lockup_reasons.append("no threshold stats available")
     else:
         base = selected.get("base_scenario") if isinstance(selected.get("base_scenario"), dict) else {}
+        lockup_base = (
+            selected.get("lockup_base_scenario") if isinstance(selected.get("lockup_base_scenario"), dict) else {}
+        )
         selected_base_monthly = float(base.get("monthly_return") or 0.0)
+        selected_lockup_monthly = float(lockup_base.get("monthly_return") or 0.0)
         if not selected_qualified:
             hard_ok = False
+            hard_ok_lockup = False
             reasons.append("selected threshold failed opportunity/event/hit-ratio qualifiers")
+            lockup_reasons.append("selected threshold failed opportunity/event/hit-ratio qualifiers")
         else:
             reasons.append("selected threshold passed opportunity/event/hit-ratio qualifiers")
+            lockup_reasons.append("selected threshold passed opportunity/event/hit-ratio qualifiers")
         if selected_base_monthly < target_monthly:
             hard_ok = False
             reasons.append(
@@ -846,8 +1051,18 @@ def main() -> int:
             reasons.append(
                 f"projected_monthly {selected_base_monthly * 100.0:.2f}% >= target {target_monthly * 100.0:.2f}%"
             )
+        if selected_lockup_monthly < target_monthly:
+            hard_ok_lockup = False
+            lockup_reasons.append(
+                f"lockup_adjusted_projected_monthly {selected_lockup_monthly * 100.0:.2f}% < target {target_monthly * 100.0:.2f}%"
+            )
+        else:
+            lockup_reasons.append(
+                f"lockup_adjusted_projected_monthly {selected_lockup_monthly * 100.0:.2f}% >= target {target_monthly * 100.0:.2f}%"
+            )
 
     decision = "GO" if hard_ok else "NO_GO"
+    decision_lockup = "GO" if hard_ok_lockup else "NO_GO"
 
     result = {
         "generated_utc": now_utc_iso(),
@@ -872,6 +1087,7 @@ def main() -> int:
             "base_capture_ratio": float(args.base_capture_ratio),
             "max_ev_multiple_of_stake": float(args.max_ev_multiple_of_stake),
             "max_stake_usd": float(args.max_stake_usd),
+            "max_dte_days": float(args.max_dte_days),
             "days_per_month": float(args.days_per_month),
             "assumed_bankroll_usd": float(assumed_bankroll_usd),
             "assumed_bankroll_source": assumed_bankroll_source,
@@ -889,6 +1105,8 @@ def main() -> int:
             "signals": len(signals),
             "episodes": len(episodes),
             "signal_to_episode_ratio": (float(len(signals)) / float(len(episodes))) if episodes else 0.0,
+            "episodes_before_dte_filter": len(episodes_all),
+            "dte_filter": dte_filter_info,
             "unique_events": unique_events,
             "unique_markets": unique_markets,
             "positive_ev_episodes": pos_ev_count,
@@ -916,9 +1134,12 @@ def main() -> int:
         "top_episodes": summarize_top_episodes(episodes),
         "decision": {
             "decision": decision,
+            "decision_lockup_adjusted": decision_lockup,
             "target_monthly_return": float(target_monthly),
             "projected_monthly_return": float(selected_base_monthly),
+            "projected_monthly_return_lockup_adjusted": float(selected_lockup_monthly),
             "reasons": reasons,
+            "lockup_adjusted_reasons": lockup_reasons,
         },
         "artifacts": {
             "out_json": str(out_json),
@@ -937,7 +1158,10 @@ def main() -> int:
         f"[event-driven-profit] assumed_bankroll=${assumed_bankroll_usd:.2f} "
         f"source={assumed_bankroll_source}"
     )
-    print(f"[event-driven-profit] decision={decision} projected_monthly={selected_base_monthly * 100.0:+.2f}%")
+    print(
+        f"[event-driven-profit] decision={decision} projected_monthly={selected_base_monthly * 100.0:+.2f}% "
+        f"lockup_adjusted={selected_lockup_monthly * 100.0:+.2f}%"
+    )
     print(f"[event-driven-profit] wrote {out_json}")
     print(f"[event-driven-profit] wrote {out_txt}")
 

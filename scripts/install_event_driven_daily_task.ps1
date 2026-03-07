@@ -19,6 +19,8 @@ param(
   [double]$ProfitAssumedBankrollUsd = [double]::NaN,
   [double]$ProfitMaxEvMultipleOfStake = 0.35,
   [double]$ProfitMaxStakeUsd = 5,
+  [double]$ProfitMaxDteDays = 0,
+  [int]$ProfitMinUniqueEvents = 4,
   [switch]$LivePreview,
   [switch]$LiveExecute,
   [string]$LiveConfirm = "",
@@ -28,6 +30,7 @@ param(
   [int]$LiveMaxOpenPositions = 2,
   [double]$LiveRepeatCooldownMin = 360,
   [double]$LiveSignalMaxAgeMin = 30,
+  [double]$LiveMaxDteDays = 0,
   [double]$LiveMinEdgeCents = 5,
   [double]$LiveMinConfidence = 0.80,
   [double]$LiveMaxEntryPrice = 0.35,
@@ -53,6 +56,7 @@ $ErrorActionPreference = "Stop"
 function Show-Usage {
   Write-Host "Usage:"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground [-TaskName EventDrivenDailyReport] [-StartTime 00:15] [-PrincipalMode auto|default|s4u|interactive] [-ActionMode cmd|powershell] [-FailOnNoGo] [-RunNow]"
+  Write-Host "  short-horizon example: ... -ProfitMaxDteDays 7 -ProfitMinUniqueEvents 2 -LiveMaxDteDays 7"
   Write-Host "  (omit -ProfitAssumedBankrollUsd to use STRATEGY bankroll policy default)"
   Write-Host "  powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_event_driven_daily_task.ps1 -NoBackground -?"
 }
@@ -158,10 +162,14 @@ $runnerArgList = @(
   "-ProfitThresholdsCents", "$ProfitThresholdsCents",
   "-ProfitCaptureRatios", "$ProfitCaptureRatios",
   "-ProfitTargetMonthlyReturnPct", "$ProfitTargetMonthlyReturnPct",
-  "-ProfitMaxEvMultipleOfStake", "$ProfitMaxEvMultipleOfStake"
+  "-ProfitMaxEvMultipleOfStake", "$ProfitMaxEvMultipleOfStake",
+  "-ProfitMinUniqueEvents", "$ProfitMinUniqueEvents"
 )
 if ($ProfitMaxStakeUsd -gt 0) {
   $runnerArgList += @("-ProfitMaxStakeUsd", "$ProfitMaxStakeUsd")
+}
+if ($ProfitMaxDteDays -gt 0) {
+  $runnerArgList += @("-ProfitMaxDteDays", "$ProfitMaxDteDays")
 }
 if (-not [double]::IsNaN($ProfitAssumedBankrollUsd)) {
   $runnerArgList += @("-ProfitAssumedBankrollUsd", "$ProfitAssumedBankrollUsd")
@@ -199,6 +207,9 @@ if ($LivePreview.IsPresent -or $LiveExecute.IsPresent) {
   }
   if ($LiveSignalMaxAgeMin -gt 0) {
     $runnerArgList += @("-LiveSignalMaxAgeMin", "$LiveSignalMaxAgeMin")
+  }
+  if ($LiveMaxDteDays -gt 0) {
+    $runnerArgList += @("-LiveMaxDteDays", "$LiveMaxDteDays")
   }
   if ($LiveMinEdgeCents -gt 0) {
     $runnerArgList += @("-LiveMinEdgeCents", "$LiveMinEdgeCents")

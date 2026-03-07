@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
-Event-driven micro-live entry helper (observe-first).
+Event-driven micro-live helper (observe-first).
 
 Default behavior is observe-preview (no order submission). Live execution is
 enabled only when both --execute and --confirm-live YES are specified.
+An explicit --exit-only mode is available for resolution checks without new
+entry attempts.
 """
 
 from __future__ import annotations
@@ -340,6 +342,7 @@ def iter_signal_rows(lines: Iterable[str]) -> Iterable[dict]:
             "confidence": float(confidence),
             "liquidity_num": float(as_float(obj.get("liquidity_num"), 0.0) or 0.0),
             "volume_24h": float(as_float(obj.get("volume_24h"), 0.0) or 0.0),
+            "days_to_end": as_float(obj.get("days_to_end")),
         }
 
 
@@ -374,6 +377,16 @@ def unique_latest_rows(rows: List[dict]) -> List[dict]:
         reverse=True,
     )
     return out
+
+
+def row_within_max_dte_days(row: dict, max_dte_days: float) -> bool:
+    limit = float(max_dte_days or 0.0)
+    if limit <= 0.0:
+        return True
+    dte = as_float(row.get("days_to_end"))
+    if dte is None or dte <= 0.0:
+        return False
+    return float(dte) <= limit
 
 
 def parse_state(raw: dict) -> dict:
@@ -414,8 +427,8 @@ def refresh_resolved_positions(
     timeout_sec: float,
     win_threshold: float,
     lose_threshold: float,
-) -> int:
-    resolved_now = 0
+) -> List[dict]:
+    resolved_now: List[dict] = []
     for pos in positions:
         if str(pos.get("status") or "") != "open":
             continue
@@ -443,8 +456,29 @@ def refresh_resolved_positions(
         pos["resolution"] = f"{side}_{'WIN' if side_wins else 'LOSE'}"
         pos["resolved_yes_price"] = float(yes_price)
         pos["resolved_no_price"] = float(no_price)
-        resolved_now += 1
+        resolved_now.append(
+            {
+                "ts_utc": str(pos.get("resolved_utc") or iso_now()),
+                "market_id": market_id,
+                "side": side,
+                "question": str(pos.get("question") or ""),
+                "event_class": str(pos.get("event_class") or ""),
+                "status": "resolved",
+                "resolution": str(pos.get("resolution") or ""),
+                "entry_price": as_float(pos.get("entry_price"), 0.0),
+                "size_shares": as_float(pos.get("size_shares"), 0.0),
+                "notional_usd": as_float(pos.get("notional_usd"), 0.0),
+                "resolved_yes_price": float(yes_price),
+                "resolved_no_price": float(no_price),
+            }
+        )
     return resolved_now
+
+
+def run_mode_label(args) -> str:
+    if bool(getattr(args, "execute", False)):
+        return "LIVE_EXIT_ONLY" if bool(getattr(args, "exit_only", False)) else "LIVE"
+    return "OBSERVE_EXIT_ONLY" if bool(getattr(args, "exit_only", False)) else "observe"
 
 
 def extract_order_id(payload) -> str:
@@ -717,6 +751,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-daily-notional-usd", type=float, default=5.0)
     p.add_argument("--max-open-positions", type=int, default=2)
     p.add_argument("--signal-max-age-min", type=float, default=30.0)
+    p.add_argument("--max-dte-days", type=float, default=0.0)
     p.add_argument("--min-edge-cents", type=float, default=5.0)
     p.add_argument("--min-confidence", type=float, default=0.80)
     p.add_argument("--max-entry-price", type=float, default=0.35)
@@ -727,6 +762,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--api-timeout-sec", type=float, default=20.0)
     p.add_argument("--win-threshold", type=float, default=0.99)
     p.add_argument("--lose-threshold", type=float, default=0.01)
+    p.add_argument("--exit-only", action="store_true", help="Refresh resolution state only; do not attempt new entries.")
     p.add_argument("--execute", action="store_true")
     p.add_argument("--confirm-live", default="")
     p.add_argument("--clob-host", default="https://clob.polymarket.com")
@@ -743,7 +779,10 @@ def main() -> int:
     if int(args.max_new_orders) < 0:
         print("max-new-orders must be >= 0")
         return 2
-    if float(args.max_stake_usd) <= 0.0:
+    if float(args.max_dte_days) < 0.0:
+        print("max-dte-days must be >= 0")
+        return 2
+    if not args.exit_only and float(args.max_stake_usd) <= 0.0:
         print("max-stake-usd must be > 0")
         return 2
     if float(args.max_daily_notional_usd) < 0.0:
@@ -764,6 +803,7 @@ def main() -> int:
     exec_log_file = resolve_path(str(args.exec_log_file), "event_driven_live_executions.jsonl")
     log_file = resolve_path(str(args.log_file), "event_driven_live.log")
     logger = Logger(log_file)
+    mode_label = run_mode_label(args)
 
     state = parse_state(read_json(state_file, {}))
     today = day_key_utc()
@@ -777,27 +817,34 @@ def main() -> int:
     )
     recent_keys = {str(row.get("position_key") or "").strip() for row in recent_actions if str(row.get("position_key") or "").strip()}
 
-    resolved_now = refresh_resolved_positions(
+    resolved_events = refresh_resolved_positions(
         positions=positions,
         timeout_sec=max(1.0, float(args.api_timeout_sec)),
         win_threshold=max(0.5, min(1.0, float(args.win_threshold))),
         lose_threshold=max(0.0, min(0.5, float(args.lose_threshold))),
     )
+    resolved_now = len(resolved_events)
+    for event in resolved_events:
+        payload = dict(event)
+        payload["mode"] = mode_label
+        append_jsonl(exec_log_file, payload)
 
     open_positions = [p for p in positions if str(p.get("status") or "") == "open"]
     open_keys = {f"{str(p.get('market_id') or '').strip()}:{str(p.get('side') or '').strip().upper()}" for p in open_positions}
     open_count = len(open_positions)
     daily_notional = float(as_float(state.get("daily_notional_usd"), 0.0) or 0.0)
 
-    rows = unique_latest_rows(load_signal_rows(signals_file, max_age_min=max(0.0, float(args.signal_max_age_min))))
+    rows: List[dict] = []
+    if not args.exit_only:
+        rows = unique_latest_rows(load_signal_rows(signals_file, max_age_min=max(0.0, float(args.signal_max_age_min))))
     logger.info(
-        f"start mode={'LIVE' if args.execute else 'observe-preview'} signals={len(rows)} "
+        f"start mode={mode_label} signals={len(rows)} "
         f"open_positions={open_count} daily_notional={daily_notional:.4f} "
-        f"recent_keys={len(recent_keys)}"
+        f"recent_keys={len(recent_keys)} max_dte_days={float(args.max_dte_days):.2f}"
     )
 
     client = None
-    if args.execute:
+    if args.execute and not args.exit_only:
         try:
             client = build_clob_client_from_env(
                 clob_host=str(args.clob_host),
@@ -831,6 +878,8 @@ def main() -> int:
             logger.info(f"skip market={market_id} side={side}: repeat_cooldown active")
             skipped += 1
             continue
+        if not row_within_max_dte_days(row, float(args.max_dte_days)):
+            continue
         if float(row.get("edge_cents") or 0.0) < float(args.min_edge_cents):
             continue
         if float(row.get("confidence") or 0.0) < float(args.min_confidence):
@@ -849,7 +898,7 @@ def main() -> int:
                 exec_log_file,
                 {
                     "ts_utc": iso_now(),
-                    "mode": "LIVE" if args.execute else "observe",
+                    "mode": mode_label,
                     "market_id": market_id,
                     "side": side,
                     "status": "skip",
@@ -866,7 +915,7 @@ def main() -> int:
                 exec_log_file,
                 {
                     "ts_utc": iso_now(),
-                    "mode": "LIVE" if args.execute else "observe",
+                    "mode": mode_label,
                     "market_id": market_id,
                     "side": side,
                     "status": "skip",
@@ -934,7 +983,7 @@ def main() -> int:
         attempted += 1
         event = {
             "ts_utc": iso_now(),
-            "mode": "LIVE" if args.execute else "observe",
+            "mode": mode_label,
             "market_id": market_id,
             "question": str(row.get("question") or ""),
             "event_class": str(row.get("event_class") or ""),
@@ -1080,7 +1129,7 @@ def main() -> int:
     state["daily_notional_usd"] = float(daily_notional)
     state["generated_utc"] = iso_now()
     state["last_run"] = {
-        "mode": "LIVE" if args.execute else "observe",
+        "mode": mode_label,
         "signals_file": str(signals_file),
         "attempted": int(attempted),
         "submitted": int(submitted),

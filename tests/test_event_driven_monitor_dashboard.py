@@ -202,6 +202,7 @@ def test_build_snapshot_aggregates_recent_artifacts(tmp_path):
     assert snapshot["profit"]["selected_episodes_hit"] == 4
     assert snapshot["profit"]["selected_episodes_total"] == 7
     assert snapshot["profit"]["observe_only_note"] == "Projected EV only. Not realized PnL or live win rate."
+    assert snapshot["profit"]["projected_monthly_return_lockup_adjusted"] == pytest.approx(0.0)
     assert snapshot["profit"]["reasons"] == ["sufficient opportunities"]
     assert snapshot["live"]["open_positions"] == 1
     assert snapshot["live"]["daily_notional_usd"] == pytest.approx(4.9)
@@ -221,3 +222,4 @@ def test_dashboard_html_calls_out_not_realized_pnl():
     assert "This page separates two things" in mod.HTML
     assert "Projected Profit Window (Observe Only)" in mod.HTML
     assert "Live Position State" in mod.HTML
+    assert "Projected EV / Month (Naive)" in mod.HTML

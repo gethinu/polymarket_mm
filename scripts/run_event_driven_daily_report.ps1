@@ -30,6 +30,8 @@ param(
   [double]$ProfitAssumedBankrollUsd = [double]::NaN,
   [double]$ProfitMaxEvMultipleOfStake = 0.35,
   [double]$ProfitMaxStakeUsd = 5,
+  [double]$ProfitMaxDteDays = 0,
+  [int]$ProfitMinUniqueEvents = 4,
   [switch]$LivePreview,
   [switch]$LiveExecute,
   [string]$LiveConfirm = "",
@@ -39,6 +41,7 @@ param(
   [int]$LiveMaxOpenPositions = 2,
   [double]$LiveRepeatCooldownMin = 360,
   [double]$LiveSignalMaxAgeMin = 30,
+  [double]$LiveMaxDteDays = 0,
   [double]$LiveMinEdgeCents = 5,
   [double]$LiveMinConfidence = 0.80,
   [double]$LiveMaxEntryPrice = 0.35,
@@ -244,12 +247,16 @@ if (-not $SkipProfitWindow.IsPresent) {
     "--capture-ratios", $ProfitCaptureRatios,
     "--target-monthly-return-pct", "$ProfitTargetMonthlyReturnPct",
     "--max-ev-multiple-of-stake", "$ProfitMaxEvMultipleOfStake",
+    "--min-unique-events", "$ProfitMinUniqueEvents",
     "--out-json", $profitJson,
     "--out-txt", $profitTxt,
     "--pretty"
   )
   if ($ProfitMaxStakeUsd -gt 0) {
     $profitArgs += @("--max-stake-usd", "$ProfitMaxStakeUsd")
+  }
+  if ($ProfitMaxDteDays -gt 0) {
+    $profitArgs += @("--max-dte-days", "$ProfitMaxDteDays")
   }
   if (-not [double]::IsNaN($ProfitAssumedBankrollUsd)) {
     $profitArgs += @("--assumed-bankroll-usd", "$ProfitAssumedBankrollUsd")
@@ -305,6 +312,7 @@ if ($liveRequested) {
     "--max-open-positions", "$LiveMaxOpenPositions",
     "--repeat-cooldown-min", "$LiveRepeatCooldownMin",
     "--signal-max-age-min", "$LiveSignalMaxAgeMin",
+    "--max-dte-days", "$LiveMaxDteDays",
     "--min-edge-cents", "$LiveMinEdgeCents",
     "--min-confidence", "$LiveMinConfidence",
     "--max-entry-price", "$LiveMaxEntryPrice",

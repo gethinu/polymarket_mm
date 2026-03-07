@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import os
 import re
 from dataclasses import dataclass
@@ -130,7 +131,10 @@ def load_events(log_file: str, tail_lines: int) -> List[dict]:
 
 def _as_float(x: Any, default: float = 0.0) -> float:
     try:
-        return float(x)
+        v = float(x)
+        if not math.isfinite(v):
+            return default
+        return v
     except Exception:
         return default
 
@@ -140,6 +144,18 @@ def _as_int(x: Any, default: int = 0) -> int:
         return int(x)
     except Exception:
         return default
+
+
+def _sanitize_for_json(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {str(k): _sanitize_for_json(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_for_json(v) for v in value]
+    if isinstance(value, tuple):
+        return [_sanitize_for_json(v) for v in value]
+    return value
 
 
 def build_series(rows: List[dict]) -> dict:
@@ -596,7 +612,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _send_json(self, code: int, payload: dict) -> None:
         try:
-            raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            safe_payload = _sanitize_for_json(payload)
+            raw = json.dumps(safe_payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
         except Exception:
             raw = b"{}"
         self._send_bytes(code, raw, "application/json; charset=utf-8")
@@ -682,4 +699,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
