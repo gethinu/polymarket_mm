@@ -210,6 +210,31 @@ def load_profit(path: str) -> dict:
         return {}
 
 
+def load_json_obj(path: str) -> dict:
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        raw = json.loads(Path(path).read_text(encoding="utf-8", errors="replace"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def load_jsonl_rows(path: str, tail_lines: int) -> List[dict]:
+    rows: List[dict] = []
+    for ln in read_tail_lines(path, max_lines=max(80, tail_lines)):
+        s = str(ln or "").strip()
+        if not s:
+            continue
+        try:
+            raw = json.loads(s)
+        except Exception:
+            continue
+        if isinstance(raw, dict):
+            rows.append(raw)
+    return rows
+
+
 def load_text(path: str, limit: int = 2500) -> str:
     if not path or not os.path.exists(path):
         return ""
@@ -262,6 +287,9 @@ def build_snapshot(cfg: Config, minutes: Optional[float]) -> dict:
     events = log_events(cfg.log_file, since_utc.timestamp(), cfg.tail_lines)
     profit = load_profit(cfg.profit_json)
     summary = load_text(cfg.summary_txt)
+    base_dir = Path(cfg.profit_json).resolve().parent
+    live_state = load_json_obj(str(base_dir / "event_driven_live_state.json"))
+    live_execs = load_jsonl_rows(str(base_dir / "event_driven_live_executions.jsonl"), cfg.tail_lines)
 
     cand_sum = sum(max(0, m.candidate) for m in metrics)
     write_sum = sum(max(0, m.written) for m in metrics)
@@ -295,7 +323,59 @@ def build_snapshot(cfg: Config, minutes: Optional[float]) -> dict:
 
     decision = profit.get("decision") if isinstance(profit.get("decision"), dict) else {}
     selected = profit.get("selected_threshold") if isinstance(profit.get("selected_threshold"), dict) else {}
+    settings = profit.get("settings") if isinstance(profit.get("settings"), dict) else {}
+    base_scenario = selected.get("base_scenario") if isinstance(selected.get("base_scenario"), dict) else {}
     reasons = decision.get("reasons") if isinstance(decision.get("reasons"), list) else []
+
+    live_positions_raw = live_state.get("positions") if isinstance(live_state.get("positions"), list) else []
+    open_positions = [row for row in live_positions_raw if isinstance(row, dict) and str(row.get("status") or "") == "open"]
+    open_rows = []
+    for row in open_positions[:6]:
+        entry_ts = str(row.get("entry_utc") or "").strip()
+        try:
+            age_hours = max(0.0, (now_utc - dt.datetime.fromisoformat(entry_ts.replace("Z", "+00:00"))).total_seconds() / 3600.0) if entry_ts else 0.0
+        except Exception:
+            age_hours = 0.0
+        open_rows.append(
+            {
+                "question": str(row.get("question") or "")[:160],
+                "side": str(row.get("side") or "").upper(),
+                "size_shares": as_float(row.get("size_shares"), 0.0),
+                "entry_price": as_float(row.get("entry_price"), 0.0),
+                "notional_usd": as_float(row.get("notional_usd"), 0.0),
+                "requested_notional_usd": as_float(row.get("requested_notional_usd"), 0.0),
+                "age_hours": age_hours,
+                "status": str(row.get("status") or ""),
+            }
+        )
+
+    recent_live = []
+    for row in live_execs[-10:]:
+        recent_live.append(
+            {
+                "ts": str(row.get("ts_utc") or "")[11:19],
+                "status": str(row.get("status") or ""),
+                "side": str(row.get("side") or "").upper(),
+                "question": str(row.get("question") or "")[:120],
+                "filled_size_shares": as_float(row.get("filled_size_shares"), 0.0),
+                "filled_notional_usd": as_float(row.get("filled_notional_usd"), 0.0),
+                "filled_avg_price": as_float(row.get("filled_avg_price"), 0.0),
+                "reason": str(row.get("reason") or "")[:120],
+            }
+        )
+
+    last_fill = {}
+    for row in reversed(live_execs):
+        if str(row.get("status") or "") == "filled":
+            last_fill = {
+                "ts": str(row.get("ts_utc") or "")[11:19],
+                "side": str(row.get("side") or "").upper(),
+                "filled_size_shares": as_float(row.get("filled_size_shares"), 0.0),
+                "filled_notional_usd": as_float(row.get("filled_notional_usd"), 0.0),
+                "filled_avg_price": as_float(row.get("filled_avg_price"), 0.0),
+                "question": str(row.get("question") or "")[:120],
+            }
+            break
 
     return {
         "generated_at": now_local.strftime("%Y-%m-%d %H:%M:%S"),
@@ -332,13 +412,30 @@ def build_snapshot(cfg: Config, minutes: Optional[float]) -> dict:
         "recent_events": events,
         "profit": {
             "decision": str(decision.get("decision") or "N/A"),
+            "observe_only_note": "Projected EV only. Not realized PnL or live win rate.",
+            "projected_monthly_profit_usd": as_float(base_scenario.get("monthly_profit_usd"), 0.0),
             "projected_monthly_return": as_float(decision.get("projected_monthly_return"), 0.0),
             "target_monthly_return": as_float(decision.get("target_monthly_return"), 0.0),
+            "assumed_bankroll_usd": as_float(settings.get("assumed_bankroll_usd"), 0.0),
+            "max_stake_usd": as_float(settings.get("max_stake_usd"), 0.0),
             "selected_threshold_cents": as_float(selected.get("threshold_cents"), 0.0),
             "selected_hit_ratio": as_float(selected.get("hit_ratio"), 0.0),
+            "selected_episodes_hit": as_int(selected.get("episodes_hit"), 0),
+            "selected_episodes_total": as_int(selected.get("episodes_total"), 0),
             "selected_unique_events": as_int(selected.get("unique_events"), 0),
             "selected_opp_per_day": as_float(selected.get("opportunities_per_day_capped"), 0.0),
             "reasons": [str(x)[:180] for x in reasons[:8]],
+        },
+        "live": {
+            "open_positions": len(open_positions),
+            "daily_notional_usd": as_float(live_state.get("daily_notional_usd"), 0.0),
+            "last_run_mode": str(((live_state.get("last_run") if isinstance(live_state.get("last_run"), dict) else {}) or {}).get("mode") or ""),
+            "last_run_attempted": as_int(((live_state.get("last_run") if isinstance(live_state.get("last_run"), dict) else {}) or {}).get("attempted"), 0),
+            "last_run_submitted": as_int(((live_state.get("last_run") if isinstance(live_state.get("last_run"), dict) else {}) or {}).get("submitted"), 0),
+            "open_rows": open_rows,
+            "recent_execs": list(reversed(recent_live)),
+            "last_fill": last_fill,
+            "exit_note": "Live exit / resolution checks run when execute_event_driven_live.py runs. Current local task policy is daily, not realtime.",
         },
         "summary_text": summary,
     }
@@ -357,6 +454,7 @@ h1{margin:0;font-size:24px;letter-spacing:.06em;text-transform:uppercase}p{margi
 .k{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)}.v{margin-top:5px;font:700 17px Consolas,monospace}.up{color:var(--up)}.down{color:var(--down)}.neutral{color:var(--flat)}
 .grid{display:grid;grid-template-columns:1.2fr 1.2fr 1fr;gap:10px;margin-bottom:10px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px}
 h3{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#a3bece}canvas{width:100%;height:220px;border:1px solid #204357;border-radius:9px;background:#0b1620;display:block}
+.notice{margin:0 0 10px;border:1px solid rgba(255,184,77,.45);background:rgba(255,184,77,.08);border-radius:12px;padding:9px 10px;font:12px Consolas,monospace;color:#ffd28b}
 .rows{max-height:260px;overflow:auto;display:grid;gap:6px}.row{display:flex;justify-content:space-between;border:1px solid #21465c;border-radius:8px;padding:6px 8px;font:12px Consolas,monospace}
 table{width:100%;border-collapse:collapse;font:11px Consolas,monospace}.tw{max-height:320px;overflow:auto;border:1px solid #21455b;border-radius:9px}
 th,td{padding:6px 7px;border-bottom:1px solid #1d3f54;text-align:left;vertical-align:top}th{position:sticky;top:0;background:#122333;color:#9fb9cb;font-size:10px;text-transform:uppercase}
@@ -367,20 +465,22 @@ pre{margin:0;max-height:220px;overflow:auto;border:1px solid #21455b;border-radi
 </style></head><body><div class="wrap">
 <header class="top"><div><h1>Event-Driven Ops Deck</h1><p>observe-only / signal flow + profit-window monitor</p></div>
 <div class="ctl"><label for="win">window</label><select id="win"><option value="30">30m</option><option value="60">60m</option><option value="180" selected>180m</option><option value="360">360m</option><option value="720">720m</option><option value="1440">1440m</option></select><span id="hb" class="badge">waiting...</span></div></header>
+<section class="notice">This page separates two things: observe-only signal flow / projected EV, and actual live position state from the guarded micro-live helper.</section>
 <section class="stats">
 <div class="card"><div class="k">Runs</div><div id="stRuns" class="v">-</div></div>
 <div class="card"><div class="k">Signals (YES/NO)</div><div id="stSignals" class="v">-</div></div>
 <div class="card"><div class="k">Write Rate</div><div id="stWrite" class="v">-</div></div>
 <div class="card"><div class="k">Suppressed Rate</div><div id="stSupp" class="v">-</div></div>
-<div class="card"><div class="k">Decision</div><div id="stDec" class="v">-</div></div>
-<div class="card"><div class="k">Projected / Target</div><div id="stProj" class="v">-</div></div>
-<div class="card"><div class="k">Unique Events/Markets</div><div id="stUniq" class="v">-</div></div>
+<div class="card"><div class="k">Observe Gate</div><div id="stDec" class="v">-</div></div>
+<div class="card"><div class="k">Projected EV / Month</div><div id="stProj" class="v">-</div></div>
+<div class="card"><div class="k">Episode Pass / Basis</div><div id="stUniq" class="v">-</div></div>
 <div class="card"><div class="k">Last Run Age</div><div id="stAge" class="v">-</div></div>
 </section>
+<section class="grid"><article class="panel"><h3>Live Position State</h3><div id="liveState" class="ev"></div></article><article class="panel"><h3>Open Live Positions</h3><div id="liveOpen" class="ev"></div></article><article class="panel"><h3>Recent Live Executions</h3><div id="liveExec" class="ev"></div></article></section>
 <section class="grid"><article class="panel"><h3>Run Flow (cand / write / supp)</h3><canvas id="cRun"></canvas></article><article class="panel"><h3>Signal Edge + Conf</h3><canvas id="cSig"></canvas></article><article class="panel"><h3>Class Breakdown</h3><div id="classes" class="rows"></div></article></section>
 <section class="grid"><article class="panel"><h3>Recent Signals</h3><div class="tw"><table><thead><tr><th>ts</th><th>side</th><th>edge</th><th>conf</th><th>stake</th><th>class</th><th>question</th></tr></thead><tbody id="sigRows"></tbody></table></div></article>
 <article class="panel"><h3>Recent Log Events</h3><div id="events" class="ev"></div></article>
-<article class="panel"><h3>Profit Window</h3><div id="profit" class="ev"></div></article></section>
+<article class="panel"><h3>Projected Profit Window (Observe Only)</h3><div id="profit" class="ev"></div></article></section>
 <section class="panel"><h3>Daily Summary Snapshot</h3><pre id="summary">-</pre><div class="meta"><span id="mA">metrics: -</span><span id="mB">profit: -</span><span id="mC">refresh: __REFRESH_MS__ms</span></div></section>
 </div>
 <script>
@@ -393,21 +493,26 @@ function draw(canvas, lines){const dpr=Math.max(1,window.devicePixelRatio||1),w=
  let mn=Math.min(...all), mx=Math.max(...all); if(Math.abs(mx-mn)<1e-9)mx=mn+1; const p=22,pw=w-p*2,ph=h-p*2,xa=(i,n)=>p+pw*i/Math.max(1,n-1),ya=(v)=>p+((mx-v)/(mx-mn))*ph;
  c.strokeStyle='rgba(140,167,186,.25)'; c.lineWidth=1; for(let i=0;i<=4;i++){const y=p+ph*i/4; c.beginPath(); c.moveTo(p,y); c.lineTo(p+pw,y); c.stroke();}
  for(const l of lines){const arr=l.v||[]; if(arr.length<2)continue; c.strokeStyle=l.c||'#ccc'; c.lineWidth=l.w||1.7; c.beginPath(); for(let i=0;i<arr.length;i++){const x=xa(i,arr.length),y=ya(Number(arr[i]||0)); if(i===0)c.moveTo(x,y); else c.lineTo(x,y);} c.stroke();}}
-function render(s){const t=s.totals||{}, p=s.profit||{}, cls=Array.isArray(s.classes)?s.classes:[], rs=Array.isArray(s.recent_signals)?s.recent_signals:[], ev=Array.isArray(s.recent_events)?s.recent_events:[];
+function render(s){const t=s.totals||{}, p=s.profit||{}, live=s.live||{}, cls=Array.isArray(s.classes)?s.classes:[], rs=Array.isArray(s.recent_signals)?s.recent_signals:[], ev=Array.isArray(s.recent_events)?s.recent_events:[];
  el('stRuns').textContent=String(Number(t.runs||0)); el('stSignals').textContent=`${Number(t.signals||0)} (${Number(t.yes||0)}/${Number(t.no||0)})`;
  el('stWrite').textContent=pct(t.write_rate||0); el('stWrite').className=`v ${(t.write_rate||0)>0.05?'up':'neutral'}`;
  el('stSupp').textContent=pct(t.suppressed_rate||0); el('stSupp').className=`v ${(t.suppressed_rate||0)>0.95?'down':'neutral'}`;
  const d=String(p.decision||'N/A').toUpperCase(); el('stDec').textContent=d; el('stDec').className=`v ${d==='GO'?'up':d==='NO_GO'?'down':'neutral'}`;
- el('stProj').textContent=`${pct(p.projected_monthly_return||0)} / ${pct(p.target_monthly_return||0)}`; el('stProj').className=`v ${((p.projected_monthly_return||0)-(p.target_monthly_return||0))>=0?'up':'down'}`;
- el('stUniq').textContent=`${Number(t.unique_events||0)} / ${Number(t.unique_markets||0)}`; el('stAge').textContent=(Number(t.latest_age_sec||-1)>=0)?age(t.latest_age_sec):'-'; el('stAge').className=`v ${(t.latest_age_sec||0)>600?'down':'neutral'}`;
+ el('stProj').textContent=`$${Number(p.projected_monthly_profit_usd||0).toFixed(2)} / ${pct(p.projected_monthly_return||0)}`; el('stProj').className=`v ${((p.projected_monthly_return||0)-(p.target_monthly_return||0))>=0?'up':'down'}`;
+ const epHit=Number(p.selected_episodes_hit||0), epTotal=Number(p.selected_episodes_total||0), bk=Number(p.assumed_bankroll_usd||0), cap=Number(p.max_stake_usd||0);
+ el('stUniq').textContent=`${epHit}/${epTotal} | $${bk.toFixed(0)}/$${cap.toFixed(0)}`; el('stAge').textContent=(Number(t.latest_age_sec||-1)>=0)?age(t.latest_age_sec):'-'; el('stAge').className=`v ${(t.latest_age_sec||0)>600?'down':'neutral'}`;
+ const lf=live.last_fill||{}, openRows=Array.isArray(live.open_rows)?live.open_rows:[], liveExecs=Array.isArray(live.recent_execs)?live.recent_execs:[];
+ el('liveState').innerHTML=`<div class="evt"><b>open positions</b>: ${Number(live.open_positions||0)} | <b>daily deployed</b>: $${Number(live.daily_notional_usd||0).toFixed(2)}</div><div class="evt"><b>last live run</b>: mode=${esc(live.last_run_mode||'-')} attempted=${Number(live.last_run_attempted||0)} filled=${Number(live.last_run_submitted||0)}</div><div class="evt"><b>last fill</b>: ${lf.ts?esc(lf.ts):'-'} ${esc(lf.side||'-')} ${Number(lf.filled_size_shares||0).toFixed(2)} @ ${Number(lf.filled_avg_price||0).toFixed(3)} = $${Number(lf.filled_notional_usd||0).toFixed(2)}</div><div class="evt"><b>exit cadence</b>: ${esc(live.exit_note||'-')}</div>`;
+ el('liveOpen').innerHTML=openRows.length?openRows.map(x=>`<div class="evt"><div><b>${esc(x.side||'-')}</b> ${Number(x.size_shares||0).toFixed(2)} @ ${Number(x.entry_price||0).toFixed(3)} = $${Number(x.notional_usd||0).toFixed(2)}</div><div>${esc(String(x.question||''))}</div><div>requested=$${Number(x.requested_notional_usd||0).toFixed(2)} | age=${Number(x.age_hours||0).toFixed(1)}h | status=${esc(x.status||'-')}</div></div>`).join(''):'<div class="evt">no open live positions</div>';
+ el('liveExec').innerHTML=liveExecs.length?liveExecs.map(x=>`<div class="evt ${esc(x.status||'')}"><div>${esc(x.ts||'-')} | ${esc(String(x.status||'-').toUpperCase())} | ${esc(x.side||'-')}</div><div>${esc(String(x.question||''))}</div><div>${Number(x.filled_size_shares||0)>0?`filled ${Number(x.filled_size_shares||0).toFixed(2)} @ ${Number(x.filled_avg_price||0).toFixed(3)} = $${Number(x.filled_notional_usd||0).toFixed(2)}`:esc(x.reason||'no fill')}</div></div>`).join(''):'<div class="evt">no live executions yet</div>';
  draw(el('cRun'),[{v:s.series?.candidate,c:'#5bd3ff',w:2.1},{v:s.series?.written,c:'#1fd08f',w:1.8},{v:s.series?.suppressed,c:'#ff6b78',w:1.4}]);
  draw(el('cSig'),[{v:s.series?.signal_edge,c:'#ffb84d',w:2.0},{v:(s.series?.signal_conf||[]).map(x=>Number(x||0)*30),c:'#5bd3ff',w:1.3}]);
  el('classes').innerHTML=cls.length?cls.map(x=>`<div class="row"><span>${esc(x.name)}</span><b>${Number(x.count||0)}</b></div>`).join(''):'<div class="row"><span>-</span><b>0</b></div>';
  el('sigRows').innerHTML=rs.length?rs.map(x=>`<tr><td>${esc(x.ts||'')}</td><td class="${x.side==='YES'?'up':'down'}">${esc(x.side||'-')}</td><td class="${Number(x.edge_cents||0)>=0?'up':'down'}">${(Number(x.edge_cents||0)>=0?'+':'')+Number(x.edge_cents||0).toFixed(2)}c</td><td>${pct(x.confidence||0)}</td><td>$${Number(x.stake||0).toFixed(2)}</td><td>${esc(x.event_class||'-')}</td><td>${esc(String(x.question||'').slice(0,140))}</td></tr>`).join(''):'<tr><td colspan="7">no signals in window</td></tr>';
  el('events').innerHTML=ev.length?ev.slice().reverse().map(x=>`<div class="evt ${esc(x.kind||'')}"><div>${esc(x.ts||'-')} | ${esc(String(x.kind||'info').toUpperCase())}</div><div>${esc(x.text||'')}</div></div>`).join(''):'<div class="evt">no recent log events</div>';
- const reasons=Array.isArray(p.reasons)?p.reasons:[]; el('profit').innerHTML=`<div class="evt"><b>decision</b>: ${esc(d)} | <b>threshold</b>: ${Number(p.selected_threshold_cents||0).toFixed(2)}c</div><div class="evt"><b>projected</b>: ${pct(p.projected_monthly_return||0)} | <b>target</b>: ${pct(p.target_monthly_return||0)}</div><div class="evt"><b>hit ratio</b>: ${pct(p.selected_hit_ratio||0)} | <b>events</b>: ${Number(p.selected_unique_events||0)} | <b>opp/day</b>: ${Number(p.selected_opp_per_day||0).toFixed(2)}</div>${reasons.map(r=>`<div class="evt">${esc(r)}</div>`).join('')||'<div class="evt">no decision reasons</div>'}`;
+ const reasons=Array.isArray(p.reasons)?p.reasons:[]; el('profit').innerHTML=`<div class="evt"><b>observe-only</b>: ${esc(p.observe_only_note||'Projected EV only')}</div><div class="evt"><b>gate</b>: ${esc(d)} | <b>threshold</b>: ${Number(p.selected_threshold_cents||0).toFixed(2)}c</div><div class="evt"><b>projected EV</b>: $${Number(p.projected_monthly_profit_usd||0).toFixed(2)} / ${pct(p.projected_monthly_return||0)} | <b>target</b>: ${pct(p.target_monthly_return||0)}</div><div class="evt"><b>basis</b>: bankroll=$${bk.toFixed(2)} | stake_cap=$${cap.toFixed(2)}</div><div class="evt"><b>episode pass</b>: ${epHit}/${epTotal} = ${pct(p.selected_hit_ratio||0)} | <b>events</b>: ${Number(p.selected_unique_events||0)} | <b>opp/day</b>: ${Number(p.selected_opp_per_day||0).toFixed(2)}</div>${reasons.map(r=>`<div class="evt">${esc(r)}</div>`).join('')||'<div class="evt">no decision reasons</div>'}`;
  el('summary').textContent=String(s.summary_text||'-'); el('mA').textContent=`metrics: avg_runtime=${Number(t.avg_runtime_sec||0).toFixed(2)}s edge_median=${(Number(t.edge_median_cents||0)>=0?'+':'')+Number(t.edge_median_cents||0).toFixed(2)}c conf_mean=${pct(t.confidence_mean||0)}`;
- el('mB').textContent=`profit: decision=${d} projected=${pct(p.projected_monthly_return||0)} target=${pct(p.target_monthly_return||0)}`; el('hb').textContent=`updated ${s.generated_at||'-'} | window ${Number(s.window_minutes||0)}m`;}
+ el('mB').textContent=`projected_ev: $${Number(p.projected_monthly_profit_usd||0).toFixed(2)} / ${pct(p.projected_monthly_return||0)} (not realized)`; el('hb').textContent=`updated ${s.generated_at||'-'} | window ${Number(s.window_minutes||0)}m`;}
 async function tick(){try{const m=Number(el('win').value||180); const r=await fetch(`/api/snapshot?minutes=${encodeURIComponent(m)}`,{cache:'no-store'}); if(!r.ok)throw new Error(`HTTP ${r.status}`); render(await r.json());}catch(err){el('hb').textContent=`error ${String(err).slice(0,80)}`;}}
 el('win').addEventListener('change',tick); window.addEventListener('resize',tick); tick(); setInterval(tick,Math.max(700,REFRESH_MS));
 </script></body></html>"""

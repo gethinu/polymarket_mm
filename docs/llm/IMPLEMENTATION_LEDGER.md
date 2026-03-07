@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `47`
-- worktree_changes: `25`
+- commits_scanned: `49`
+- worktree_changes: `29`
 - link_intake_sessions: `9`
 
 ## Purpose
@@ -20,19 +20,21 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 32 | `2026-02-28 21:54` | `497977f1` | feat: add pending-release checker, alarms, and batch runner |
-| `knowledge_intake` | 2 | `2026-02-25 16:45` | `e8150e70` | 20260225 |
+| `docs_llm` | 34 | `2026-03-07 00:38` | `cacfaf20` | feat: add event-driven ops dashboard and preview cooldown |
+| `knowledge_intake` | 3 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 16 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
-| `security_or_ops` | 19 | `2026-02-28 21:54` | `497977f1` | feat: add pending-release checker, alarms, and batch runner |
-| `simmer_clob` | 26 | `2026-02-27 23:48` | `c3d5a905` | strengthen morning gates and extend event-driven observe tooling |
-| `strategy_register` | 13 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
-| `task_automation` | 21 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
-| `weather_pipeline` | 7 | `2026-02-27 22:49` | `4b6eba99` | feat: tighten automation health guards and weather mutex wiring |
+| `security_or_ops` | 20 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
+| `simmer_clob` | 27 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
+| `strategy_register` | 14 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
+| `task_automation` | 23 | `2026-03-07 00:38` | `cacfaf20` | feat: add event-driven ops dashboard and preview cooldown |
+| `weather_pipeline` | 8 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-03-07 00:38` | `cacfaf20` | `docs_llm,task_automation` | feat: add event-driven ops dashboard and preview cooldown | `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, `scripts/event_driven_monitor_dashboard.py`, +7 |
+| `2026-02-28 23:42` | `bd8f2e11` | `docs_llm,knowledge_intake,security_or_ops,simmer_clob,strategy_register,task_automation,weather_pipeline` | 20260228_1 | `docs/SIMMER_PINGPONG.md`, `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb/00_overview.md`, `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb/01_winkle-on-x-guide-how-to-create-your-own.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, +22 |
 | `2026-02-28 21:54` | `497977f1` | `docs_llm,security_or_ops` | feat: add pending-release checker, alarms, and batch runner | `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, +7 |
 | `2026-02-28 13:12` | `7b4688d3` | `docs_llm` | docs: update strategy/state and refresh implementation ledger | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md` |
 | `2026-02-28 12:21` | `3d9a8012` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation` | add guarded no-longshot live path and kpi-core checks | `docs/llm/ARCHITECTURE.md`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, +11 |
@@ -84,31 +86,35 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `docs/SIMMER_PINGPONG.md` |
+| `M` | `configs/bot_supervisor.observe.json` |
+| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `M` | `docs/llm/INTERFACES.md` |
 | `M` | `docs/llm/STATE.md` |
 | `M` | `docs/llm/STRATEGY.md` |
+| `M` | `scripts/btc5m_monitor_dashboard.py` |
+| `M` | `scripts/event_driven_monitor_dashboard.py` |
+| `M` | `scripts/execute_event_driven_live.py` |
 | `M` | `scripts/fade_monitor_dashboard.py` |
-| `M` | `scripts/install_weather_profit_window_weekly_task.ps1` |
-| `M` | `scripts/install_weather_top30_readiness_daily_task.ps1` |
-| `M` | `scripts/lib/clob_arb_runtime.py` |
-| `M` | `scripts/polymarket_clob_arb_realtime.py` |
+| `M` | `scripts/install_no_longshot_daily_task.ps1` |
+| `M` | `scripts/optimize_clob_fade_entry_filters.py` |
 | `M` | `scripts/render_strategy_register_snapshot.py` |
-| `M` | `scripts/render_weather_consensus_overview.py` |
 | `M` | `scripts/report_automation_health.py` |
-| `M` | `scripts/report_event_driven_profit_window.py` |
-| `M` | `scripts/report_weather_arb_profit_window.py` |
-| `M` | `scripts/run_weather_top30_readiness_daily.ps1` |
-| `M` | `scripts/simmer_pingpong_mm.py` |
-| `M` | `scripts/weather_daily_daemon.py` |
-| `M` | `tests/test_clob_arb_runtime.py` |
+| `M` | `scripts/run_no_longshot_daily_report.ps1` |
+| `M` | `tests/test_event_driven_monitor_dashboard.py` |
+| `M` | `tests/test_execute_event_driven_live.py` |
+| `M` | `tests/test_render_strategy_register_snapshot.py` |
 | `M` | `tests/test_report_automation_health.py` |
-| `??` | `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb/` |
-| `??` | `docs/memo0228_1.txt` |
-| `??` | `docs/memo0228_2.txt` |
-| `??` | `scripts/btc5m_monitor_dashboard.py` |
-| `??` | `tests/test_simmer_pingpong_mm.py` |
+| `??` | `docs/llm/PROFIT_STAGE_PROMPTS.md` |
+| `??` | `scripts/capture_fade_checkpoint_baseline.py` |
+| `??` | `scripts/install_fade_regime_staged_checks_task.ps1` |
+| `??` | `scripts/judge_fade_longonly_checkpoint.py` |
+| `??` | `scripts/report_fade_longonly_checkpoint.py` |
+| `??` | `scripts/run_fade_regime_staged_checks.ps1` |
+| `??` | `scripts/run_fade_regime_staged_checks.py` |
+| `??` | `tests/test_fade_monitor_dashboard.py` |
+| `??` | `tests/test_fade_regime_staged_checks_ps1.py` |
+| `??` | `tests/test_run_fade_regime_staged_checks.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

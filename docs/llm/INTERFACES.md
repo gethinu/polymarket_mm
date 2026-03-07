@@ -62,9 +62,10 @@ Bot supervisor (parallel manager for multiple bots):
   - `status/stop`: `--state-file`
   - env overrides: `BOTSUP_CONFIG`, `BOTSUP_RUN_SECONDS`, `BOTSUP_POLL_SEC`, `BOTSUP_WRITE_STATE_SEC`
 - Default `configs/bot_supervisor.observe.json` jobs:
-  - enabled: `event_driven`
+  - enabled: `event_driven`, `event_driven_dashboard`
   - disabled by default: `btc5m_lag`, `btc5m_panic`, `no_longshot_daily_daemon`, `weather_daily_daemon`, `fade_both`, `fade_long_canary`, `fade_short_canary`, `fade_router`, `clob_fade`
   - default `event_driven` command tuning: `--max-pages 12`, `--max-days-to-end 180`, `--signal-cooldown-sec 7200`, `--signal-state-file logs/event-driven-observe-signal-state.json`
+  - default `event_driven_dashboard` command tuning: `--host 127.0.0.1`, `--port 8788`, `--window-minutes 180`, `--refresh-ms 1200`
   - `no_longshot_daily_daemon` command には gap guard 既定（`--runner-gap-outcome-tag prod`, `--runner-gap-error-alert-rate-7d 0.2`, `--runner-gap-error-alert-min-runs-7d 5`, `--runner-fail-on-gap-scan-error`, `--runner-fail-on-gap-error-rate-high`）に加え、`--runner-strict-realized-band-only` を組み込み済み。
   - `no_longshot_daily_daemon` を有効化する場合、重複実行防止のため Scheduled Task `NoLongshotDailyReport` は停止/無効化して運用する
   - `weather_daily_daemon` を使う場合は、`WeatherMimicPipelineDaily` / `WeatherTop30ReadinessDaily` Scheduled Task を停止/無効化して重複実行を避ける
@@ -566,7 +567,7 @@ Polymarket strategy register snapshot (observe-only):
   - `kpi_core.daily_realized_pnl_day`（日次実現PnLの対象日 `YYYY-MM-DD`）
   - `kpi_core.monthly_return_now_text`（現時点の月次リターン表示）
   - `kpi_core.monthly_return_now_source`（月次リターン表示の由来）
-  - `kpi_core.max_drawdown_30d_ratio`（直近30日の最大ドローダウン比率）
+  - `kpi_core.max_drawdown_30d_ratio`（直近30日の最大ドローダウン比率。`monthly_return_now_source` と同系列を優先）
   - `kpi_core.max_drawdown_30d_text`（直近30日の最大ドローダウン）
   - `kpi_core.source`（`strategy_register_latest.json` 固定）
   - `no_longshot_status.monthly_return_now_text`（新条件専用があれば優先表示）
@@ -580,6 +581,9 @@ Polymarket strategy register snapshot (observe-only):
   - `no_longshot_status.rolling_30d_resolved_trades`（新条件専用があれば優先表示）
   - `no_longshot_status.rolling_30d_resolved_trades_new_condition`
   - `no_longshot_status.rolling_30d_resolved_trades_all`
+  - `no_longshot_status.daily_realized_pnl_usd_latest`, `no_longshot_status.daily_realized_pnl_day`
+  - `no_longshot_status.rolling_30d_max_drawdown_ratio`, `no_longshot_status.rolling_30d_max_drawdown_text`
+  - `no_longshot_status.daily_realized_pnl_source`, `no_longshot_status.rolling_30d_max_drawdown_source`
   - `realized_30d_gate`（realized 判定ゲート。互換目的で `decision` は従来の 30日判定を維持）
   - `realized_30d_gate.decision_3stage`（`7日暫定 / 14日中間 / 30日確定` の段階判定）
   - `realized_30d_gate.decision_3stage_label_ja`（段階判定の日本語表示ラベル）
@@ -797,6 +801,7 @@ Automation health report (observe-only):
   - `WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `SimmerABDailyReport`, `MorningStrategyStatusDaily`
   - optional: `WalletAutopsyDailyReport`（未導入なら `OPTIONAL_MISSING` で NO_GO にはしない）
   - optional: `EventDrivenDailyReport`（未導入なら `OPTIONAL_MISSING` で NO_GO にはしない）
+  - optional: `FadeRegimeStagedChecks30m`（未導入なら `OPTIONAL_MISSING` で NO_GO にはしない）
 - Default artifact checks include:
   - `logs/strategy_register_latest.json`, `logs/clob_arb_realized_daily.jsonl`, `logs/strategy_realized_pnl_daily.jsonl`
   - `logs/weather_top30_readiness_report_latest.json`, `logs/weather_top30_readiness_daily_run.log`, `logs/weather_mimic_pipeline_daily_run.log`, `logs/no_longshot_daily_run.log`, `logs/no_longshot_daily_summary.txt`, `logs/morning_status_daily_run.log`
@@ -807,6 +812,7 @@ Automation health report (observe-only):
   - optional: `logs/simmer-ab-decision-latest.json`（存在すれば鮮度判定、未作成なら `OPTIONAL_MISSING` で NO_GO にはしない）
   - optional: `logs/simmer_ab_supervisor_state.json`（存在すれば鮮度判定。既定 max age 6h）
   - optional: `logs/bot_supervisor_state.json`（存在すれば鮮度判定。既定 max age 6h）
+  - optional: `logs/fade_regime_staged_checks_run.log`, `logs/fade_regime_staged_decision_latest.json`（存在すれば鮮度判定。既定 max age 6h）
   - optional artifact は advisory 扱い。`required=false` の行は `STALE` / `INVALID_CONTENT` でも `NO_GO` 判定には含めない（運用警告として表示のみ）。
   - `logs/strategy_register_latest.json` が fresh な場合、authority key（`kpi_core.daily_realized_pnl_usd`, `kpi_core.monthly_return_now_text`, `kpi_core.max_drawdown_30d_text`, `no_longshot_status.monthly_return_now_text/source/new_condition/all`, `realized_30d_gate.decision`）の存在を必須確認（欠落時は `INVALID_CONTENT` で `NO_GO`）
   - `kpi_core.monthly_return_now_text` が `n/a` 以外なのに `kpi_core.monthly_return_now_source` が `realized_rolling_30d*` または `realized_monthly_return.projected_monthly_return_text` でない場合は `INVALID_CONTENT` で `NO_GO`
@@ -815,10 +821,12 @@ Automation health report (observe-only):
   - `MorningStrategyStatusDaily` task action 引数は practical gate 運用必須（`-NoLongshotPracticalDecisionDate`, `-NoLongshotPracticalSlideDays`, `-NoLongshotPracticalMinResolvedTrades`）に加え Simmer interim gate 必須（`-SimmerAbInterimTarget`, `-FailOnSimmerAbInterimNoGo`, `-NoBackground`）かつ skip系フラグ（`-NoRefresh`, `-SkipHealth`, `-SkipGateAlarm`, `-SkipUncorrelatedPortfolio`, `-SkipImplementationLedger`, `-SkipSimmerAb`）未指定を必須確認する。switch は `:$false` を未有効扱いとし、値フォーマットは `NoLongshotPracticalDecisionDate=YYYY-MM-DD`, `NoLongshotPracticalSlideDays>=1`, `NoLongshotPracticalMinResolvedTrades>=1`, `SimmerAbInterimTarget=7d|14d` を必須確認する。task action が複数（`||`）の場合も `INVALID_CONTENT` とする（違反時は task `INVALID_CONTENT` で `NO_GO`）
   - `SimmerABDailyReport` task action 引数は判定運用必須（`-JudgeMinDays`, `-JudgeMinWindowHours`, `-JudgeExpectancyRatioThreshold`, `-JudgeDecisionDate`, `-FailOnFinalNoGo`, `-NoBackground`）かつ `-SkipJudge` 未指定を必須確認する。switch は `:$false` を未有効扱いとし、値フォーマットは `JudgeMinDays>=1`, `JudgeMinWindowHours>0`, `JudgeDecisionDate=YYYY-MM-DD` を必須確認する。task action が複数（`||`）の場合も `INVALID_CONTENT` とする（違反時は task `INVALID_CONTENT` で `NO_GO`）
   - `EventDrivenDailyReport` task action 引数は `-NoBackground` を必須、`-SkipProfitWindow` を禁止とする。switch は `:$false` を未有効扱いとし、task action が複数（`||`）の場合も `INVALID_CONTENT` とする（違反時は task `INVALID_CONTENT` で `NO_GO`）
+  - `FadeRegimeStagedChecks30m` task action 引数は `-NoBackground` を必須、`scripts/run_fade_regime_staged_checks.ps1` 呼び出しを必須とする。switch は `:$false` を未有効扱いとし、task action が複数（`||`）の場合も `INVALID_CONTENT` とする（違反時は task `INVALID_CONTENT` で `NO_GO`）
   - `logs/simmer_ab_supervisor_state.json` が fresh な場合、`mode=run` / `supervisor_running=true` / `supervisor_pid` 生存 / enabled job の `running=true` かつ PID 生存を必須確認（不整合は `INVALID_CONTENT` で `NO_GO`）
   - `logs/bot_supervisor_state.json` が fresh な場合、`mode=run` / `supervisor_running=true` / `supervisor_pid` 生存を必須確認し、`configs/bot_supervisor.observe.json` で `event_driven.enabled=true` のときは `event_driven` job の `running=true` かつ PID 生存も必須確認する（不整合は `INVALID_CONTENT` で `NO_GO`）
 - Soft-fail behavior:
   - `LastTaskResult=0xC000013A (3221225786)` または `267014` でも、対応 runner log/artifact が fresh な場合は `SOFT_FAIL_INTERRUPTED` として `NO_GO` 判定から除外する（`WeatherTop30ReadinessDaily`, `WeatherMimicPipelineDaily`, `NoLongshotDailyReport`, `WalletAutopsyDailyReport`, `SimmerABDailyReport`, `EventDrivenDailyReport`）。
+  - `FadeRegimeStagedChecks30m` も同様に、`logs/fade_regime_staged_checks_run.log` が fresh な場合は `SOFT_FAIL_INTERRUPTED` として扱う。
   - `MorningStrategyStatusDaily` は `LastTaskResult=267014 (0x41306)` でも `logs/morning_status_daily_run.log` が fresh なら `SOFT_FAIL_INTERRUPTED` として扱う。
   - 再登録直後などの no-run sentinel 時刻（例: `0001` / `1601` / `1999-11-30`）は `NO_RUN_YET` として扱い、失敗扱いしない。
   - `state=Running` または `LastTaskResult=267009 (0x41301)` は `RUNNING` として扱い、失敗扱いしない。
@@ -962,6 +970,33 @@ Polymarket CLOB fade monitor (observe-only, multi-bot consensus simulation):
 - Observation report:
   - `python scripts/report_clob_fade_observation.py --hours 24`
   - `python scripts/report_clob_fade_observation.py --hours 24 --discord`
+- Balanced checkpoint report (24h intermediate KPI, long-only local profile):
+  - `python scripts/report_fade_longonly_checkpoint.py`
+  - `python scripts/report_fade_longonly_checkpoint.py --hours 24 --baseline-json logs/fade_longonly_24h_baseline_latest.json --out-json logs/fade_longonly_24h_eval_current_latest.json --out-txt logs/fade_longonly_24h_eval_current_latest.txt`
+  - key flags: `--hours`, `--baseline-json`, `--baseline-start-local`, `--metrics-file`, `--state-file`, `--log-file`, `--supervisor-state-file`, `--supervisor-job-name`, `--out-json`, `--out-txt`, `--tail-bytes`
+  - checkpoint JSON は `since_baseline`（`baseline.started_at_local` 起点、`--baseline-start-local` でoverride可）と `since_supervisor_start` の両方を出力する。
+- Fade checkpoint baseline capture (observe-only snapshot):
+  - `python scripts/capture_fade_checkpoint_baseline.py --phase fade_regime_both_redesign --state-file logs/clob_fade_observe_profit_regime_both_state.json --out-json logs/fade_regime_both_baseline_latest.json`
+  - `python scripts/capture_fade_checkpoint_baseline.py --phase fade_regime_long_redesign --state-file logs/clob_fade_observe_profit_regime_long_state.json --out-json logs/fade_regime_long_baseline_latest.json`
+  - `python scripts/capture_fade_checkpoint_baseline.py --phase fade_regime_short_redesign --state-file logs/clob_fade_observe_profit_regime_short_state.json --out-json logs/fade_regime_short_baseline_latest.json`
+  - key flags: `--phase`, `--state-file`, `--out-json`, `--baseline-tag`, `--eval-after-hours`
+- Fade regime/side staged batch checker (observe-only, 3-arm):
+  - `python scripts/run_fade_regime_staged_checks.py`
+  - `python scripts/run_fade_regime_staged_checks.py --hours 24 --metric-scope since_baseline --out-json logs/fade_regime_staged_decision_latest.json --out-txt logs/fade_regime_staged_decision_latest.txt`
+  - key flags: `--hours`, `--metric-scope`, `--tail-bytes`, `--supervisor-state-file`, `--control-arm-id`, `--control-self-for-control-arm`, `--phase-trades-mid`, `--phase-trades-go`, `--phase-trades-final`, `--out-json`, `--out-txt`
+- Fade regime/side staged checker runner (observe-only periodic helper):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_fade_regime_staged_checks.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_fade_regime_staged_checks.ps1 -NoBackground -Hours 24 -MetricScope since_baseline -RefreshStrategySnapshot`
+  - key flags: `-RepoRoot`, `-PythonExe`, `-Hours`, `-MetricScope`, `-TailBytes`, `-SupervisorStateFile`, `-ControlArmId`, `-NoControlSelfForControlArm`, `-RefreshStrategySnapshot`, `-NoBackground`
+- Fade regime/side staged checker task installer (observe-only, interval schedule):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_fade_regime_staged_checks_task.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_fade_regime_staged_checks_task.ps1 -NoBackground -IntervalMinutes 30 -RunNow`
+  - key flags: `-TaskName`, `-RepoRoot`, `-IntervalMinutes`, `-DurationDays`, `-PowerShellExe`, `-Hours`, `-MetricScope`, `-ControlArmId`, `-NoControlSelfForControlArm`, `-RefreshStrategySnapshot`, `-RunNow`, `-NoBackground`
+- Balanced checkpoint decision judge (150/300/500 closed-trade staged gate):
+  - `python scripts/judge_fade_longonly_checkpoint.py`
+  - `python scripts/judge_fade_longonly_checkpoint.py --checkpoint-json logs/fade_longonly_24h_eval_current_latest.json --out-json logs/fade_longonly_checkpoint_decision_latest.json --out-txt logs/fade_longonly_checkpoint_decision_latest.txt`
+  - `python scripts/judge_fade_longonly_checkpoint.py --checkpoint-json logs/fade_longonly_24h_eval_current_latest.json --control-checkpoint-json logs/fade_longonly_control_eval_latest.json`
+  - key flags: `--checkpoint-json`, `--metric-scope`（`since_baseline`/`since_supervisor_start`）, `--control-checkpoint-json`, `--stress-checkpoint-json`, `--phase-trades-mid`, `--phase-trades-go`, `--phase-trades-final`, `--mid-min-pnl-per-trade-cents`, `--mid-max-timeout-rate`, `--mid-min-profit-factor`, `--mid-max-dd-ratio-vs-control`, `--go-min-net-pnl-usd`, `--go-min-pnl-per-trade-cents`, `--go-max-timeout-rate`, `--go-min-profit-factor`, `--go-max-dd-ratio-vs-control`, `--go-min-trade-ratio-vs-control`, `--final-min-net-pnl-usd`, `--final-min-pnl-per-trade-cents`, `--final-max-timeout-rate`, `--final-min-profit-factor`, `--final-max-dd-ratio-vs-control`, `--final-stress-min-net-pnl-usd`, `--final-stress-min-profit-factor`, `--out-json`, `--out-txt`
 - Side-mode decision memo (2026-02-25):
   - `long-only` was selected for the fade observe suite because it had the best `total_pnl` in the same comparison window (`2026-02-21 18:20:23` -> `2026-02-25 22:00:31`).
   - Result:
@@ -969,6 +1004,15 @@ Polymarket CLOB fade monitor (observe-only, multi-bot consensus simulation):
     - `long-only: total_pnl=+0.7670, day_pnl=-0.4650, entries/exits=360/362`
     - `short-only: total_pnl=+0.0775, day_pnl=-0.3195, entries/exits=409/409`
   - Current local supervisor profile `logs/bot_supervisor.fade.observe.json` is simplified to long-only operation (`fade_long_canary` + `fade_dashboard`); `fade_both`, `fade_short_canary`, and `fade_router` are removed from this profile.
+  - As of `2026-03-01`, the same local long-only profile applies balanced gate values:
+    - `--consensus-min-score 0.86`, `--consensus-min-agree 2`, `--consensus-min-score-agree1 0.86`, `--consensus-min-score-agree2 0.86`
+    - `--take-profit-cents 0.16`, `--stop-loss-cents 0.20`
+    - `--expected-move-cost-ratio 1.50`, `--min-expected-edge-cents 0.12`
+  - As of `2026-03-01` staged checkpoint verdict (`logs/fade_longonly_checkpoint_decision_latest.json`) turned `FINAL_500 / NO_GO`; legacy `fade_long_canary` remains disabled.
+  - As of `2026-03-01`, local profile is repurposed to regime/side redesign shadow-run:
+    - `fade_regime_both_core` (`--allowed-sides both`, gate `score=0.88/agree=2`, `tp/sl=0.15/0.19`, `expected_move_cost_ratio=1.75`, `min_expected_edge_cents=0.14`)
+    - `fade_regime_long_strict` (`--allowed-sides long`, gate `score=0.90/agree=3`, `tp/sl=0.14/0.18`, `expected_move_cost_ratio=2.00`, `min_expected_edge_cents=0.16`)
+    - `fade_regime_short_strict` (`--allowed-sides short`, gate `score=0.90/agree=3`, `tp/sl=0.14/0.18`, `expected_move_cost_ratio=2.00`, `min_expected_edge_cents=0.16`)
 - Parameter optimization (metrics replay):
   - `python scripts/optimize_clob_fade_params.py --hours 6`
   - `python scripts/optimize_clob_fade_params.py --hours 72 --metrics-glob "logs/clob-fade-observe-profit*-metrics.jsonl" --top-n 8`
@@ -1043,14 +1087,15 @@ Polymarket NO-longshot toolkit (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GapFallbackNoHourCap`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -FailOnGapScanError`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -Discord`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -StrictRealizedBandOnly -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72`
-  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -StrictRealizedBandOnly -LiveExecute -LiveConfirm YES -LiveMaxOrders 1 -LiveOrderSizeShares 5 -LiveMaxDailyNotionalUsd 10 -LiveMaxEntryNoPrice 0.84`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -StrictRealizedBandOnly -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedEntryTopN 2 -AllowRealizedEntryIngest`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -StrictRealizedBandOnly -RealizedEntryTopN 2 -AllowRealizedEntryIngest -LiveExecute -LiveConfirm YES -LiveMaxOrders 1 -LiveOrderSizeShares 5 -LiveMaxDailyNotionalUsd 10 -LiveMaxEntryNoPrice 0.84`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -NoBackground -SkipRefresh -RunLogPath logs/no_longshot_daily_run_canon.log`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_no_longshot_daily_report.ps1 -GuardMaxOpenPositions 16 -GuardMaxOpenPerCategory 3`
   - `NO_LONGSHOT_DAILY_DISCORD=1` でも通知有効（Webhookは `CLOBBOT_DISCORD_WEBHOOK_URL` または `DISCORD_WEBHOOK_URL`）
   - 日次実行時に `record_no_longshot_realized_daily.py` を呼び、`rolling_30d_monthly_return`（実測）を summary に追記
   - 実測エントリー入力は `logs/no_longshot_daily_screen.csv` を基本にしつつ、`logs/no_longshot_fast_screen_lowyes_latest.csv`（YES 0.16-0.20 / 残り72h以内）に候補があれば自動で fast 側を優先
   - `-RealizedFastYesMin` / `-RealizedFastYesMax` / `-RealizedFastMaxHoursToEnd` / `-RealizedFastMaxPages` で fast 実測候補スクリーンの範囲を明示調整できる（例: `-RealizedFastYesMin 0.16` は概ね `entry_no_price <= 0.84` 相当）。
+  - `-RealizedEntryTopN > 0` で新規実測エントリーを少量追加できる。安全策として `-AllowRealizedEntryIngest` の同時指定が必須（未指定は非0終了）。
   - 既定では fast screen 取得失敗時も runner 全体を継続し、`primary_screen` へ自動フォールバック（Summaryの `fast screen status` に `failed` を記録）。
   - `-StrictRealizedBandOnly` を付けると fast screen 不在/失敗時も `primary_screen` へフォールバックしない（`fast_72h_lowyes` のみで評価）。
   - `-LiveExecute -LiveConfirm YES` を明示すると、summary 生成後に `scripts/execute_no_longshot_live.py` を起動して no-longshot の小ロット live NO エントリーを実行する（既定は未実行）。
@@ -1063,9 +1108,10 @@ Polymarket NO-longshot toolkit (observe-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -Discord`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -RealizedFastYesMin 0.16 -RealizedFastYesMax 0.20 -RealizedFastMaxHoursToEnd 72 -RealizedFastMaxPages 120 -RunNow`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -StrictRealizedBandOnly -RunNow`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -StrictRealizedBandOnly -RealizedEntryTopN 2 -AllowRealizedEntryIngest -RunNow`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -StartTime 00:05 -GapOutcomeTag prod -GapErrorAlertRate7d 0.2 -GapErrorAlertMinRuns7d 5 -FailOnGapScanError -FailOnGapErrorRateHigh`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_no_longshot_daily_task.ps1 -NoBackground -?`
-  - installer key flags: `-TaskName`, `-RepoRoot`, `-StartTime`, `-SkipRefresh`, `-Discord`, `-RunNow`, `-PowerShellExe`, `-NoBackground`, `-RealizedFastYesMin`, `-RealizedFastYesMax`, `-RealizedFastMaxHoursToEnd`, `-RealizedFastMaxPages`, `-StrictRealizedBandOnly`, `-GapOutcomeTag`, `-GapErrorAlertRate7d`, `-GapErrorAlertMinRuns7d`, `-FailOnGapScanError`, `-FailOnGapErrorRateHigh`
+  - installer key flags: `-TaskName`, `-RepoRoot`, `-StartTime`, `-SkipRefresh`, `-Discord`, `-RunNow`, `-PowerShellExe`, `-NoBackground`, `-RealizedFastYesMin`, `-RealizedFastYesMax`, `-RealizedFastMaxHoursToEnd`, `-RealizedFastMaxPages`, `-StrictRealizedBandOnly`, `-RealizedEntryTopN`, `-AllowRealizedEntryIngest`, `-GapOutcomeTag`, `-GapErrorAlertRate7d`, `-GapErrorAlertMinRuns7d`, `-FailOnGapScanError`, `-FailOnGapErrorRateHigh`
   - `install_no_longshot_daily_task.ps1` は登録タスクに `-NoBackground` を付与して起動（子プロセス多重化を回避）
   - installer は task principal を `S4U` -> `Interactive` -> default の順で登録を試行。
   - installer 実行後は `Enable-ScheduledTask` を呼び、無効化状態を自動解除。
@@ -1109,8 +1155,8 @@ Polymarket NO-longshot toolkit (observe-only):
 - Daily daemon (supervisor-managed):
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --poll-sec 15 --retry-delay-sec 900 --max-run-seconds 1800 --run-on-start`
-  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
-  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --realized-refresh-sec 900 --realized-entry-top-n 0 --skip-refresh`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --realized-refresh-sec 900 --realized-entry-top-n 2 --allow-realized-entry-ingest --skip-refresh`
+  - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-realized-fast-max-hours-to-end 72 --runner-realized-fast-max-pages 120 --realized-refresh-sec 900 --realized-entry-top-n 2 --allow-realized-entry-ingest --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-realized-fast-yes-min 0.16 --runner-realized-fast-yes-max 0.20 --runner-strict-realized-band-only --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-gap-outcome-tag prod --runner-gap-error-alert-rate-7d 0.2 --runner-gap-error-alert-min-runs-7d 5 --runner-fail-on-gap-scan-error --runner-fail-on-gap-error-rate-high --skip-refresh`
   - `python scripts/no_longshot_daily_daemon.py --run-at-hhmm 00:05 --runner-live-execute --runner-live-confirm-live YES --runner-live-max-new-orders 1 --runner-live-order-size-shares 5 --runner-live-max-daily-notional-usd 10 --runner-live-max-entry-no-price 0.84 --skip-refresh`
@@ -1150,6 +1196,7 @@ Polymarket event-driven mispricing monitor (observe-only):
   - key flags: `--signals-file`, `--state-file`, `--exec-log-file`, `--log-file`, `--max-new-orders`, `--max-stake-usd`, `--max-daily-notional-usd`, `--max-open-positions`, `--repeat-cooldown-min`, `--signal-max-age-min`, `--min-edge-cents`, `--min-confidence`, `--max-entry-price`, `--price-buffer-cents`, `--min-liquidity`, `--min-volume-24h`, `--execute`, `--confirm-live`, `--clob-host`, `--chain-id`, `--pretty`
   - 既定は observe preview（注文未送信）。live 注文は `--execute --confirm-live YES` の同時指定が必須。
   - `--repeat-cooldown-min` は同じ `market_id + side` の preview / submit を短時間で繰り返さないための recent-action cooldown。`0` で無効。
+  - live BUY path uses CLOB best ask + visible ask depth clip and submits `FAK` immediate-or-cancel market orders; execution log rows distinguish `filled` vs `no_fill`, and state rows record actual filled size/notional with requested-size audit fields when partial fills occur.
 - Realtime dashboard (local web):
   - `python scripts/event_driven_monitor_dashboard.py`
   - `python scripts/event_driven_monitor_dashboard.py --host 127.0.0.1 --port 8788 --window-minutes 180 --max-signals 18`

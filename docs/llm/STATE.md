@@ -49,7 +49,8 @@ Polymarket event-driven mispricing monitor (observe-only):
 - Profit-window summary JSON: `logs/event_driven_profit_window_latest.json`
 - Profit-window summary TXT: `logs/event_driven_profit_window_latest.txt`
 - Optional guarded micro-live state JSON: `logs/event_driven_live_state.json`
-  - tracks open positions, daily notional, and recent preview/submit keys for repeat cooldown
+  - tracks open positions, daily notional, and recent preview/fill keys for repeat cooldown
+  - open position rows store actual filled `size_shares` / `notional_usd`; partial-fill audit fields may include `requested_size_shares`, `requested_notional_usd`, and `order_status`
 - Optional guarded micro-live execution log JSONL: `logs/event_driven_live_executions.jsonl`
 - Optional guarded micro-live log: `logs/event_driven_live.log`
 - Optional local dashboard (read-only web): `scripts/event_driven_monitor_dashboard.py` (default `http://127.0.0.1:8788`)
@@ -77,12 +78,40 @@ Polymarket CLOB fade monitor (observe-only):
 - State/control JSON writes use temp-file atomic replace with retry on transient Windows sharing conflicts.
 - Exit management is applied to open positions even when their token is no longer in the current active universe; max-hold timeout can close these inactive positions to avoid long-lived `open_inactive` residue.
 - Optional fade-suite supervisor config: `logs/bot_supervisor.fade.observe.json`
-  - Current local profile is long-only (`fade_long_canary` + `fade_dashboard`).
+  - Historical profile was long-only (`fade_long_canary` + `fade_dashboard`).
+  - As of `2026-03-01`, the local long-only profile uses balanced entry/exit gates:
+    - `--consensus-min-score 0.86`, `--consensus-min-agree 2`, `--consensus-min-score-agree1 0.86`, `--consensus-min-score-agree2 0.86`
+    - `--take-profit-cents 0.16`, `--stop-loss-cents 0.20`
+    - `--expected-move-cost-ratio 1.50`, `--min-expected-edge-cents 0.12`
+  - As of `2026-03-01` staged judge `FINAL_500 / NO_GO`, legacy `fade_long_canary` is disabled.
+  - As of `2026-03-01`, local profile is regime/side redesign shadow-run (`fade_regime_both_core`, `fade_regime_long_strict`, `fade_regime_short_strict`, `fade_dashboard`).
+  - Regime redesign artifacts:
+    - both core: `logs/clob-fade-observe-profit-regime-both.log`, `logs/clob_fade_observe_profit_regime_both_state.json`, `logs/clob-fade-observe-profit-regime-both-metrics.jsonl`
+    - long strict: `logs/clob-fade-observe-profit-regime-long.log`, `logs/clob_fade_observe_profit_regime_long_state.json`, `logs/clob-fade-observe-profit-regime-long-metrics.jsonl`
+    - short strict: `logs/clob-fade-observe-profit-regime-short.log`, `logs/clob_fade_observe_profit_regime_short_state.json`, `logs/clob-fade-observe-profit-regime-short-metrics.jsonl`
 - Optional fade-suite supervisor runtime files:
   - `logs/fade_observe_supervisor.log`
   - `logs/fade_observe_supervisor_state.json`
 - Optional fade watchdog runtime file:
   - `logs/fade_observe_watchdog.log`
+- Fade long-only checkpoint artifacts (observe-only):
+  - `logs/fade_longonly_24h_eval_current_latest.json`
+  - `logs/fade_longonly_24h_eval_current_latest.txt`
+  - JSON は `since_baseline`（原則 `logs/fade_longonly_24h_baseline_latest.json.started_at_local` 起点）と `since_supervisor_start` を併記する。
+- Fade long-only staged decision artifacts (observe-only):
+  - `logs/fade_longonly_checkpoint_decision_latest.json`
+  - `logs/fade_longonly_checkpoint_decision_latest.txt`
+  - 判定script既定の `metric_scope` は `since_baseline`（restart跨ぎで closed trades を累積評価）。
+- Fade regime/side baseline artifacts (observe-only):
+  - `logs/fade_regime_both_baseline_latest.json`
+  - `logs/fade_regime_long_baseline_latest.json`
+  - `logs/fade_regime_short_baseline_latest.json`
+- Fade regime/side staged batch artifacts (observe-only):
+  - per-arm checkpoint: `logs/fade_regime_both_eval_latest.json`, `logs/fade_regime_long_eval_latest.json`, `logs/fade_regime_short_eval_latest.json`
+  - per-arm decision: `logs/fade_regime_both_decision_latest.json`, `logs/fade_regime_long_decision_latest.json`, `logs/fade_regime_short_decision_latest.json`
+  - aggregate decision: `logs/fade_regime_staged_decision_latest.json`, `logs/fade_regime_staged_decision_latest.txt`
+- Fade regime/side staged runner log (observe-only):
+  - `logs/fade_regime_staged_checks_run.log`
 
 Polymarket BTC 5m lag monitor (observe-only):
 - Log: `logs/btc5m-lag-observe.log`
@@ -310,7 +339,8 @@ Polymarket strategy register snapshot (observe-only):
 - Snapshot JSON: `logs/strategy_register_latest.json`
 - Snapshot HTML: `logs/strategy_register_latest.html`
 - Snapshot JSON には `bankroll_policy`、`realized_30d_gate`、`realized_monthly_return` を含む（`realized_30d_gate.decision` は30日最終判定の互換フィールド）。
-- Snapshot JSON には `kpi_core`（`daily_realized_pnl_usd`, `daily_realized_pnl_usd_text`, `daily_realized_pnl_day`, `monthly_return_now_text`, `monthly_return_now_source`, `max_drawdown_30d_ratio`, `max_drawdown_30d_text`, `source`）を含む。
+- Snapshot JSON には `kpi_core`（`daily_realized_pnl_usd`, `daily_realized_pnl_usd_text`, `daily_realized_pnl_day`, `monthly_return_now_text`, `monthly_return_now_source`, `max_drawdown_30d_ratio`, `max_drawdown_30d_text`, `source`）を含む。`monthly_return_now_source` が `realized_rolling_30d_new_condition` のときは、日次PnL/30d最大DDも同じ新条件系列を優先する。
+- Snapshot JSON の `no_longshot_status` には月利系に加えて `daily_realized_pnl_usd_latest`, `daily_realized_pnl_day`, `rolling_30d_max_drawdown_ratio`, `rolling_30d_max_drawdown_text` と各 `*_source` を含む。
 - `bankroll_policy` は `docs/llm/STRATEGY.md` の `## Bankroll Policy` から抽出され、`initial_bankroll_usd`、`allocation_mode`、`live_max_daily_risk_ratio`、`live_max_daily_risk_usd`、`default_adopted_allocations` を保持する。
 - `realized_30d_gate` は `decision_3stage`（7日暫定 / 14日中間 / 30日確定）、`decision_3stage_label_ja`、`stage_label_ja`、`stages`（`label_ja` 含む）、`next_stage`（`label_ja` 含む）を含む。
 - `realized_monthly_return` は `strategy_realized_pnl_daily.jsonl` を優先し、未存在時は累積 snapshot の差分系列をフォールバック利用して計算される。
@@ -366,6 +396,8 @@ Automation health report (observe-only):
   - `logs/simmer-ab-daily-report.log`
   - `logs/simmer-ab-decision-latest.json`
   - `logs/bot_supervisor_state.json`
+  - `logs/fade_regime_staged_checks_run.log`
+  - `logs/fade_regime_staged_decision_latest.json`
 
 ## Secrets
 

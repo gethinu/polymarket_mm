@@ -5,6 +5,17 @@ import datetime as dt
 import execute_event_driven_live as mod
 
 
+class _Level:
+    def __init__(self, price: float, size: float):
+        self.price = str(price)
+        self.size = str(size)
+
+
+class _Book:
+    def __init__(self, asks):
+        self.asks = asks
+
+
 def _row(market_id: str, side: str, minutes_ago: int, edge_cents: float) -> dict:
     return {
         "market_id": market_id,
@@ -47,8 +58,9 @@ def test_build_order_plan_respects_stake_cap():
     assert reason == ""
     assert plan is not None
     assert plan["limit_price"] == 0.12
-    assert plan["size_shares"] == 41.66
+    assert plan["size_shares"] == 41.5
     assert plan["notional_usd"] <= 5.0
+    assert round(plan["notional_usd"], 2) == plan["notional_usd"]
 
 
 def test_build_order_plan_skips_when_min_size_exceeds_cap():
@@ -62,6 +74,115 @@ def test_build_order_plan_skips_when_min_size_exceeds_cap():
     )
     assert plan is None
     assert reason == "min_order_size_exceeds_cap"
+
+
+def test_extract_best_ask_price_uses_lowest_ask():
+    book = _Book([_Level(0.99, 10), _Level(0.21, 7), _Level(0.14, 35)])
+    assert mod.extract_best_ask_price(book) == 0.14
+
+
+def test_clip_plan_to_visible_ask_depth_reduces_size_to_book_depth():
+    plan, reason = mod.build_order_plan(
+        screen_price=0.11,
+        live_price=0.14,
+        max_entry_price=0.35,
+        price_buffer_cents=0.2,
+        max_stake_usd=5.0,
+        min_order_size=1.0,
+    )
+    assert reason == ""
+    assert plan is not None
+    clipped, clip_reason = mod.clip_plan_to_visible_ask_depth(
+        plan,
+        _Book([_Level(0.14, 20), _Level(0.15, 5), _Level(0.21, 100)]),
+        min_order_size=1.0,
+    )
+    assert clip_reason == ""
+    assert clipped is not None
+    assert clipped["limit_price"] == 0.15
+    assert clipped["size_shares"] == 25.0
+    assert clipped["notional_usd"] == 3.75
+    assert clipped["visible_ask_depth"] == 25.0
+
+
+def test_clip_plan_to_visible_ask_depth_skips_when_no_ask_inside_limit():
+    plan, reason = mod.build_order_plan(
+        screen_price=0.11,
+        live_price=0.14,
+        max_entry_price=0.35,
+        price_buffer_cents=0.2,
+        max_stake_usd=5.0,
+        min_order_size=1.0,
+    )
+    assert reason == ""
+    assert plan is not None
+    clipped, clip_reason = mod.clip_plan_to_visible_ask_depth(
+        plan,
+        _Book([_Level(0.16, 20), _Level(0.21, 100)]),
+        min_order_size=1.0,
+    )
+    assert clipped is None
+    assert clip_reason == "no_visible_ask_depth_at_limit"
+
+
+def test_extract_order_fields_from_nested_payload():
+    payload = {"order": {"status": "matched", "size_matched": "7.35", "original_size": "10.0"}}
+    assert mod.extract_order_status(payload) == "matched"
+    assert mod.extract_order_size_matched(payload) == 7.35
+
+
+def test_summarize_fak_fill_prefers_order_snapshot_size():
+    out = mod.summarize_fak_fill(
+        {"order": {"status": "matched", "size_matched": "7.35", "original_size": "10.0"}},
+        {"status": "matched", "takingAmount": "10.0"},
+        [],
+        limit_price=0.20,
+        requested_size_shares=10.0,
+    )
+    assert out["order_status"] == "matched"
+    assert out["filled_size_shares"] == 7.35
+    assert out["requested_size_shares"] == 10.0
+    assert out["filled_notional_usd"] == 1.47
+    assert out["avg_fill_price"] == 0.20
+
+
+def test_summarize_fak_fill_falls_back_to_post_response_amount():
+    out = mod.summarize_fak_fill(
+        None,
+        {"status": "matched", "takingAmount": "4.80"},
+        [],
+        limit_price=0.20,
+        requested_size_shares=4.8,
+    )
+    assert out["order_status"] == "matched"
+    assert out["filled_size_shares"] == 4.8
+    assert out["requested_size_shares"] == 4.8
+    assert out["filled_notional_usd"] == 0.96
+
+
+def test_summarize_fak_fill_prefers_trade_history_when_present():
+    out = mod.summarize_fak_fill(
+        None,
+        {"status": "matched", "takingAmount": "33.2"},
+        [
+            {"taker_order_id": "oid", "size": "20", "price": "0.14"},
+            {"taker_order_id": "oid", "size": "15", "price": "0.14"},
+        ],
+        limit_price=0.15,
+        requested_size_shares=33.2,
+    )
+    assert out["order_status"] == "matched"
+    assert out["filled_size_shares"] == 35.0
+    assert out["filled_notional_usd"] == 4.9
+    assert out["avg_fill_price"] == 0.14
+    assert out["requested_size_shares"] == 33.2
+    assert out["trade_count"] == 2
+
+
+def test_trade_matches_order_id_checks_taker_and_maker_orders():
+    assert mod.trade_matches_order_id({"taker_order_id": "abc"}, "abc") is True
+    assert mod.trade_matches_order_id({"maker_orders": [{"order_id": "abc"}]}, "abc") is True
+    assert mod.trade_matches_order_id({"maker_orders": [{"order_id": "zzz"}]}, "abc") is False
 
 
 def test_prune_recent_actions_keeps_only_unexpired_keys():

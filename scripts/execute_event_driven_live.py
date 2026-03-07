@@ -13,6 +13,8 @@ import datetime as dt
 import json
 import math
 import sys
+import time
+from math import gcd
 from decimal import Decimal, ROUND_CEILING, ROUND_DOWN
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -83,6 +85,52 @@ def q_size_down(v: float) -> float:
     return float(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_DOWN))
 
 
+def q_size4_down(v: float) -> float:
+    if not math.isfinite(v) or v <= 0.0:
+        return 0.0
+    return float(Decimal(str(v)).quantize(Decimal("0.0001"), rounding=ROUND_DOWN))
+
+
+def q_usd2_down(v: float) -> float:
+    if not math.isfinite(v) or v <= 0.0:
+        return 0.0
+    return float(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_DOWN))
+
+
+def compatible_size_step(limit_price: float) -> float:
+    price_cents = int(round(float(limit_price) * 100.0))
+    if price_cents <= 0:
+        return 0.0
+    # For BUY orders, maker amount is USDC and must land on 2 decimal places.
+    # Price is already in whole cents, so size must be snapped so price*size
+    # resolves to an exact cent amount while staying <= 4 share decimals.
+    units = 10000 // gcd(price_cents, 10000)
+    return float(units) / 10000.0
+
+
+def snap_size_for_buy(limit_price: float, max_stake_usd: float) -> float:
+    step = compatible_size_step(limit_price)
+    if step <= 0.0:
+        return 0.0
+    raw_cap = float(max_stake_usd) / float(limit_price)
+    snapped_steps = math.floor((raw_cap + 1e-12) / step)
+    if snapped_steps <= 0:
+        return 0.0
+    return q_size4_down(snapped_steps * step)
+
+
+def snap_size_for_shares(limit_price: float, raw_shares: float) -> float:
+    step = compatible_size_step(limit_price)
+    if step <= 0.0:
+        return 0.0
+    if not math.isfinite(raw_shares) or raw_shares <= 0.0:
+        return 0.0
+    snapped_steps = math.floor((float(raw_shares) + 1e-12) / step)
+    if snapped_steps <= 0:
+        return 0.0
+    return q_size4_down(snapped_steps * step)
+
+
 def fetch_json(url: str, timeout_sec: float = 20.0, retries: int = 3) -> Optional[object]:
     req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     for i in range(max(1, retries)):
@@ -106,6 +154,50 @@ def fetch_market_by_id(market_id: str, timeout_sec: float) -> Optional[dict]:
         if isinstance(row, dict):
             return row
     return None
+
+
+def fetch_order_book(token_id: str, clob_host: str):
+    tid = str(token_id or "").strip()
+    if not tid:
+        return None
+    try:
+        from py_clob_client.client import ClobClient
+
+        return ClobClient(str(clob_host)).get_order_book(tid)
+    except Exception:
+        return None
+
+
+def iter_book_levels(levels) -> Iterable[Tuple[float, float]]:
+    if not levels:
+        return
+    for row in levels:
+        price = as_float(getattr(row, "price", None))
+        size = as_float(getattr(row, "size", None))
+        if price is None or size is None:
+            continue
+        if price <= 0.0 or size <= 0.0:
+            continue
+        yield float(price), float(size)
+
+
+def extract_best_ask_price(order_book) -> Optional[float]:
+    best: Optional[float] = None
+    for price, _size in iter_book_levels(getattr(order_book, "asks", None)):
+        if best is None or price < best:
+            best = float(price)
+    return best
+
+
+def visible_ask_depth(order_book, limit_price: float) -> float:
+    total = 0.0
+    cap = float(limit_price)
+    if not math.isfinite(cap) or cap <= 0.0:
+        return 0.0
+    for price, size in iter_book_levels(getattr(order_book, "asks", None)):
+        if price <= (cap + 1e-9):
+            total += float(size)
+    return float(total)
 
 
 def extract_yes_no_prices(market: dict) -> Optional[Tuple[float, float]]:
@@ -389,6 +481,173 @@ def response_has_error(payload) -> bool:
     return False
 
 
+def extract_first_text(payload, keys: Tuple[str, ...]) -> str:
+    wanted = {str(k) for k in keys}
+    if isinstance(payload, dict):
+        for k, v in payload.items():
+            if str(k) in wanted and isinstance(v, str) and v.strip():
+                return v.strip()
+        for v in payload.values():
+            out = extract_first_text(v, keys)
+            if out:
+                return out
+    elif isinstance(payload, list):
+        for x in payload:
+            out = extract_first_text(x, keys)
+            if out:
+                return out
+    return ""
+
+
+def extract_first_number(payload, keys: Tuple[str, ...]) -> Optional[float]:
+    wanted = {str(k) for k in keys}
+    if isinstance(payload, dict):
+        for k, v in payload.items():
+            if str(k) in wanted:
+                n = as_float(v)
+                if n is not None:
+                    return float(n)
+        for v in payload.values():
+            out = extract_first_number(v, keys)
+            if out is not None:
+                return float(out)
+    elif isinstance(payload, list):
+        for x in payload:
+            out = extract_first_number(x, keys)
+            if out is not None:
+                return float(out)
+    return None
+
+
+def extract_order_status(payload) -> str:
+    return extract_first_text(payload, ("status",))
+
+
+def extract_order_size_matched(payload) -> Optional[float]:
+    return extract_first_number(payload, ("size_matched", "sizeMatched"))
+
+
+def fetch_order_snapshot(client, order_id: str, retries: int = 4, sleep_sec: float = 0.35):
+    oid = str(order_id or "").strip()
+    if not oid:
+        return None
+    last = None
+    for i in range(max(1, int(retries))):
+        try:
+            snap = client.get_order(oid)
+        except Exception as e:
+            last = e
+            snap = None
+        if snap is not None:
+            status = extract_order_status(snap)
+            matched = extract_order_size_matched(snap)
+            if status or matched is not None or i >= int(retries) - 1:
+                return snap
+        if i < int(retries) - 1 and sleep_sec > 0:
+            time.sleep(float(sleep_sec))
+    if last is not None:
+        raise last
+    return None
+
+
+def summarize_fak_fill(
+    order_snapshot,
+    post_response,
+    matching_trades: List[dict],
+    limit_price: float,
+    requested_size_shares: float,
+) -> dict:
+    order_status = extract_order_status(order_snapshot) or extract_order_status(post_response)
+    if (not order_status) and matching_trades:
+        order_status = "MATCHED"
+
+    trade_size = 0.0
+    trade_notional = 0.0
+    for trade in matching_trades:
+        size = as_float(trade.get("size"))
+        price = as_float(trade.get("price"))
+        if size is None or price is None or size <= 0.0 or price <= 0.0:
+            continue
+        trade_size += float(size)
+        trade_notional += float(size) * float(price)
+    if trade_size > 0.0:
+        filled_size = q_size4_down(trade_size)
+        filled_notional = q_usd2_down(trade_notional)
+        avg_fill_price = (filled_notional / filled_size) if filled_size > 0.0 else 0.0
+        return {
+            "order_status": str(order_status or ""),
+            "filled_size_shares": float(filled_size),
+            "filled_notional_usd": float(filled_notional),
+            "avg_fill_price": float(avg_fill_price),
+            "requested_size_shares": float(q_size4_down(requested_size_shares)),
+            "trade_count": int(len(matching_trades)),
+        }
+
+    filled_size = extract_order_size_matched(order_snapshot)
+    if filled_size is None and str(order_status).lower() == "matched":
+        # BUY market-order responses expose takerAmount as shares when the order matched.
+        filled_size = extract_first_number(post_response, ("takingAmount", "takerAmount"))
+    filled_size = q_size4_down(float(filled_size or 0.0))
+    filled_notional = q_usd2_down(filled_size * float(limit_price))
+    avg_fill_price = float(limit_price) if filled_size > 0.0 else 0.0
+    return {
+        "order_status": str(order_status or ""),
+        "filled_size_shares": float(filled_size),
+        "filled_notional_usd": float(filled_notional),
+        "avg_fill_price": float(avg_fill_price),
+        "requested_size_shares": float(q_size4_down(requested_size_shares)),
+        "trade_count": 0,
+    }
+
+
+def cancel_open_order_guard(client, order_id: str):
+    oid = str(order_id or "").strip()
+    if not oid:
+        return None
+    try:
+        return client.cancel(oid)
+    except Exception:
+        return None
+
+
+def trade_matches_order_id(trade: dict, order_id: str) -> bool:
+    oid = str(order_id or "").strip()
+    if not oid or not isinstance(trade, dict):
+        return False
+    if str(trade.get("taker_order_id") or "").strip() == oid:
+        return True
+    maker_orders = trade.get("maker_orders")
+    if isinstance(maker_orders, list):
+        for row in maker_orders:
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("order_id") or "").strip() == oid:
+                return True
+    return False
+
+
+def fetch_matching_trades(client, order_id: str, asset_id: str, retries: int = 4, sleep_sec: float = 0.35) -> List[dict]:
+    oid = str(order_id or "").strip()
+    aid = str(asset_id or "").strip()
+    if not oid or not aid:
+        return []
+    from py_clob_client.clob_types import TradeParams
+
+    last: List[dict] = []
+    for i in range(max(1, int(retries))):
+        try:
+            trades = client.get_trades(TradeParams(asset_id=aid))
+        except Exception:
+            trades = []
+        matched = [row for row in trades if trade_matches_order_id(row, oid)]
+        if matched or i >= int(retries) - 1:
+            return matched
+        last = matched
+        if sleep_sec > 0 and i < int(retries) - 1:
+            time.sleep(float(sleep_sec))
+    return last
+
+
 def build_order_plan(
     screen_price: float,
     live_price: float,
@@ -407,14 +666,14 @@ def build_order_plan(
         return None, "limit_price_invalid"
     if float(max_stake_usd) <= 0.0:
         return None, "max_stake_non_positive"
-    size_cap = q_size_down(float(max_stake_usd) / float(limit_price))
+    size_cap = snap_size_for_buy(float(limit_price), float(max_stake_usd))
     if size_cap <= 0.0:
         return None, "stake_too_small"
     min_size = max(0.0, float(min_order_size))
     if min_size > 0.0 and (size_cap + 1e-9) < min_size:
         return None, "min_order_size_exceeds_cap"
     size = size_cap
-    notional = float(size) * float(limit_price)
+    notional = q_usd2_down(float(size) * float(limit_price))
     if notional <= 0.0:
         return None, "notional_non_positive"
     return {
@@ -422,6 +681,29 @@ def build_order_plan(
         "size_shares": float(size),
         "notional_usd": float(notional),
     }, ""
+
+
+def clip_plan_to_visible_ask_depth(plan: dict, order_book, min_order_size: float) -> Tuple[Optional[dict], str]:
+    limit_price = float(plan.get("limit_price") or 0.0)
+    visible_size = visible_ask_depth(order_book, limit_price)
+    if visible_size <= 0.0:
+        return None, "no_visible_ask_depth_at_limit"
+    clipped_size = snap_size_for_shares(limit_price, visible_size)
+    if clipped_size <= 0.0:
+        return None, "visible_ask_depth_too_small"
+    min_size = max(0.0, float(min_order_size))
+    if min_size > 0.0 and (clipped_size + 1e-9) < min_size:
+        return None, "visible_ask_depth_below_min_size"
+    out = dict(plan)
+    out["visible_ask_depth"] = float(visible_size)
+    if clipped_size + 1e-9 >= float(plan.get("size_shares") or 0.0):
+        return out, ""
+    notional = q_usd2_down(clipped_size * limit_price)
+    if notional <= 0.0:
+        return None, "visible_ask_notional_non_positive"
+    out["size_shares"] = float(clipped_size)
+    out["notional_usd"] = float(notional)
+    return out, ""
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -593,16 +875,38 @@ def main() -> int:
             )
             continue
 
+        order_book = fetch_order_book(token_id, str(args.clob_host))
+        best_ask_price = extract_best_ask_price(order_book)
+        if args.execute and best_ask_price is None:
+            skipped += 1
+            append_jsonl(
+                exec_log_file,
+                {
+                    "ts_utc": iso_now(),
+                    "mode": "LIVE" if args.execute else "observe",
+                    "market_id": market_id,
+                    "side": side,
+                    "status": "skip",
+                    "reason": "order_book_missing",
+                },
+            )
+            continue
+
         yes_price, no_price = prices
         live_selected_price = yes_price if side == "YES" else no_price
+        if best_ask_price is not None:
+            live_selected_price = max(float(live_selected_price), float(best_ask_price))
+        min_order_size = extract_min_order_size(market)
         plan, reason = build_order_plan(
             screen_price=float(row.get("selected_price") or 0.0),
             live_price=float(live_selected_price),
             max_entry_price=float(args.max_entry_price),
             price_buffer_cents=float(args.price_buffer_cents),
             max_stake_usd=float(args.max_stake_usd),
-            min_order_size=extract_min_order_size(market),
+            min_order_size=min_order_size,
         )
+        if plan is not None and order_book is not None:
+            plan, reason = clip_plan_to_visible_ask_depth(plan, order_book, min_order_size=min_order_size)
         if plan is None:
             skipped += 1
             append_jsonl(
@@ -641,10 +945,12 @@ def main() -> int:
             "signal_confidence": float(row.get("confidence") or 0.0),
             "screen_selected_price": float(row.get("selected_price") or 0.0),
             "live_selected_price": float(live_selected_price),
+            "clob_best_ask": float(best_ask_price) if best_ask_price is not None else None,
             "limit_price": float(plan["limit_price"]),
             "size_shares": float(plan["size_shares"]),
             "max_stake_usd": float(args.max_stake_usd),
             "notional_usd": float(notional),
+            "visible_ask_depth": float(plan.get("visible_ask_depth") or 0.0),
         }
 
         if not args.execute:
@@ -659,17 +965,18 @@ def main() -> int:
             continue
 
         try:
-            from py_clob_client.clob_types import OrderArgs, OrderType
+            from py_clob_client.clob_types import MarketOrderArgs, OrderType
 
-            order = client.create_order(
-                OrderArgs(
+            order = client.create_market_order(
+                MarketOrderArgs(
                     token_id=str(token_id),
-                    price=float(plan["limit_price"]),
-                    size=float(plan["size_shares"]),
+                    amount=float(notional),
                     side="BUY",
+                    price=float(plan["limit_price"]),
+                    order_type=OrderType.FAK,
                 )
             )
-            resp = client.post_order(order, orderType=OrderType.FOK, post_only=False)
+            resp = client.post_order(order, orderType=OrderType.FAK, post_only=False)
             order_id = extract_order_id(resp)
             has_error = response_has_error(resp)
             if has_error and not order_id:
@@ -681,6 +988,46 @@ def main() -> int:
                 errors += 1
                 continue
 
+            order_snapshot = fetch_order_snapshot(client, order_id) if order_id else None
+            matching_trades = fetch_matching_trades(client, order_id, token_id) if order_id else []
+            fill = summarize_fak_fill(
+                order_snapshot,
+                resp,
+                matching_trades,
+                limit_price=float(plan["limit_price"]),
+                requested_size_shares=float(plan["size_shares"]),
+            )
+            order_status = str(fill.get("order_status") or "")
+            filled_size = float(fill.get("filled_size_shares") or 0.0)
+            requested_size = float(fill.get("requested_size_shares") or float(plan["size_shares"]))
+            filled_notional = float(fill.get("filled_notional_usd") or 0.0)
+            avg_fill_price = float(fill.get("avg_fill_price") or 0.0)
+            trade_count = int(fill.get("trade_count") or 0)
+
+            event["order_id"] = str(order_id)
+            event["order_status"] = order_status
+            event["requested_size_shares"] = requested_size
+            event["filled_size_shares"] = float(filled_size)
+            event["filled_notional_usd"] = float(filled_notional)
+            event["filled_avg_price"] = float(avg_fill_price)
+            event["trade_count"] = int(trade_count)
+
+            if order_id and order_status.lower() in {"live", "delayed", "unmatched"}:
+                cancel_resp = cancel_open_order_guard(client, order_id)
+                event["cancelled_remainder"] = True
+                if cancel_resp is not None:
+                    event["cancel_response"] = str(cancel_resp)[:200]
+
+            if filled_size <= 0.0 or filled_notional <= 0.0:
+                event["status"] = "no_fill"
+                event["reason"] = f"order_status={order_status or 'unknown'}"
+                append_jsonl(exec_log_file, event)
+                logger.info(
+                    f"no fill market={market_id} side={side} order_id={str(order_id)[:16]} "
+                    f"status={order_status or 'unknown'}"
+                )
+                continue
+
             entry = {
                 "position_id": f"{market_id}:{side}",
                 "market_id": market_id,
@@ -690,13 +1037,16 @@ def main() -> int:
                 "token_id": str(token_id),
                 "entry_utc": iso_now(),
                 "entry_day": today,
-                "entry_price": float(plan["limit_price"]),
-                "size_shares": float(plan["size_shares"]),
+                "entry_price": float(avg_fill_price or plan["limit_price"]),
+                "size_shares": float(filled_size),
                 "max_stake_usd": float(args.max_stake_usd),
-                "notional_usd": float(notional),
+                "notional_usd": float(filled_notional),
+                "requested_size_shares": float(requested_size),
+                "requested_notional_usd": float(notional),
                 "edge_cents": float(row.get("edge_cents") or 0.0),
                 "confidence": float(row.get("confidence") or 0.0),
                 "order_id": str(order_id),
+                "order_status": order_status,
                 "status": "open",
                 "resolution": None,
                 "resolved_utc": None,
@@ -705,19 +1055,18 @@ def main() -> int:
             }
             positions.append(entry)
             open_keys.add(side_key)
-            recent_actions.append({"position_key": side_key, "ts_utc": event["ts_utc"], "status": "submitted"})
+            recent_actions.append({"position_key": side_key, "ts_utc": event["ts_utc"], "status": "filled"})
             recent_keys.add(side_key)
             open_count += 1
-            daily_notional += float(notional)
+            daily_notional += float(filled_notional)
             submitted += 1
 
-            event["status"] = "submitted"
-            event["order_id"] = str(order_id)
+            event["status"] = "filled"
             append_jsonl(exec_log_file, event)
             logger.info(
-                f"submitted market={market_id} side={side} order_id={str(order_id)[:16]} "
-                f"px={float(plan['limit_price']):.3f} size={float(plan['size_shares']):.2f} "
-                f"notional={notional:.4f}"
+                f"filled market={market_id} side={side} order_id={str(order_id)[:16]} "
+                f"avg_px={float(avg_fill_price or plan['limit_price']):.3f} filled={filled_size:.4f} "
+                f"notional={filled_notional:.4f} trades={trade_count} status={order_status or 'unknown'}"
             )
         except Exception as e:
             event["status"] = "error"

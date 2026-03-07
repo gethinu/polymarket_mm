@@ -39,6 +39,8 @@ def test_build_snapshot_aggregates_recent_artifacts(tmp_path):
     log_path = tmp_path / "event-driven-observe.log"
     profit_path = tmp_path / "event_driven_profit_window_latest.json"
     summary_path = tmp_path / "event_driven_daily_summary.txt"
+    live_state_path = tmp_path / "event_driven_live_state.json"
+    live_exec_path = tmp_path / "event_driven_live_executions.jsonl"
 
     signals_rows = [
         {
@@ -106,12 +108,58 @@ def test_build_snapshot_aggregates_recent_artifacts(tmp_path):
         "selected_threshold": {
             "threshold_cents": 1.1,
             "hit_ratio": 0.57,
+            "episodes_hit": 4,
+            "episodes_total": 7,
             "unique_events": 18,
             "opportunities_per_day_capped": 3.4,
+            "base_scenario": {
+                "monthly_profit_usd": 14.0,
+            },
+        },
+        "settings": {
+            "assumed_bankroll_usd": 60.0,
+            "max_stake_usd": 5.0,
         },
     }
     profit_path.write_text(json.dumps(profit_payload) + "\n", encoding="utf-8")
     summary_path.write_text("daily summary line", encoding="utf-8")
+    live_state_path.write_text(
+        json.dumps(
+            {
+                "positions": [
+                    {
+                        "status": "open",
+                        "side": "YES",
+                        "question": "Live question?",
+                        "size_shares": 35.0,
+                        "entry_price": 0.14,
+                        "notional_usd": 4.9,
+                        "requested_notional_usd": 4.98,
+                        "entry_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+                    }
+                ],
+                "daily_notional_usd": 4.9,
+                "last_run": {"mode": "LIVE", "attempted": 1, "submitted": 1},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    live_exec_path.write_text(
+        json.dumps(
+            {
+                "ts_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+                "status": "filled",
+                "side": "YES",
+                "question": "Live question?",
+                "filled_size_shares": 35.0,
+                "filled_notional_usd": 4.9,
+                "filled_avg_price": 0.14,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     cfg = mod.Config(
         host="127.0.0.1",
@@ -147,8 +195,18 @@ def test_build_snapshot_aggregates_recent_artifacts(tmp_path):
 
     assert len(snapshot["recent_signals"]) == 2
     assert snapshot["profit"]["decision"] == "GO"
+    assert snapshot["profit"]["projected_monthly_profit_usd"] == pytest.approx(14.0)
+    assert snapshot["profit"]["assumed_bankroll_usd"] == pytest.approx(60.0)
+    assert snapshot["profit"]["max_stake_usd"] == pytest.approx(5.0)
     assert snapshot["profit"]["selected_threshold_cents"] == pytest.approx(1.1)
+    assert snapshot["profit"]["selected_episodes_hit"] == 4
+    assert snapshot["profit"]["selected_episodes_total"] == 7
+    assert snapshot["profit"]["observe_only_note"] == "Projected EV only. Not realized PnL or live win rate."
     assert snapshot["profit"]["reasons"] == ["sufficient opportunities"]
+    assert snapshot["live"]["open_positions"] == 1
+    assert snapshot["live"]["daily_notional_usd"] == pytest.approx(4.9)
+    assert snapshot["live"]["last_fill"]["filled_notional_usd"] == pytest.approx(4.9)
+    assert snapshot["live"]["open_rows"][0]["entry_price"] == pytest.approx(0.14)
     assert snapshot["summary_text"] == "daily summary line"
 
 
@@ -157,3 +215,9 @@ def test_load_text_truncates_long_content(tmp_path):
     p.write_text("x" * 30, encoding="utf-8")
     out = mod.load_text(str(p), limit=12)
     assert out.endswith("...(truncated)")
+
+
+def test_dashboard_html_calls_out_not_realized_pnl():
+    assert "This page separates two things" in mod.HTML
+    assert "Projected Profit Window (Observe Only)" in mod.HTML
+    assert "Live Position State" in mod.HTML
