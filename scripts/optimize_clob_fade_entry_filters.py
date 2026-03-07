@@ -386,11 +386,20 @@ def main() -> int:
         )
         for pp in params
     ]
-    ranked = sorted(res, key=lambda r: (r.score, r.total_pnl, -r.max_drawdown, r.win_rate, r.trades), reverse=True)
-    if args.strict_min_trades:
-        flt = [r for r in ranked if r.trades >= int(args.min_trades)]
-        if flt:
-            ranked = flt
+    ranked_all = sorted(res, key=lambda r: (r.score, r.total_pnl, -r.max_drawdown, r.win_rate, r.trades), reverse=True)
+    min_trades_req = max(0, int(args.min_trades))
+    ranked = [r for r in ranked_all if r.trades >= min_trades_req]
+    if ranked:
+        print(f"[selection] using candidates with trades>={min_trades_req}: {len(ranked)}/{len(ranked_all)}")
+    elif args.strict_min_trades:
+        print(f"No parameter set reached min-trades={min_trades_req}.")
+        return 6
+    else:
+        ranked = ranked_all
+        print(
+            f"[selection] no candidates reached trades>={min_trades_req}; "
+            "fallback to all candidates (consider widening window or lowering min-trades)."
+        )
     top = ranked[: max(1, int(args.top_n))]
     print(fmt_table(top))
     best = top[0]

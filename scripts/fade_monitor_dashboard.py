@@ -191,6 +191,14 @@ def load_state(path: str) -> dict:
     return {}
 
 
+def observe_mode_notes() -> Dict[str, object]:
+    return {
+        "observe_only": True,
+        "observe_only_note": "Shadow-run only. Not live realized PnL or live win rate.",
+        "pnl_basis_note": "PnL, drawdown, and win rate below come from observe-only fade simulation state.",
+    }
+
+
 def _state_open_stats(state: dict) -> Dict[str, object]:
     entries = int((state or {}).get("entries") or 0)
     exits = int((state or {}).get("exits") or 0)
@@ -444,10 +452,12 @@ def _build_single_snapshot(
     if win_count <= 0:
         win_count = max(0, sum(max(0, int(x.win_count or 0)) for x in latest_rows))
     win_rate = (float(win_count) / float(trade_count)) if trade_count > 0 else 0.0
+    notes = observe_mode_notes()
 
     return {
         "generated_at": now.strftime("%Y-%m-%d %H:%M:%S"),
         "window_minutes": win,
+        "mode": notes,
         "totals": {
             "total_pnl": latest_total,
             "day_pnl": latest_day,
@@ -498,6 +508,7 @@ def _variant_summary(source: str, label: str, snap: dict) -> dict:
     totals = snap.get("totals") or {}
     state = snap.get("state") or {}
     events = snap.get("events") or {}
+    mode = snap.get("mode") or {}
     entries = int(state.get("entries") or 0)
     exits = int(state.get("exits") or 0)
     if entries <= 0 and int(events.get("entries") or 0) > 0:
@@ -530,6 +541,7 @@ def _variant_summary(source: str, label: str, snap: dict) -> dict:
         "halt_reason": str(state.get("halt_reason") or ""),
         "consistency_warning": str(state.get("consistency_warning") or ""),
         "summaries": int(events.get("summaries") or 0),
+        "observe_only_note": str(mode.get("observe_only_note") or ""),
     }
 
 
@@ -659,6 +671,18 @@ HTML_TEMPLATE = r"""
       font-size:12px;
       color:#9bb5c4;
       background: rgba(17, 33, 46, 0.6);
+    }
+    .notice {
+      margin-bottom:12px;
+      padding:10px 12px;
+      border:1px solid #26455b;
+      border-radius:12px;
+      background: rgba(11, 23, 33, 0.78);
+      color:#a8c5d5;
+      font-size:12px;
+      line-height:1.45;
+      font-family:"JetBrains Mono", monospace;
+      animation: fadeIn .55s ease-out;
     }
     .stats {
       display:grid;
@@ -903,7 +927,7 @@ HTML_TEMPLATE = r"""
     <header class="top">
       <div class="title">
         <h1>Fade Ops Deck</h1>
-        <p>observe-only / multi-bot consensus / realtime monitor</p>
+        <p>observe-only / multi-bot consensus / shadow-run monitor</p>
       </div>
       <div class="controls">
         <label for="windowSelect">window</label>
@@ -921,12 +945,13 @@ HTML_TEMPLATE = r"""
         <span class="badge" id="heartbeat">waiting...</span>
       </div>
     </header>
+    <section class="notice">This page does not show live realized PnL. It shows observe-only fade shadow-run PnL, drawdown, win rate, and signal flow.</section>
 
     <section class="stats">
-      <div class="stat"><div class="k">Total PnL</div><div class="v" id="stTotal">-</div></div>
-      <div class="stat"><div class="k">Day PnL</div><div class="v" id="stDay">-</div></div>
-      <div class="stat"><div class="k">Win Rate</div><div class="v" id="stWinRate">-</div></div>
-      <div class="stat"><div class="k">Max DD / Now</div><div class="v" id="stDD">-</div></div>
+      <div class="stat"><div class="k">Shadow Total PnL</div><div class="v" id="stTotal">-</div></div>
+      <div class="stat"><div class="k">Shadow Day PnL</div><div class="v" id="stDay">-</div></div>
+      <div class="stat"><div class="k">Shadow Win Rate</div><div class="v" id="stWinRate">-</div></div>
+      <div class="stat"><div class="k">Shadow DD / Now</div><div class="v" id="stDD">-</div></div>
       <div class="stat"><div class="k">Open Positions</div><div class="v" id="stOpen">-</div></div>
       <div class="stat"><div class="k">Active Signals</div><div class="v" id="stSignals">-</div></div>
       <div class="stat"><div class="k">Entries / Exits</div><div class="v" id="stEntries">-</div></div>
@@ -936,11 +961,11 @@ HTML_TEMPLATE = r"""
 
     <section class="grid">
       <div class="panel">
-        <h3>PNL + Signal Pulse</h3>
+        <h3>Shadow PnL + Signal Pulse</h3>
         <canvas id="pnlCanvas"></canvas>
       </div>
       <div class="panel">
-        <h3>Recent Events</h3>
+        <h3>Recent Observe Events</h3>
         <div class="events" id="events"></div>
       </div>
     </section>
@@ -1118,10 +1143,10 @@ HTML_TEMPLATE = r"""
             <div>spread <b>${Number(tok.spread || 0).toFixed(4)}</b></div>
             <div>score <b class="${clsSigned(tok.consensus_score)}">${fmtSigned(tok.consensus_score)}</b></div>
             <div>agree <b>${Number(tok.consensus_agree || 0)}</b></div>
-            <div>unreal <b class="${clsSigned(tok.unrealized_pnl)}">${fmtSigned(tok.unrealized_pnl)}</b></div>
-            <div>realized <b class="${clsSigned(tok.realized_pnl)}">${fmtSigned(tok.realized_pnl)}</b></div>
+            <div>paper unreal <b class="${clsSigned(tok.unrealized_pnl)}">${fmtSigned(tok.unrealized_pnl)}</b></div>
+            <div>paper realized <b class="${clsSigned(tok.realized_pnl)}">${fmtSigned(tok.realized_pnl)}</b></div>
             <div>trades <b>${Number(tok.trade_count || 0)}</b></div>
-            <div>winrate <b>${(Number(tok.win_rate || 0) * 100).toFixed(1)}%</b></div>
+            <div>paper winrate <b>${(Number(tok.win_rate || 0) * 100).toFixed(1)}%</b></div>
             <div>status <b class="${disabled ? 'down' : 'neutral'}">${disabled ? 'disabled' : 'enabled'}</b></div>
             <div>reason <b>${disabled ? String(tok.disable_reason || '-').slice(0,26) : '-'}</b></div>
           </div>
@@ -1146,10 +1171,11 @@ HTML_TEMPLATE = r"""
             <div class="name">${v?.label || v?.source || '-'}</div>
             <div class="stamp">${v?.generated_at || '-'}</div>
           </div>
-          <div class="row"><span>day</span><b class="${clsSigned(t.day_pnl || 0)}">${fmtSigned(t.day_pnl || 0)}</b></div>
-          <div class="row"><span>total</span><b class="${clsSigned(t.total_pnl || 0)}">${fmtSigned(t.total_pnl || 0)}</b></div>
-          <div class="row"><span>win / trades</span><b>${fmtPct(t.win_rate || 0)} / ${Number(t.trade_count || 0)}</b></div>
-          <div class="row"><span>max DD / now</span><b class="${Number(t.max_drawdown || 0) > 0 ? 'down' : 'neutral'}">${fmtDrawdown(t.max_drawdown || 0)} / ${fmtDrawdown(t.drawdown_now || 0)}</b></div>
+          <div class="row"><span>mode</span><b>observe shadow</b></div>
+          <div class="row"><span>shadow day</span><b class="${clsSigned(t.day_pnl || 0)}">${fmtSigned(t.day_pnl || 0)}</b></div>
+          <div class="row"><span>shadow total</span><b class="${clsSigned(t.total_pnl || 0)}">${fmtSigned(t.total_pnl || 0)}</b></div>
+          <div class="row"><span>shadow win / trades</span><b>${fmtPct(t.win_rate || 0)} / ${Number(t.trade_count || 0)}</b></div>
+          <div class="row"><span>shadow DD / now</span><b class="${Number(t.max_drawdown || 0) > 0 ? 'down' : 'neutral'}">${fmtDrawdown(t.max_drawdown || 0)} / ${fmtDrawdown(t.drawdown_now || 0)}</b></div>
           <div class="row"><span>entries / exits</span><b>${Number(v?.entries || 0)} / ${Number(v?.exits || 0)}</b></div>
           <div class="row"><span>open(all/a/i)</span><b class="${warnOpen ? 'down' : 'neutral'}">${Number(t.open_positions || 0)} / ${Number(t.open_positions_active || 0)} / ${Number(t.open_positions_inactive || 0)}</b></div>
           <div class="row"><span>open / signals</span><b>${Number(t.open_positions || 0)} / ${Number(t.active_signals || 0)}</b></div>
@@ -1192,6 +1218,7 @@ HTML_TEMPLATE = r"""
       const events = snapshot?.events || {};
       const series = snapshot?.series || {};
       const tokens = snapshot?.tokens || [];
+      const mode = snapshot?.mode || {};
 
       syncDetailControl(snapshot);
       renderVariants(snapshot);
@@ -1249,7 +1276,8 @@ HTML_TEMPLATE = r"""
 
       const guardTxt = (state.halted && state.halt_reason) ? `halt=${state.halt_reason}` : 'halt=none';
       const warnTxt = String(state.consistency_warning || '').trim();
-      el('metaA').textContent = `metrics: tokens=${total.tracked_tokens || 0} summaries=${events.summaries || 0} entries=${events.entries || 0} exits=${events.exits || 0} variants=${(snapshot?.variants || []).length || 1}`;
+      const modeTxt = String(mode.observe_only_note || '').trim();
+      el('metaA').textContent = `metrics: tokens=${total.tracked_tokens || 0} summaries=${events.summaries || 0} entries=${events.entries || 0} exits=${events.exits || 0} variants=${(snapshot?.variants || []).length || 1}${modeTxt ? ` | ${modeTxt}` : ''}`;
       el('metaB').textContent = `state: signals_seen=${state.signals_seen || 0} universe_refresh=${state.universe_refresh_count || 0} ${guardTxt}${warnTxt ? ` warn=${warnTxt}` : ''}`;
       el('heartbeat').textContent = `updated ${snapshot.generated_at || '-'} | ${snapshot.detail_label || detailMode || '-'}`;
     }
