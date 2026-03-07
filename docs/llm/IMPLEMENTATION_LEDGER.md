@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `49`
-- worktree_changes: `29`
+- commits_scanned: `53`
+- worktree_changes: `1`
 - link_intake_sessions: `9`
 
 ## Purpose
@@ -20,19 +20,23 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 34 | `2026-03-07 00:38` | `cacfaf20` | feat: add event-driven ops dashboard and preview cooldown |
+| `docs_llm` | 36 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
 | `knowledge_intake` | 3 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
-| `no_longshot` | 16 | `2026-02-28 12:21` | `3d9a8012` | add guarded no-longshot live path and kpi-core checks |
-| `security_or_ops` | 20 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
-| `simmer_clob` | 27 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
-| `strategy_register` | 14 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
-| `task_automation` | 23 | `2026-03-07 00:38` | `cacfaf20` | feat: add event-driven ops dashboard and preview cooldown |
+| `no_longshot` | 17 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
+| `security_or_ops` | 21 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
+| `simmer_clob` | 28 | `2026-03-07 17:49` | `b277ab06` | feat: add fade staged-check pipeline and checkpoint tooling |
+| `strategy_register` | 15 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
+| `task_automation` | 26 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
 | `weather_pipeline` | 8 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-03-07 17:50` | `1d7db082` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation` | feat: harden no-longshot KPI sourcing and ops health guards | `docs/llm/CANON.md`, `docs/llm/INTERFACES.md`, `docs/llm/PROFIT_STAGE_PROMPTS.md`, `docs/llm/STATE.md`, +7 |
+| `2026-03-07 17:49` | `b277ab06` | `simmer_clob,task_automation` | feat: add fade staged-check pipeline and checkpoint tooling | `scripts/capture_fade_checkpoint_baseline.py`, `scripts/fade_monitor_dashboard.py`, `scripts/install_fade_regime_staged_checks_task.ps1`, `scripts/judge_fade_longonly_checkpoint.py`, +8 |
+| `2026-03-07 17:49` | `be8e29ac` | `task_automation` | feat: add event-driven exit-check ops and monitor updates | `configs/bot_supervisor.observe.json`, `scripts/btc5m_monitor_dashboard.py`, `scripts/event_driven_monitor_dashboard.py`, `scripts/execute_event_driven_live.py`, +9 |
+| `2026-03-07 14:58` | `250a59be` | `docs_llm` | feat: add event-driven live state monitoring | `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, +4 |
 | `2026-03-07 00:38` | `cacfaf20` | `docs_llm,task_automation` | feat: add event-driven ops dashboard and preview cooldown | `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, `docs/llm/STRATEGY.md`, `scripts/event_driven_monitor_dashboard.py`, +7 |
 | `2026-02-28 23:42` | `bd8f2e11` | `docs_llm,knowledge_intake,security_or_ops,simmer_clob,strategy_register,task_automation,weather_pipeline` | 20260228_1 | `docs/SIMMER_PINGPONG.md`, `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb/00_overview.md`, `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb/01_winkle-on-x-guide-how-to-create-your-own.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, +22 |
 | `2026-02-28 21:54` | `497977f1` | `docs_llm,security_or_ops` | feat: add pending-release checker, alarms, and batch runner | `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, `docs/llm/INTERFACES.md`, `docs/llm/STATE.md`, +7 |
@@ -86,35 +90,7 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `configs/bot_supervisor.observe.json` |
-| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/STATE.md` |
-| `M` | `docs/llm/STRATEGY.md` |
-| `M` | `scripts/btc5m_monitor_dashboard.py` |
-| `M` | `scripts/event_driven_monitor_dashboard.py` |
-| `M` | `scripts/execute_event_driven_live.py` |
-| `M` | `scripts/fade_monitor_dashboard.py` |
-| `M` | `scripts/install_no_longshot_daily_task.ps1` |
-| `M` | `scripts/optimize_clob_fade_entry_filters.py` |
-| `M` | `scripts/render_strategy_register_snapshot.py` |
-| `M` | `scripts/report_automation_health.py` |
-| `M` | `scripts/run_no_longshot_daily_report.ps1` |
-| `M` | `tests/test_event_driven_monitor_dashboard.py` |
-| `M` | `tests/test_execute_event_driven_live.py` |
-| `M` | `tests/test_render_strategy_register_snapshot.py` |
-| `M` | `tests/test_report_automation_health.py` |
-| `??` | `docs/llm/PROFIT_STAGE_PROMPTS.md` |
-| `??` | `scripts/capture_fade_checkpoint_baseline.py` |
-| `??` | `scripts/install_fade_regime_staged_checks_task.ps1` |
-| `??` | `scripts/judge_fade_longonly_checkpoint.py` |
-| `??` | `scripts/report_fade_longonly_checkpoint.py` |
-| `??` | `scripts/run_fade_regime_staged_checks.ps1` |
-| `??` | `scripts/run_fade_regime_staged_checks.py` |
-| `??` | `tests/test_fade_monitor_dashboard.py` |
-| `??` | `tests/test_fade_regime_staged_checks_ps1.py` |
-| `??` | `tests/test_run_fade_regime_staged_checks.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |
