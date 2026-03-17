@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 import render_strategy_register_snapshot as mod
@@ -67,3 +70,81 @@ def test_build_kpi_core_falls_back_to_realized_monthly_when_no_longshot_missing(
     assert out["monthly_return_now_source"] == "realized_monthly_return.projected_monthly_return_text"
     assert out["max_drawdown_30d_ratio"] == pytest.approx(-0.031)
     assert out["max_drawdown_30d_text"] == "-3.10%"
+
+
+def test_load_realized_daily_series_nondefault_skips_clob_fallback(monkeypatch, tmp_path: Path):
+    clob_file = tmp_path / "clob_arb_realized_daily.jsonl"
+    clob_file.write_text(
+        json.dumps({"day": "2026-03-07", "realized_pnl_usd": 5.0}) + "\n",
+        encoding="utf-8",
+    )
+    strategy_file = tmp_path / "strategy_realized_pnl_daily.jsonl"
+    strategy_file.write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(mod, "logs_dir", lambda: tmp_path)
+
+    series = mod.load_realized_daily_series(strategy_id="weather_7acct_auto")
+
+    assert series["per_day"] == {}
+    assert series["source_files"] == []
+
+
+def test_summarize_weather_profile_realized_uses_profile_series(monkeypatch, tmp_path: Path):
+    strategy_file = tmp_path / "strategy_realized_pnl_daily.jsonl"
+    strategy_file.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "day": "2026-03-07",
+                        "strategy_id": "weather_7acct_auto",
+                        "realized_pnl_usd": 1.5,
+                        "bankroll_usd": 60.0,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "day": "2026-03-08",
+                        "strategy_id": "weather_7acct_auto",
+                        "realized_pnl_usd": -0.5,
+                        "bankroll_usd": 60.0,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    latest_path = tmp_path / "weather_7acct_auto_realized_latest.json"
+    latest_path.write_text(
+        json.dumps(
+            {
+                "counts": {"positions_total": 4},
+                "metrics": {
+                    "open_positions": 2,
+                    "resolved_positions": 2,
+                    "total_resolved_trades": 2,
+                    "total_realized_pnl_usd": 1.0,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(mod, "logs_dir", lambda: tmp_path)
+
+    out = mod.summarize_weather_profile_realized(
+        records=[{"profile_name": "weather_7acct_auto"}],
+        min_days=30,
+    )
+
+    assert out["count"] == 1
+    row = out["profiles"][0]
+    assert row["profile_name"] == "weather_7acct_auto"
+    assert row["observed_realized_days"] == 2
+    assert row["latest_day"] == "2026-03-08"
+    assert row["daily_realized_pnl_usd_latest"] == pytest.approx(-0.5)
+    assert row["open_positions"] == 2
+    assert row["resolved_positions"] == 2
+    assert row["positions_total"] == 4

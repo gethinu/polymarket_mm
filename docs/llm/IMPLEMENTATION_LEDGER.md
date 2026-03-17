@@ -2,8 +2,8 @@
 
 - source_repo: `C:\Repos\polymarket_mm`
 - output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `53`
-- worktree_changes: `1`
+- commits_scanned: `54`
+- worktree_changes: `33`
 - link_intake_sessions: `9`
 
 ## Purpose
@@ -20,7 +20,7 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 36 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
+| `docs_llm` | 37 | `2026-03-07 17:50` | `9df5d32f` | docs: refresh implementation ledger |
 | `knowledge_intake` | 3 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 17 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
@@ -33,6 +33,7 @@
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-03-07 17:50` | `9df5d32f` | `docs_llm` | docs: refresh implementation ledger | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `2026-03-07 17:50` | `1d7db082` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation` | feat: harden no-longshot KPI sourcing and ops health guards | `docs/llm/CANON.md`, `docs/llm/INTERFACES.md`, `docs/llm/PROFIT_STAGE_PROMPTS.md`, `docs/llm/STATE.md`, +7 |
 | `2026-03-07 17:49` | `b277ab06` | `simmer_clob,task_automation` | feat: add fade staged-check pipeline and checkpoint tooling | `scripts/capture_fade_checkpoint_baseline.py`, `scripts/fade_monitor_dashboard.py`, `scripts/install_fade_regime_staged_checks_task.ps1`, `scripts/judge_fade_longonly_checkpoint.py`, +8 |
 | `2026-03-07 17:49` | `be8e29ac` | `task_automation` | feat: add event-driven exit-check ops and monitor updates | `configs/bot_supervisor.observe.json`, `scripts/btc5m_monitor_dashboard.py`, `scripts/event_driven_monitor_dashboard.py`, `scripts/execute_event_driven_live.py`, +9 |
@@ -90,7 +91,39 @@
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
+| `M` | `docs/llm/CANON.md` |
 | `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
+| `M` | `docs/llm/INTERFACES.md` |
+| `M` | `docs/llm/STATE.md` |
+| `M` | `docs/llm/STRATEGY.md` |
+| `M` | `scripts/polymarket_btc5m_lag_observe.py` |
+| `M` | `scripts/polymarket_btc5m_panic_observe.py` |
+| `M` | `scripts/render_strategy_register_snapshot.py` |
+| `M` | `scripts/run_weather_mimic_pipeline_daily.ps1` |
+| `M` | `scripts/run_weather_top30_readiness_daily.ps1` |
+| `M` | `tests/test_render_strategy_register_snapshot.py` |
+| `??` | `configs/bot_supervisor.btc5m_panic.observe.json` |
+| `??` | `configs/bot_supervisor.btc5m_panic_down.observe.json` |
+| `??` | `scripts/judge_btc5m_panic_downonly_trial.py` |
+| `??` | `scripts/lib/btc5m_eval_helpers.py` |
+| `??` | `scripts/polymarket_btc15m_lag_observe.py` |
+| `??` | `scripts/polymarket_btc5m_panic_live.py` |
+| `??` | `scripts/record_weather_mimic_realized_daily.py` |
+| `??` | `scripts/report_btc5m_panic_reconcile.py` |
+| `??` | `scripts/report_btc5m_strategy_eval.py` |
+| `??` | `scripts/run_btc5m_panic_observe_supervisor.ps1` |
+| `??` | `scripts/run_pending_profit_accelerator.py` |
+| `??` | `tests/test_btc15m_lag_observe.py` |
+| `??` | `tests/test_btc5m_eval_helpers.py` |
+| `??` | `tests/test_btc5m_lag_observe.py` |
+| `??` | `tests/test_btc5m_panic_live.py` |
+| `??` | `tests/test_btc5m_panic_observe.py` |
+| `??` | `tests/test_btc5m_panic_reconcile.py` |
+| `??` | `tests/test_judge_btc5m_panic_downonly_trial.py` |
+| `??` | `tests/test_record_weather_mimic_realized_daily.py` |
+| `??` | `tests/test_report_btc5m_strategy_eval.py` |
+| `??` | `tests/test_run_btc5m_panic_observe_supervisor_ps1.py` |
+| `??` | `tests/test_run_pending_profit_accelerator.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |

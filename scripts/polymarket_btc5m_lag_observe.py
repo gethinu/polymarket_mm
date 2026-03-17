@@ -517,6 +517,10 @@ class RuntimeState:
     wins: int = 0
     losses: int = 0
     pushes: int = 0
+    peak_pnl_usd: float = 0.0
+    max_drawdown_usd: float = 0.0
+    filter_skip_spread: int = 0
+    filter_skip_depth: int = 0
     active_position: Optional[dict] = None
     current_window_start_ts: int = 0
     current_window_slug: str = ""
@@ -548,6 +552,10 @@ def _load_state(path: Path) -> RuntimeState:
             wins=int(raw.get("wins") or 0),
             losses=int(raw.get("losses") or 0),
             pushes=int(raw.get("pushes") or 0),
+            peak_pnl_usd=float(raw.get("peak_pnl_usd") or 0.0),
+            max_drawdown_usd=float(raw.get("max_drawdown_usd") or 0.0),
+            filter_skip_spread=int(raw.get("filter_skip_spread") or 0),
+            filter_skip_depth=int(raw.get("filter_skip_depth") or 0),
             active_position=raw.get("active_position") if isinstance(raw.get("active_position"), dict) else None,
             current_window_start_ts=int(raw.get("current_window_start_ts") or 0),
             current_window_slug=str(raw.get("current_window_slug") or ""),
@@ -614,8 +622,14 @@ def settle_active_position(
         gross = shares * (1.0 - entry_price) if side == "DOWN" else (-shares * entry_price)
 
     fee_cost = _entry_fee_cost(entry_notional=shares * entry_price, taker_fee_rate=taker_fee_rate)
-    pnl = gross - fee_cost
+    slippage_cost = shares * max(0.0, as_float(pos.get("slippage_cents"), 0.0)) / 100.0
+    pnl = gross - fee_cost - slippage_cost
     state.pnl_total_usd += pnl
+    if state.pnl_total_usd > state.peak_pnl_usd:
+        state.peak_pnl_usd = state.pnl_total_usd
+    dd = state.peak_pnl_usd - state.pnl_total_usd
+    if dd > state.max_drawdown_usd:
+        state.max_drawdown_usd = dd
     state.trades_closed += 1
     if outcome == "WIN":
         state.wins += 1
@@ -659,6 +673,25 @@ def _apply_env_overrides(args):
     return args
 
 
+def _has_ask_depth(book: Optional[dict], min_size: float) -> bool:
+    """Check if the book has at least min_size shares on ask side."""
+    if not isinstance(book, dict):
+        return False
+    asks = book.get("asks")
+    if not isinstance(asks, list) or not asks:
+        return False
+    total = 0.0
+    for level in asks:
+        if isinstance(level, dict):
+            try:
+                s = float(level.get("size", 0))
+                if math.isfinite(s) and s > 0:
+                    total += s
+            except (TypeError, ValueError):
+                continue
+    return total >= min_size
+
+
 def parse_args():
     p = argparse.ArgumentParser(description="Polymarket BTC lag observer (simulation only)")
     p.add_argument(
@@ -674,7 +707,7 @@ def parse_args():
     p.add_argument("--run-seconds", type=int, default=0, help="Auto-exit after N seconds (0=run forever)")
 
     p.add_argument("--shares", type=float, default=25.0, help="Paper entry size in shares")
-    p.add_argument("--entry-edge-cents", type=float, default=1.5, help="Paper entry threshold in cents")
+    p.add_argument("--entry-edge-cents", type=float, default=3.0, help="Paper entry threshold in cents")
     p.add_argument("--alert-edge-cents", type=float, default=0.8, help="Signal alert threshold in cents")
     p.add_argument(
         "--entry-price-min",
@@ -715,9 +748,12 @@ def parse_args():
     p.set_defaults(max_one_entry_per_window=True)
     p.add_argument("--settle-epsilon-usd", type=float, default=0.5, help="Treat close-open within epsilon as PUSH")
 
-    p.add_argument("--taker-fee-rate", type=float, default=0.0, help="Assumed taker fee rate (e.g. 0.002)")
+    p.add_argument("--taker-fee-rate", type=float, default=0.02, help="Assumed taker fee rate (default 2%%)")
+    p.add_argument("--slippage-cents", type=float, default=0.5, help="Conservative slippage per share in cents")
+    p.add_argument("--max-spread-cents", type=float, default=8.0, help="Skip entry if spread exceeds this (cents)")
+    p.add_argument("--min-ask-depth", type=float, default=10.0, help="Skip entry if ask depth < this shares")
     p.add_argument("--daily-loss-limit-usd", type=float, default=0.0, help="Halt new paper entries if day pnl <= -limit")
-    p.add_argument("--vol-lookback-sec", type=float, default=120.0, help="Spot return lookback for sigma estimate")
+    p.add_argument("--vol-lookback-sec", type=float, default=600.0, help="Spot return lookback for sigma estimate")
     p.add_argument(
         "--sigma-floor-per-sqrt-sec",
         type=float,
@@ -941,6 +977,17 @@ def main() -> int:
                             ):
                                 filter_skip_reversal += 1
                                 continue
+                            # Spread guard
+                            chosen_book = up_book if best_side == "UP" else down_book
+                            chosen_bid = best_bid(chosen_book)
+                            spread_val = (entry_px - chosen_bid) if (math.isfinite(chosen_bid) and chosen_bid > 0) else math.nan
+                            if math.isfinite(spread_val) and spread_val > (float(args.max_spread_cents) / 100.0):
+                                state.filter_skip_spread += 1
+                                continue
+                            # Depth guard
+                            if not _has_ask_depth(chosen_book, float(args.min_ask_depth)):
+                                state.filter_skip_depth += 1
+                                continue
                             state.active_position = {
                                 "window_start_ts": current_window.start_ts,
                                 "window_slug": current_window.slug,
@@ -952,6 +999,7 @@ def main() -> int:
                                 "fair_up_entry": float(fair_up),
                                 "edge_entry": float(best_edge),
                                 "window_open_price": float(state.current_window_open_price),
+                                "slippage_cents": float(args.slippage_cents),
                             }
                             entered_windows[current_window.start_ts] = True
                             logger.info(
@@ -978,7 +1026,9 @@ def main() -> int:
                     f"edge_up={edge_up:+.4f} edge_dn={edge_down:+.4f} "
                     f"active={active_txt} day={d_pnl:+.4f} total={state.pnl_total_usd:+.4f} "
                     f"W/L/P={state.wins}/{state.losses}/{state.pushes} "
+                    f"dd={state.max_drawdown_usd:.4f} "
                     f"fskip_price={filter_skip_price_band} fskip_rev={filter_skip_reversal} "
+                    f"fskip_spread={state.filter_skip_spread} fskip_depth={state.filter_skip_depth} "
                     f"src=[{src}] halted={state.halted}"
                 )
                 last_summary_ts = ts_now

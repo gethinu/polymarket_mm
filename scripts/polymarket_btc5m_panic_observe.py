@@ -20,6 +20,7 @@ import argparse
 import json
 import math
 import os
+import shutil
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -38,6 +39,8 @@ DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_LOG_FILE = str(DEFAULT_REPO_ROOT / "logs" / "btc5m-panic-observe.log")
 DEFAULT_STATE_FILE = str(DEFAULT_REPO_ROOT / "logs" / "btc5m_panic_observe_state.json")
 DEFAULT_METRICS_FILE = str(DEFAULT_REPO_ROOT / "logs" / "btc5m-panic-observe-metrics.jsonl")
+DEFAULT_STATE_SAVE_RETRIES = 8
+DEFAULT_STATE_SAVE_RETRY_SEC = 0.25
 
 
 def default_runtime_paths(window_minutes: int) -> Tuple[str, str, str]:
@@ -50,6 +53,27 @@ def default_runtime_paths(window_minutes: int) -> Tuple[str, str, str]:
         str(logs_dir / f"btc{m}m_panic_observe_state.json"),
         str(logs_dir / f"btc{m}m-panic-observe-metrics.jsonl"),
     )
+
+
+def normalize_side_mode(value: str) -> str:
+    s = str(value or "").strip().lower()
+    if s in {"down", "down-only", "short"}:
+        return "down"
+    if s in {"up", "up-only", "long"}:
+        return "up"
+    return "both"
+
+
+def is_side_allowed(side: str, allowed_side_mode: str) -> bool:
+    mode = normalize_side_mode(allowed_side_mode)
+    side_norm = str(side or "").strip().upper()
+    if side_norm not in {"UP", "DOWN"}:
+        return False
+    if mode == "both":
+        return True
+    if mode == "up":
+        return side_norm == "UP"
+    return side_norm == "DOWN"
 
 
 def iso_now_local() -> str:
@@ -368,6 +392,10 @@ class RuntimeState:
     pushes: int = 0
     signals_total: int = 0
     entries_total: int = 0
+    peak_pnl_usd: float = 0.0
+    max_drawdown_usd: float = 0.0
+    filter_skip_spread: int = 0
+    filter_skip_depth: int = 0
     active_position: Optional[dict] = None
     current_window_start_ts: int = 0
     current_window_slug: str = ""
@@ -379,9 +407,46 @@ class RuntimeState:
 
 def _save_state(path: Path, state: RuntimeState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
     tmp.write_text(json.dumps(asdict(state), ensure_ascii=True, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    try:
+        _replace_with_retries(
+            src=tmp,
+            dst=path,
+            attempts=DEFAULT_STATE_SAVE_RETRIES,
+            sleep_sec=DEFAULT_STATE_SAVE_RETRY_SEC,
+        )
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+
+
+def _replace_with_retries(
+    src: Path,
+    dst: Path,
+    attempts: int = DEFAULT_STATE_SAVE_RETRIES,
+    sleep_sec: float = DEFAULT_STATE_SAVE_RETRY_SEC,
+    replace_func=None,
+) -> None:
+    replacer = replace_func or (lambda a, b: a.replace(b))
+    last_exc = None
+    for idx in range(max(1, int(attempts))):
+        try:
+            replacer(src, dst)
+            return
+        except PermissionError as exc:
+            last_exc = exc
+        except OSError as exc:
+            if getattr(exc, "winerror", None) not in {5, 32}:
+                raise
+            last_exc = exc
+        if idx < int(attempts) - 1 and float(sleep_sec) > 0:
+            time.sleep(float(sleep_sec))
+    if last_exc is not None:
+        raise last_exc
 
 
 def _load_state(path: Path) -> RuntimeState:
@@ -401,6 +466,10 @@ def _load_state(path: Path) -> RuntimeState:
             pushes=int(raw.get("pushes") or 0),
             signals_total=int(raw.get("signals_total") or 0),
             entries_total=int(raw.get("entries_total") or 0),
+            peak_pnl_usd=float(raw.get("peak_pnl_usd") or 0.0),
+            max_drawdown_usd=float(raw.get("max_drawdown_usd") or 0.0),
+            filter_skip_spread=int(raw.get("filter_skip_spread") or 0),
+            filter_skip_depth=int(raw.get("filter_skip_depth") or 0),
             active_position=raw.get("active_position") if isinstance(raw.get("active_position"), dict) else None,
             current_window_start_ts=int(raw.get("current_window_start_ts") or 0),
             current_window_slug=str(raw.get("current_window_slug") or ""),
@@ -411,6 +480,56 @@ def _load_state(path: Path) -> RuntimeState:
         )
     except Exception:
         return RuntimeState(day_key=local_day_key())
+
+
+def _reset_backup_path(state_path: Path) -> Path:
+    candidate = state_path.with_name(f"{state_path.stem}_backup_pre_oos{state_path.suffix}")
+    if not candidate.exists():
+        return candidate
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return state_path.with_name(f"{state_path.stem}_backup_pre_oos_{stamp}{state_path.suffix}")
+
+
+def backup_and_reset_state_file(state_path: Path, logger: Logger) -> RuntimeState:
+    if state_path.exists():
+        backup_path = _reset_backup_path(state_path)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(state_path, backup_path)
+        logger.info(
+            f"[{iso_now_local()}] reset-state: backed up state to {backup_path}"
+        )
+    fresh = RuntimeState(day_key=local_day_key())
+    _save_state(state_path, fresh)
+    logger.info(
+        f"[{iso_now_local()}] reset-state: wrote fresh runtime state to {state_path}"
+    )
+    return fresh
+
+
+def reset_oos_runtime_artifacts(
+    state_path: Path,
+    log_path: Path,
+    metrics_path: Path,
+) -> Tuple[RuntimeState, List[str]]:
+    messages: List[str] = []
+    if state_path.exists():
+        backup_path = _reset_backup_path(state_path)
+        backup_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(state_path, backup_path)
+        messages.append(f"reset-state: backed up state to {backup_path}")
+    for artifact_path, label in (
+        (log_path, "log"),
+        (metrics_path, "metrics"),
+    ):
+        if artifact_path.exists():
+            backup_path = _reset_backup_path(artifact_path)
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(artifact_path), str(backup_path))
+            messages.append(f"reset-state: rotated {label} to {backup_path}")
+    fresh = RuntimeState(day_key=local_day_key())
+    _save_state(state_path, fresh)
+    messages.append(f"reset-state: wrote fresh runtime state to {state_path}")
+    return fresh, messages
 
 
 def day_pnl_usd(state: RuntimeState) -> float:
@@ -467,8 +586,14 @@ def settle_active_position(
         gross = shares * (1.0 - entry_price) if side == "DOWN" else (-shares * entry_price)
 
     fee_cost = _entry_fee_cost(entry_notional=shares * entry_price, taker_fee_rate=taker_fee_rate)
-    pnl = gross - fee_cost
+    slippage_cost = shares * max(0.0, as_float(pos.get("slippage_cents"), 0.0)) / 100.0
+    pnl = gross - fee_cost - slippage_cost
     state.pnl_total_usd += pnl
+    if state.pnl_total_usd > state.peak_pnl_usd:
+        state.peak_pnl_usd = state.pnl_total_usd
+    dd = state.peak_pnl_usd - state.pnl_total_usd
+    if dd > state.max_drawdown_usd:
+        state.max_drawdown_usd = dd
     state.trades_closed += 1
     if outcome == "WIN":
         state.wins += 1
@@ -529,6 +654,11 @@ def parse_args():
     p.add_argument("--shares", type=float, default=25.0, help="Paper entry size in shares")
     p.add_argument("--cheap-ask-max-cents", type=float, default=10.0, help="Cheap-side ask threshold in cents")
     p.add_argument("--expensive-ask-min-cents", type=float, default=90.0, help="Expensive-side ask threshold in cents")
+    p.add_argument(
+        "--allowed-side-mode",
+        default="both",
+        help="Permit entries on both/down/up panic signals (default both)",
+    )
     p.add_argument("--min-remaining-sec", type=float, default=20.0, help="Do not enter if less than this many sec remain")
     p.add_argument(
         "--max-remaining-sec",
@@ -545,9 +675,13 @@ def parse_args():
     p.set_defaults(max_one_entry_per_window=True)
     p.add_argument("--settle-epsilon-usd", type=float, default=0.5, help="Treat close-open within epsilon as PUSH")
 
-    p.add_argument("--taker-fee-rate", type=float, default=0.0, help="Assumed taker fee rate (e.g. 0.002)")
+    p.add_argument("--taker-fee-rate", type=float, default=0.02, help="Assumed taker fee rate (default 2%%)")
+    p.add_argument("--slippage-cents", type=float, default=0.5, help="Conservative slippage per share in cents")
+    p.add_argument("--max-spread-cents", type=float, default=8.0, help="Skip entry if cheap-side spread exceeds this (cents)")
+    p.add_argument("--min-ask-depth", type=float, default=10.0, help="Skip entry if cheap-side ask depth < this shares")
     p.add_argument("--daily-loss-limit-usd", type=float, default=0.0, help="Halt new paper entries if day pnl <= -limit")
     p.add_argument("--max-consecutive-errors", type=int, default=10, help="Halt after N consecutive loop errors")
+    p.add_argument("--reset-state", action="store_true", help="Backup and reset state file for OOS validation")
 
     p.add_argument("--log-file", default=DEFAULT_LOG_FILE, help="Log file path")
     p.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="State file path")
@@ -562,7 +696,27 @@ def parse_args():
         args.state_file = d_state
     if args.metrics_file == DEFAULT_METRICS_FILE:
         args.metrics_file = d_metrics
+    args.allowed_side_mode = normalize_side_mode(str(args.allowed_side_mode))
     return args
+
+
+def _has_depth(book: Optional[dict], min_size: float) -> bool:
+    """Check if the book has at least min_size shares on the ask side."""
+    if not isinstance(book, dict):
+        return False
+    asks = book.get("asks")
+    if not isinstance(asks, list) or not asks:
+        return False
+    total = 0.0
+    for level in asks:
+        if isinstance(level, dict):
+            try:
+                s = float(level.get("size", 0))
+                if math.isfinite(s) and s > 0:
+                    total += s
+            except (TypeError, ValueError):
+                continue
+    return total >= min_size
 
 
 def detect_panic_signal(
@@ -588,12 +742,25 @@ def detect_panic_signal(
 def main() -> int:
     args = parse_args()
     window_sec = int(args.window_minutes) * 60
-    logger = Logger(args.log_file)
     state_path = Path(args.state_file)
-    state = _load_state(state_path)
+    log_path = Path(args.log_file)
+    metrics_path = Path(args.metrics_file)
+    reset_messages: List[str] = []
+    if bool(args.reset_state):
+        state, reset_messages = reset_oos_runtime_artifacts(
+            state_path=state_path,
+            log_path=log_path,
+            metrics_path=metrics_path,
+        )
+    else:
+        state = _load_state(state_path)
+    logger = Logger(args.log_file)
+    for msg in reset_messages:
+        logger.info(f"[{iso_now_local()}] {msg}")
     entered_windows: Dict[int, bool] = {}
     cheap_ask_max = float(args.cheap_ask_max_cents) / 100.0
     expensive_ask_min = float(args.expensive_ask_min_cents) / 100.0
+    allowed_side_mode = normalize_side_mode(str(args.allowed_side_mode))
 
     logger.info(f"Polymarket BTC {int(args.window_minutes)}m Panic Observer")
     logger.info("=" * 64)
@@ -602,7 +769,7 @@ def main() -> int:
         f"Config: window={int(args.window_minutes)}m poll={args.poll_sec:.2f}s summary={args.summary_every_sec:.1f}s "
         f"metrics={args.metrics_sample_sec:.1f}s shares={args.shares:.2f} "
         f"cheap_ask<={cheap_ask_max:.3f} expensive_ask>={expensive_ask_min:.3f} "
-        f"rem=[{args.min_remaining_sec:.1f}s,{args.max_remaining_sec:.1f}s] "
+        f"sides={allowed_side_mode} rem=[{args.min_remaining_sec:.1f}s,{args.max_remaining_sec:.1f}s] "
         f"taker_fee={args.taker_fee_rate:.4f}"
     )
     logger.info(f"Log: {args.log_file}")
@@ -731,29 +898,43 @@ def main() -> int:
                     and not state.halted
                     and state.active_position is None
                     and trigger_side
+                    and is_side_allowed(trigger_side, allowed_side_mode)
                     and math.isfinite(trigger_entry_px)
                     and trigger_entry_px > 0
                 ):
                     if not (args.max_one_entry_per_window and entered_windows.get(current_window.start_ts, False)):
-                        state.active_position = {
-                            "window_start_ts": current_window.start_ts,
-                            "window_slug": current_window.slug,
-                            "market_id": current_window.market_id,
-                            "side": trigger_side,
-                            "shares": float(args.shares),
-                            "entry_price": float(trigger_entry_px),
-                            "entry_ts": int(ts_now),
-                            "trigger_reason": trigger_reason,
-                            "expensive_price": float(trigger_expensive_px),
-                            "window_open_price": float(state.current_window_open_price),
-                        }
-                        state.entries_total += 1
-                        entered_windows[current_window.start_ts] = True
-                        logger.info(
-                            f"[{iso_now_local()}] paper ENTER side={trigger_side} shares={args.shares:.2f} "
-                            f"entry={trigger_entry_px:.4f} expensive={trigger_expensive_px:.4f} "
-                            f"rem={remaining_sec:.1f}s window={current_window.slug}"
-                        )
+                        # Spread guard
+                        cheap_book = up_book if trigger_side == "UP" else down_book
+                        cheap_bid = best_bid(cheap_book)
+                        spread = (trigger_entry_px - cheap_bid) if (math.isfinite(cheap_bid) and cheap_bid > 0) else math.nan
+                        if math.isfinite(spread) and spread > (float(args.max_spread_cents) / 100.0):
+                            state.filter_skip_spread += 1
+                            pass  # skip this entry
+                        # Depth guard
+                        elif not _has_depth(cheap_book, float(args.min_ask_depth)):
+                            state.filter_skip_depth += 1
+                            pass  # skip this entry
+                        else:
+                            state.active_position = {
+                                "window_start_ts": current_window.start_ts,
+                                "window_slug": current_window.slug,
+                                "market_id": current_window.market_id,
+                                "side": trigger_side,
+                                "shares": float(args.shares),
+                                "entry_price": float(trigger_entry_px),
+                                "entry_ts": int(ts_now),
+                                "trigger_reason": trigger_reason,
+                                "expensive_price": float(trigger_expensive_px),
+                                "window_open_price": float(state.current_window_open_price),
+                                "slippage_cents": float(args.slippage_cents),
+                            }
+                            state.entries_total += 1
+                            entered_windows[current_window.start_ts] = True
+                            logger.info(
+                                f"[{iso_now_local()}] paper ENTER side={trigger_side} shares={args.shares:.2f} "
+                                f"entry={trigger_entry_px:.4f} expensive={trigger_expensive_px:.4f} "
+                                f"rem={remaining_sec:.1f}s window={current_window.slug}"
+                            )
 
             if args.summary_every_sec > 0 and (ts_now - last_summary_ts) >= float(args.summary_every_sec):
                 active = state.active_position
@@ -773,7 +954,9 @@ def main() -> int:
                     f"trigger={trigger_side or '-'} entry={trigger_entry_px:.4f} active={active_txt} "
                     f"day={d_pnl:+.4f} total={state.pnl_total_usd:+.4f} "
                     f"W/L/P={state.wins}/{state.losses}/{state.pushes} "
-                    f"signals={state.signals_total} entries={state.entries_total} halted={state.halted}"
+                    f"signals={state.signals_total} entries={state.entries_total} "
+                    f"dd={state.max_drawdown_usd:.4f} fskip_spread={state.filter_skip_spread} fskip_depth={state.filter_skip_depth} "
+                    f"halted={state.halted}"
                 )
                 last_summary_ts = ts_now
 

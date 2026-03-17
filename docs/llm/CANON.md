@@ -38,7 +38,10 @@ Run in this order before making status claims:
    - `python scripts/render_strategy_register_snapshot.py --pretty`
 4. Refresh gate transition alarm state/log:
    - `python scripts/check_strategy_gate_alarm.py --pretty`
-5. If code/docs changed, refresh implementation ledger:
+5. Refresh BTC panic fee-adjusted evaluation when that strategy is being reviewed or operated:
+   - `python scripts/report_btc5m_strategy_eval.py --mode panic --pretty`
+   - optional live-fill check: `python scripts/report_btc5m_panic_reconcile.py --pretty`
+6. If code/docs changed, refresh implementation ledger:
    - `python scripts/render_implementation_ledger.py`
 
 Then read/report KPI only from `logs/strategy_register_latest.json`.

@@ -217,6 +217,7 @@ if (-not (Test-Path $tool)) {
 $snapshotTool = Join-Path $RepoRoot "scripts\render_weather_consensus_snapshot.py"
 $consensusOverviewTool = Join-Path $RepoRoot "scripts\render_weather_consensus_overview.py"
 $readinessTool = Join-Path $RepoRoot "scripts\judge_weather_top30_readiness.py"
+$weatherMimicRealizedTool = Join-Path $RepoRoot "scripts\record_weather_mimic_realized_daily.py"
 $realizedDailyTool = Join-Path $RepoRoot "scripts\record_simmer_realized_daily.py"
 $strategyRealizedTool = Join-Path $RepoRoot "scripts\materialize_strategy_realized_daily.py"
 $strategySnapshotTool = Join-Path $RepoRoot "scripts\render_strategy_register_snapshot.py"
@@ -339,6 +340,38 @@ try {
 }
 
 try {
+  if (-not (Test-Path $weatherMimicRealizedTool)) {
+    Log "weather_mimic_realized skip: recorder not found"
+  } elseif ([string]::IsNullOrWhiteSpace($consensusPath) -or -not (Test-Path $consensusPath)) {
+    Log "weather_mimic_realized skip: consensus json missing ($consensusPath)"
+  } else {
+    $weatherMimicPositions = Join-Path $logsDir ("{0}_forward_positions.json" -f $ProfileName)
+    $weatherMimicDaily = Join-Path $logsDir ("{0}_realized_daily.jsonl" -f $ProfileName)
+    $weatherMimicLatest = Join-Path $logsDir ("{0}_realized_latest.json" -f $ProfileName)
+    $weatherMimicMonthly = Join-Path $logsDir ("{0}_monthly_return_latest.txt" -f $ProfileName)
+    $entryTopN = 0
+    if (-not $NoRunScans.IsPresent) {
+      $entryTopN = [Math]::Max(0, [int]$TopN)
+    }
+    Run-Python @(
+      $weatherMimicRealizedTool,
+      "--profile-name", $ProfileName,
+      "--strategy-id", $ProfileName,
+      "--consensus-json", $consensusPath,
+      "--positions-json", $weatherMimicPositions,
+      "--out-daily-jsonl", $weatherMimicDaily,
+      "--out-latest-json", $weatherMimicLatest,
+      "--out-monthly-txt", $weatherMimicMonthly,
+      "--entry-top-n", "$entryTopN",
+      "--pretty"
+    )
+    Log ("weather_mimic_realized done -> {0} entry_top_n={1}" -f $weatherMimicLatest, $entryTopN)
+  }
+} catch {
+  Log "weather_mimic_realized failed (non-fatal): $($_.Exception.Message)"
+}
+
+try {
   if (-not (Test-Path $realizedDailyTool)) {
     Log "realized_daily skip: recorder not found"
   } else {
@@ -370,6 +403,31 @@ try {
   }
 } catch {
   Log "strategy_realized_daily failed (non-fatal): $($_.Exception.Message)"
+}
+
+try {
+  if (-not (Test-Path $strategyRealizedTool)) {
+    Log "weather_mimic_strategy_realized skip: materializer not found"
+  } else {
+    $weatherMimicDaily = Join-Path $logsDir ("{0}_realized_daily.jsonl" -f $ProfileName)
+    if (-not (Test-Path $weatherMimicDaily)) {
+      Log "weather_mimic_strategy_realized skip: daily jsonl missing"
+    } else {
+      $weatherMimicStrategyLatest = Join-Path $logsDir ("{0}_strategy_realized_latest.json" -f $ProfileName)
+      Run-Python @(
+        $strategyRealizedTool,
+        "--strategy-id", $ProfileName,
+        "--source-jsonl", $weatherMimicDaily,
+        "--source-series-mode", "daily_realized",
+        "--out-jsonl", "logs/strategy_realized_pnl_daily.jsonl",
+        "--out-latest-json", $weatherMimicStrategyLatest,
+        "--pretty"
+      )
+      Log "weather_mimic_strategy_realized done -> $weatherMimicStrategyLatest"
+    }
+  }
+} catch {
+  Log "weather_mimic_strategy_realized failed (non-fatal): $($_.Exception.Message)"
 }
 
 try {

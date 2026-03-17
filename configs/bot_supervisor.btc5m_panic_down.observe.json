@@ -1,0 +1,33 @@
+{
+  "name": "btc5m-panic-downonly-observe-supervisor",
+  "description": "Dedicated observe-only supervisor for BTC 5m panic DOWN-only trial.",
+  "log_file": "logs/btc5m_panic_downonly_supervisor.log",
+  "state_file": "logs/btc5m_panic_downonly_supervisor_state.json",
+  "jobs": [
+    {
+      "name": "btc5m_panic_downonly",
+      "enabled": true,
+      "command": [
+        "python",
+        "scripts/polymarket_btc5m_panic_observe.py",
+        "--allowed-side-mode",
+        "down",
+        "--poll-sec",
+        "1",
+        "--summary-every-sec",
+        "15",
+        "--metrics-sample-sec",
+        "5",
+        "--log-file",
+        "logs/btc5m-panic-downonly-observe.log",
+        "--state-file",
+        "logs/btc5m_panic_downonly_observe_state.json",
+        "--metrics-file",
+        "logs/btc5m-panic-downonly-observe-metrics.jsonl"
+      ],
+      "restart": "always",
+      "restart_delay_sec": 4,
+      "max_restarts_per_hour": 60
+    }
+  ]
+}

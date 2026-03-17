@@ -121,15 +121,72 @@ Polymarket BTC 5m lag monitor (observe-only):
 - State: `logs/btc5m_lag_observe_state.json`
 - Metrics: `logs/btc5m-lag-observe-metrics.jsonl`
 
+Polymarket BTC 15m lag monitor (observe-only):
+- Log: `logs/btc15m-lag-observe.log`
+- State: `logs/btc15m_lag_observe_state.json`
+- Metrics: `logs/btc15m-lag-observe-metrics.jsonl`
+- State counters include `filter_skip_time`, `filter_skip_side`, `filter_skip_regime`, `filter_skip_price_band`, `filter_skip_momentum`, `filter_skip_reversal`, `filter_skip_spread`, `filter_skip_depth`
+- Metrics rows include `raw_best_side` / `raw_best_edge` so policy-suppressed candidates remain visible even when `best_side` is empty
+- Metrics rows also include `fair_model`, `continuation_adjustment`, side-aware price-band fields, and `require_aligned_momentum` when drift redesign is used
+- Optional down-only compare run (when custom paths are used):
+  - Log: `logs/btc15m-lag-downonly-observe.log`
+  - State: `logs/btc15m_lag_downonly_observe_state.json`
+  - Metrics: `logs/btc15m-lag-downonly-observe-metrics.jsonl`
+- Optional regime-aware compare run (when custom paths are used):
+  - Log: `logs/btc15m-lag-regime-observe.log`
+  - State: `logs/btc15m_lag_regime_observe_state.json`
+  - Metrics: `logs/btc15m-lag-regime-observe-metrics.jsonl`
+- Optional redesign compare run (when custom paths are used):
+  - Log: `logs/btc15m-lag-redesign-observe.log`
+  - State: `logs/btc15m_lag_redesign_observe_state.json`
+  - Metrics: `logs/btc15m-lag-redesign-observe-metrics.jsonl`
+
 Polymarket BTC short-window panic-fade monitor (observe-only):
 - 5m default:
   - Log: `logs/btc5m-panic-observe.log`
   - State: `logs/btc5m_panic_observe_state.json`
   - Metrics: `logs/btc5m-panic-observe-metrics.jsonl`
+  - OOS reset backup (when `--reset-state` is used): `logs/btc5m_panic_observe_state_backup_pre_oos.json`
+  - OOS reset rotated log: `logs/btc5m-panic-observe_backup_pre_oos.log`
+  - OOS reset rotated metrics: `logs/btc5m-panic-observe-metrics_backup_pre_oos.jsonl`
 - 15m default (when `--window-minutes 15` and paths are default):
   - Log: `logs/btc15m-panic-observe.log`
   - State: `logs/btc15m_panic_observe_state.json`
   - Metrics: `logs/btc15m-panic-observe-metrics.jsonl`
+  - OOS reset backup (when `--reset-state` is used): `logs/btc15m_panic_observe_state_backup_pre_oos.json`
+  - OOS reset rotated log: `logs/btc15m-panic-observe_backup_pre_oos.log`
+  - OOS reset rotated metrics: `logs/btc15m-panic-observe-metrics_backup_pre_oos.jsonl`
+- Optional dedicated BTC 5m panic supervisor:
+  - Config: `configs/bot_supervisor.btc5m_panic.observe.json`
+  - Log: `logs/btc5m_panic_supervisor.log`
+  - State: `logs/btc5m_panic_supervisor_state.json`
+  - Lock: `logs/btc5m_panic_observe_supervisor.lock`
+- Optional 5m down-only compare run:
+  - Log: `logs/btc5m-panic-downonly-observe.log`
+  - State: `logs/btc5m_panic_downonly_observe_state.json`
+  - Metrics: `logs/btc5m-panic-downonly-observe-metrics.jsonl`
+  - Eval JSON: `logs/btc5m_strategy_eval_downonly_latest.json`
+  - Trial judge JSON/TXT: `logs/btc5m_panic_downonly_trial_decision_latest.json`, `logs/btc5m_panic_downonly_trial_decision_latest.txt`
+- Optional dedicated BTC 5m panic down-only supervisor:
+  - Config: `configs/bot_supervisor.btc5m_panic_down.observe.json`
+  - Log: `logs/btc5m_panic_downonly_supervisor.log`
+  - State: `logs/btc5m_panic_downonly_supervisor_state.json`
+  - Lock: `logs/btc5m_panic_downonly_observe_supervisor.lock`
+
+Polymarket BTC short-window panic live wrapper:
+- 5m default:
+  - Log: `logs/btc5m-panic-live.log`
+  - State: `logs/btc5m_panic_live_state.json`
+  - Metrics: `logs/btc5m-panic-live-metrics.jsonl`
+  - Execution audit: `logs/btc5m-panic-live-exec.jsonl`
+- 15m default (when `--window-minutes 15` and paths are default):
+  - Log: `logs/btc15m-panic-live.log`
+  - State: `logs/btc15m_panic_live_state.json`
+  - Metrics: `logs/btc15m-panic-live-metrics.jsonl`
+  - Execution audit: `logs/btc15m-panic-live-exec.jsonl`
+
+Polymarket BTC panic live reconcile report:
+- Summary JSON: `logs/btc5m-panic-reconcile-latest.json` (default)
 
 Polymarket BTC short-window panic claim validator (observe-only):
 - Summary JSON: `logs/btc5m-panic-claims-latest.json` (default)
@@ -137,6 +194,21 @@ Polymarket BTC short-window panic claim validator (observe-only):
 - For `--window-minutes 15`, defaults switch to:
   - `logs/btc15m-panic-claims-latest.json`
   - `logs/btc15m-panic-claims-markets-latest.csv`
+
+Polymarket BTC strategy evaluator (observe-only):
+- Legacy 5m / panic summary JSON: `logs/btc5m_strategy_eval_latest.json` (default)
+- 15m lag summary JSON (`--mode lag15` default): `logs/btc15m_strategy_eval_latest.json`
+- 15m lag side-filter compare outputs (when requested with `--trade-side`):
+  - `logs/btc15m_strategy_eval_down_latest.json`
+  - `logs/btc15m_strategy_eval_up_latest.json`
+
+Polymarket pending BTC profit accelerator batch (observe-only):
+- Batch summary JSON: `logs/pending_profit_accelerator_latest.json` (default)
+- Batch summary TXT: `logs/pending_profit_accelerator_latest.txt` (default)
+- `--run-tag` 既定は `latest`（同一tagで連続実行すると lag15/yes-no 証拠を累積）
+- as of `2026-03-08`, lag15 stage is enabled by default; use `--skip-lag15` only when you want a yes-no-only refresh.
+- Per-run lag15 artifacts (when lag15 stage is enabled): `logs/btc15m-lag-observe-accel-<utc_tag>.log`, `logs/btc15m_lag_observe_accel_<utc_tag>.json`, `logs/btc15m-lag-observe-accel-<utc_tag>.jsonl`, `logs/btc15m_strategy_eval_accel_<utc_tag>.json`
+- Per-run yes-no artifacts: `logs/btc_updown_yesno_probe_accel_<utc_tag>.log`, `logs/btc_updown_yesno_probe_state_accel_<utc_tag>.json`, `logs/btc_updown_yesno_probe_metrics_accel_<utc_tag>.jsonl`, `logs/btc_updown_yesno_probe_kelly_accel_<utc_tag>.json`
 
 Polymarket social profit-claim validator (observe-only):
 - Summary JSON: `logs/social_profit_claims_latest.json` (default)
@@ -275,6 +347,13 @@ Polymarket weather consensus watchlist builder (observe-only):
 - Snapshot HTML: `logs/<profile_name>_consensus_snapshot_latest.html`
 - Cross-profile overview HTML: `logs/weather_consensus_overview_latest.html`
 
+Polymarket weather mimic forward realized tracker (observe-only):
+- Forward ledger JSON: `logs/<profile_name>_forward_positions.json`
+- Realized daily series JSONL: `logs/<profile_name>_realized_daily.jsonl`
+- Latest realized snapshot JSON: `logs/<profile_name>_realized_latest.json`
+- Latest rolling-30d monthly return text: `logs/<profile_name>_monthly_return_latest.txt`
+- Strategy-materialized latest JSON: `logs/<profile_name>_strategy_realized_latest.json`
+
 Polymarket weather watchlist A/B dryrun comparator (observe-only):
 - Report JSON:
   - `logs/<profile_name>_ab_vs_no_longshot_latest.json`
@@ -290,6 +369,7 @@ Polymarket weather Top30 readiness judge (observe-only):
 - Cross-profile readiness report JSON: `logs/weather_top30_readiness_report_latest.json`
 - Cross-profile readiness report TXT: `logs/weather_top30_readiness_report_latest.txt`
 - Daily runner log: `logs/weather_top30_readiness_daily_run.log`
+- Daily runner also refreshes `logs/<profile_name>_forward_positions.json`, `logs/<profile_name>_realized_daily.jsonl`, `logs/<profile_name>_realized_latest.json`, `logs/<profile_name>_monthly_return_latest.txt`, and `logs/<profile_name>_strategy_realized_latest.json` in resolve-only mode.
 - Daily runner also refreshes `logs/strategy_realized_pnl_daily.jsonl` and `logs/strategy_realized_latest.json`.
 - Daily runner also refreshes `logs/strategy_gate_alarm.log` and `logs/strategy_gate_alarm_state.json`.
 - Daily runner also refreshes `logs/automation_health_latest.json` and `logs/automation_health_latest.txt`.
@@ -310,6 +390,8 @@ Polymarket weather mimic pipeline daily runner (observe-only):
 - Daily run also refreshes `logs/weather_consensus_overview_latest.html`.
 - Daily run also refreshes `logs/<profile_name>_ab_vs_no_longshot_latest.json/.md` and `logs/<profile_name>_ab_vs_lateprob_latest.json/.md` when inputs are available.
 - Daily run also refreshes `logs/<profile_name>_top30_readiness_latest.json` (Top30 readiness gate snapshot).
+- Daily run also refreshes `logs/<profile_name>_forward_positions.json`, `logs/<profile_name>_realized_daily.jsonl`, `logs/<profile_name>_realized_latest.json`, `logs/<profile_name>_monthly_return_latest.txt`, and `logs/<profile_name>_strategy_realized_latest.json`.
+- `-NoRunScans` 時は mimic realized tracker を resolve-only (`entry_top_n=0`) で回し、stale watchlist の新規取り込みを避ける。
 - Daily run also refreshes `logs/strategy_realized_pnl_daily.jsonl` and `logs/strategy_realized_latest.json`.
 - Daily run also refreshes `logs/strategy_gate_alarm.log` and `logs/strategy_gate_alarm_state.json`.
 - Daily run also refreshes `logs/automation_health_latest.json` and `logs/automation_health_latest.txt`.
@@ -342,6 +424,7 @@ Polymarket strategy register snapshot (observe-only):
 - Snapshot JSON: `logs/strategy_register_latest.json`
 - Snapshot HTML: `logs/strategy_register_latest.html`
 - Snapshot JSON には `bankroll_policy`、`realized_30d_gate`、`realized_monthly_return` を含む（`realized_30d_gate.decision` は30日最終判定の互換フィールド）。
+- Snapshot JSON には `weather_profile_realized.profiles[*]` を含み、weather mimic profile ごとの 7/14/30d stage, latest realized day, and rolling return proxy を保持する。
 - Snapshot JSON には `kpi_core`（`daily_realized_pnl_usd`, `daily_realized_pnl_usd_text`, `daily_realized_pnl_day`, `monthly_return_now_text`, `monthly_return_now_source`, `max_drawdown_30d_ratio`, `max_drawdown_30d_text`, `source`）を含む。`monthly_return_now_source` が `realized_rolling_30d_new_condition` のときは、日次PnL/30d最大DDも同じ新条件系列を優先する。
 - Snapshot JSON の `no_longshot_status` には月利系に加えて `daily_realized_pnl_usd_latest`, `daily_realized_pnl_day`, `rolling_30d_max_drawdown_ratio`, `rolling_30d_max_drawdown_text` と各 `*_source` を含む。
 - `bankroll_policy` は `docs/llm/STRATEGY.md` の `## Bankroll Policy` から抽出され、`initial_bankroll_usd`、`allocation_mode`、`live_max_daily_risk_ratio`、`live_max_daily_risk_usd`、`default_adopted_allocations` を保持する。

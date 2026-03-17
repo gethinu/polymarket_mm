@@ -32,6 +32,7 @@ PowerShell task scripts (background by default):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_morning_status_daily.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_simmer_ab_daily_report.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_simmer_ab_observe_supervisor.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_btc5m_panic_observe_supervisor.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/set_no_longshot_daily_mode.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/disable_repo_tasks.ps1`
   - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_clob_arb_monitor_task.ps1`
@@ -50,6 +51,7 @@ PowerShell task scripts (background by default):
 Bot supervisor (parallel manager for multiple bots):
 - Python entrypoint:
   - `python scripts/bot_supervisor.py run --config configs/bot_supervisor.observe.json`
+  - `python scripts/bot_supervisor.py run --config configs/bot_supervisor.btc5m_panic.observe.json`
   - `python scripts/bot_supervisor.py status --state-file logs/bot_supervisor_state.json`
   - `python scripts/bot_supervisor.py stop --state-file logs/bot_supervisor_state.json`
 - PowerShell runner (background by default):
@@ -61,6 +63,11 @@ Bot supervisor (parallel manager for multiple bots):
   - `run`: `--halt-on-job-failure`, `--halt-when-all-stopped`
   - `status/stop`: `--state-file`
   - env overrides: `BOTSUP_CONFIG`, `BOTSUP_RUN_SECONDS`, `BOTSUP_POLL_SEC`, `BOTSUP_WRITE_STATE_SEC`
+- Dedicated BTC panic observe supervisor (background by default):
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_btc5m_panic_observe_supervisor.ps1`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_btc5m_panic_observe_supervisor.ps1 -NoBackground`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_btc5m_panic_observe_supervisor.ps1 -RunSeconds 60`
+  - key flags: `-RepoRoot`, `-PythonExe`, `-ConfigFile`, `-LogFile`, `-StateFile`, `-LockFile`, `-PollSec`, `-WriteStateSec`, `-RunSeconds`, `-IgnoreLock`, `-NoBackground`
 - Default `configs/bot_supervisor.observe.json` jobs:
   - enabled: `event_driven`, `event_driven_dashboard`
   - disabled by default: `btc5m_lag`, `btc5m_panic`, `no_longshot_daily_daemon`, `weather_daily_daemon`, `fade_both`, `fade_long_canary`, `fade_short_canary`, `fade_router`, `clob_fade`
@@ -378,6 +385,19 @@ Polymarket weather consensus watchlist builder (observe-only):
   - `--max-per-correlation-bucket`（推定相関バケットごとの候補上限）
   - `--out-csv`, `--out-json`, `--pretty`
 
+Polymarket weather mimic forward realized tracker (observe-only):
+- Track paper entries from the latest consensus watchlist and resolve them on settlement:
+  - `python scripts/record_weather_mimic_realized_daily.py`
+  - `python scripts/record_weather_mimic_realized_daily.py --profile-name weather_7acct_auto --entry-top-n 30 --pretty`
+  - `python scripts/record_weather_mimic_realized_daily.py --profile-name weather_7acct_auto --entry-top-n 0 --pretty`
+- Key flags:
+  - `--profile-name`（watchlist / artifact 接頭辞。既定 `weather_7acct_auto`）
+  - `--strategy-id`（strategy-level materialization に使うID。既定は profile 名）
+  - `--consensus-json`, `--positions-json`, `--out-daily-jsonl`, `--out-latest-json`, `--out-monthly-txt`
+  - `--entry-top-n`（watchlist 上位から新規 paper entry を何件取り込むか。`0` で resolve-only）
+  - `--shares-per-entry`, `--per-trade-cost`, `--assumed-bankroll-usd`
+  - `--min-realized-days`, `--win-threshold`, `--lose-threshold`, `--api-timeout-sec`, `--pretty`
+
 Polymarket weather watchlist A/B dryrun comparator (observe-only):
 - Compare consensus watchlist with one baseline watchlist:
   - `python scripts/compare_weather_watchlists.py --consensus-json logs/weather_7acct_auto_consensus_watchlist_latest.json --baseline-json logs/weather_7acct_auto_no_longshot_latest.json --baseline-name no_longshot --out-json logs/weather_7acct_auto_ab_vs_no_longshot_latest.json --out-md logs/weather_7acct_auto_ab_vs_no_longshot_latest.md --pretty`
@@ -444,8 +464,10 @@ Polymarket weather Top30 readiness daily runner (observe-only):
   - runner: `-Profiles`, `-FailOnNoGo`, `-Discord`, `-NoBackground`
   - runner は各 profile に対して strict/quality readiness を再計算し、最後に集計レポートを更新
   - runner は実行後に `scripts/render_weather_consensus_overview.py` を呼び出し、`logs/weather_consensus_overview_latest.html` を更新
+  - runner は各 profile に対して `scripts/record_weather_mimic_realized_daily.py --entry-top-n 0` を呼び、resolve-only で `logs/<profile_name>_realized_*.json*` を更新
   - runner は実行後に `scripts/record_simmer_realized_daily.py` を呼び出し、`logs/clob_arb_realized_daily.jsonl` を更新
   - runner は実行後に `scripts/materialize_strategy_realized_daily.py` を呼び出し、`logs/strategy_realized_pnl_daily.jsonl` を更新
+  - runner は weather mimic profile ごとに `scripts/materialize_strategy_realized_daily.py --source-series-mode daily_realized` を呼び、`logs/<profile_name>_strategy_realized_latest.json` も更新
   - runner は実行後に `scripts/render_strategy_register_snapshot.py` を呼び出し、`logs/strategy_register_latest.json/.html` を更新
   - runner は実行後に `scripts/check_strategy_gate_alarm.py` を呼び出し、3段階ゲート遷移アラームを更新
   - runner は実行後に `scripts/report_automation_health.py` を呼び出し、`logs/automation_health_latest.json/.txt` を更新
@@ -513,8 +535,11 @@ Polymarket weather mimic pipeline daily runner (observe-only):
   - 実行後に `scripts/render_weather_consensus_overview.py` を呼び出し、`logs/weather_consensus_overview_latest.html` を更新
   - 通常実行では `logs/<profile_name>_ab_vs_no_longshot_latest.json/.md` と `logs/<profile_name>_ab_vs_lateprob_latest.json/.md` も更新
   - 実行後に `scripts/judge_weather_top30_readiness.py` を呼び出し、`logs/<profile_name>_top30_readiness_latest.json` も更新（execution plan が未整備でも判定JSONは更新される）
+  - 実行後に `scripts/record_weather_mimic_realized_daily.py` を呼び、`logs/<profile_name>_realized_daily.jsonl`, `logs/<profile_name>_realized_latest.json`, `logs/<profile_name>_monthly_return_latest.txt` を更新
+  - `-NoRunScans` 時は上記 realized tracker を resolve-only (`entry_top_n=0`) で回し、stale watchlist の新規取り込みを避ける
   - 実行後に `scripts/record_simmer_realized_daily.py` を呼び出し、`logs/clob_arb_realized_daily.jsonl` を更新
   - 実行後に `scripts/materialize_strategy_realized_daily.py` を呼び出し、`logs/strategy_realized_pnl_daily.jsonl` を更新
+  - 実行後に weather mimic profile 用 `scripts/materialize_strategy_realized_daily.py --source-series-mode daily_realized` も呼び、`logs/<profile_name>_strategy_realized_latest.json` を更新
   - 実行後に `scripts/render_strategy_register_snapshot.py` を呼び出し、`logs/strategy_register_latest.json/.html` を更新
   - 実行後に `scripts/check_strategy_gate_alarm.py` を呼び出し、3段階ゲート遷移アラームを更新
   - 実行後に `scripts/report_automation_health.py` を呼び出し、`logs/automation_health_latest.json/.txt` を更新
@@ -580,6 +605,12 @@ Polymarket strategy register snapshot (observe-only):
   - `no_longshot_status.rolling_30d_monthly_return_all_text`
   - `no_longshot_status.rolling_30d_resolved_trades`（新条件専用があれば優先表示）
   - `no_longshot_status.rolling_30d_resolved_trades_new_condition`
+  - `weather_profile_realized.profiles[*].profile_name`
+  - `weather_profile_realized.profiles[*].decision_3stage`
+  - `weather_profile_realized.profiles[*].observed_realized_days`
+  - `weather_profile_realized.profiles[*].latest_day`
+  - `weather_profile_realized.profiles[*].projected_monthly_return_text`
+  - `weather_profile_realized.profiles[*].rolling_30d_return_text`
   - `no_longshot_status.rolling_30d_resolved_trades_all`
   - `no_longshot_status.daily_realized_pnl_usd_latest`, `no_longshot_status.daily_realized_pnl_day`
   - `no_longshot_status.rolling_30d_max_drawdown_ratio`, `no_longshot_status.rolling_30d_max_drawdown_text`
@@ -849,10 +880,10 @@ Polymarket BTC 5m LMSR/Bayes monitor (observe-only):
   - `python scripts/report_btc5m_lmsr_observation.py --hours 24 --discord`
 
 Polymarket BTC short-window lag monitor (observe-only):
+- legacy generic runner. The 5m lag thesis is rejected; use the dedicated 15m runner below for new 15m research.
 - Observe:
   - `python scripts/polymarket_btc5m_lag_observe.py`
   - `python scripts/polymarket_btc5m_lag_observe.py --entry-edge-cents 1.5 --shares 25 --taker-fee-rate 0.002`
-  - `python scripts/polymarket_btc5m_lag_observe.py --window-minutes 15 --entry-edge-cents 1.2 --shares 25`
   - `python scripts/polymarket_btc5m_lag_observe.py --window-minutes 5 --entry-price-min 0.03 --entry-price-max 0.07 --require-reversal --reversal-lookback-sec 30 --reversal-min-move-usd 8`
 - Key flags:
   - `--window-minutes` (`5` or `15`; default `5`)
@@ -869,22 +900,117 @@ Polymarket BTC short-window lag monitor (observe-only):
   - `python scripts/btc5m_monitor_dashboard.py --mode lag --window-minutes 15`
   - key flags: `--mode`, `--window-minutes`, `--metrics-file`, `--state-file`, `--log-file`, `--port`, `--window-lookback-minutes`
 
+Polymarket BTC 15m lag monitor (observe-only):
+- Observe:
+  - `python scripts/polymarket_btc15m_lag_observe.py`
+  - `python scripts/polymarket_btc15m_lag_observe.py --run-seconds 30`
+  - `python scripts/polymarket_btc15m_lag_observe.py --entry-edge-cents 5.0 --summary-every-sec 10`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode down --log-file logs/btc15m-lag-downonly-observe.log --state-file logs/btc15m_lag_downonly_observe_state.json --metrics-file logs/btc15m-lag-downonly-observe-metrics.jsonl`
+  - `python scripts/polymarket_btc15m_lag_observe.py --regime-mode prefer --log-file logs/btc15m-lag-regime-observe.log --state-file logs/btc15m_lag_regime_observe_state.json --metrics-file logs/btc15m-lag-regime-observe-metrics.jsonl`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode down --regime-mode strict --entry-price-min 0.05 --entry-price-max 0.35 --min-remaining-sec 180 --max-remaining-sec 540 --require-reversal --reversal-lookback-sec 180 --reversal-min-move-usd 15`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode both --regime-mode prefer --entry-edge-cents 1.0 --entry-price-min 0.05 --entry-price-max 0.35 --min-remaining-sec 180 --max-remaining-sec 660 --require-reversal --reversal-lookback-sec 180 --reversal-min-move-usd 15`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode both --regime-mode prefer --fair-model drift --entry-edge-cents 1.0 --entry-price-min 0.02 --entry-price-max 0.70 --up-entry-price-max 0.75 --down-entry-price-max 0.25 --min-remaining-sec 180 --max-remaining-sec 660 --require-aligned-momentum`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode up --regime-mode prefer --fair-model drift --entry-edge-cents 1.0 --entry-price-min 0.02 --entry-price-max 0.70 --up-entry-price-max 0.75 --min-remaining-sec 180 --max-remaining-sec 660 --require-aligned-momentum`
+  - `python scripts/report_btc5m_strategy_eval.py --mode lag15 --pretty`
+  - `python scripts/report_btc5m_strategy_eval.py --mode lag15 --trade-side down --out-json logs/btc15m_strategy_eval_down_latest.json --pretty`
+- Key flags:
+  - `--window-minutes` (`15`; fixed default)
+  - `--allowed-side-mode` (`both` / `down` / `up`; side-restricted observe variants)
+  - `--regime-mode` (`prefer` / `strict` / `off`; trend-aware side selection)
+  - `--regime-short-lookback-sec`, `--regime-long-lookback-sec` (trend horizons; defaults `1800s` / `7200s`)
+  - `--regime-short-threshold-pct`, `--regime-long-threshold-pct` (return thresholds for `UP` / `DOWN` regime classification)
+  - `--regime-opposite-edge-penalty-cents` (opposite-side edge penalty in `prefer` mode)
+  - `--fair-model` (`hybrid` / `drift`; `drift` adds continuation bias from recent trend + open-gap)
+  - `--drift-trend-lookback-sec`, `--drift-max-adjustment`, `--drift-trend-reference-move-pct`, `--drift-open-gap-reference-pct` (continuation model tuning)
+  - `--entry-edge-cents`, `--alert-edge-cents`, `--shares`, `--min-remaining-sec`, `--no-max-one-entry-per-window` (signal and paper-entry gating)
+  - observe-only CLI floor for `--entry-edge-cents` is `1.0c`
+  - `--max-remaining-sec` (optional upper bound for remaining time; use to avoid very-early entries)
+  - `--entry-price-min`, `--entry-price-max` (optional entry price band for value-only or mid-price-only probes)
+  - `--up-entry-price-min/max`, `--down-entry-price-min/max` (side-aware price bands; negative means inherit global band)
+  - `--require-aligned-momentum` (require short momentum and drift continuation bias to match entry side before paper entry)
+  - `--require-reversal`, `--reversal-lookback-sec`, `--reversal-min-move-usd` (optional 2-leg spot reversal confirmation)
+  - built-in entry timing guard: first `30s` of each 15m window and last `60s` before settlement are no-entry
+  - `--vol-lookback-sec`, `--sigma-floor-per-sqrt-sec`, `--settle-epsilon-usd` (hybrid fair-probability inputs and settlement model)
+  - `--taker-fee-rate`, `--slippage-cents`, `--max-spread-cents`, `--min-ask-depth` (conservative execution-cost / book-quality gating)
+  - `--daily-loss-limit-usd`, `--max-consecutive-errors` (observe-side risk guardrails)
+  - `--summary-every-sec`, `--metrics-sample-sec`, `--log-file`, `--state-file`, `--metrics-file` (runtime outputs)
+  - default runtime files are fixed to `logs/btc15m-*` when paths are not explicitly specified
+  - evaluator side filter: `--trade-side` (`both` / `down` / `up`) for fee-adjusted post-hoc comparison on one log
+
+Polymarket pending BTC profit accelerator batch (observe-only):
+- One-shot runner for pending BTC evidence collection:
+  - `python scripts/run_pending_profit_accelerator.py --pretty`
+  - `python scripts/run_pending_profit_accelerator.py --lag15-run-seconds 1800 --yesno-run-seconds 1800 --pretty`
+  - `python scripts/run_pending_profit_accelerator.py --skip-yesno --lag15-run-seconds 3600`
+  - `python scripts/run_pending_profit_accelerator.py --skip-yesno --lag15-allowed-side-mode down --lag15-regime-mode strict --lag15-entry-price-min 0.05 --lag15-entry-price-max 0.35 --lag15-min-remaining-sec 180 --lag15-max-remaining-sec 540 --lag15-require-reversal --lag15-reversal-lookback-sec 180 --lag15-reversal-min-move-usd 15`
+  - `python scripts/run_pending_profit_accelerator.py --skip-yesno --lag15-allowed-side-mode both --lag15-regime-mode prefer --lag15-entry-edge-cents 1.0 --lag15-entry-price-min 0.05 --lag15-entry-price-max 0.35 --lag15-min-remaining-sec 180 --lag15-max-remaining-sec 660 --lag15-require-reversal --lag15-reversal-lookback-sec 180 --lag15-reversal-min-move-usd 15`
+  - `python scripts/run_pending_profit_accelerator.py --skip-yesno --run-tag redesign_drift_mom1 --lag15-run-seconds 1200 --lag15-fair-model drift --lag15-entry-edge-cents 1.0 --lag15-entry-price-min 0.02 --lag15-entry-price-max 0.70 --lag15-up-entry-price-max 0.75 --lag15-down-entry-price-max 0.25 --lag15-min-remaining-sec 180 --lag15-max-remaining-sec 660 --lag15-require-aligned-momentum --pretty`
+  - `python scripts/run_pending_profit_accelerator.py --skip-yesno --run-tag redesign_up_drift_mom1 --lag15-run-seconds 1200 --lag15-allowed-side-mode up --lag15-fair-model drift --lag15-entry-edge-cents 1.0 --lag15-entry-price-min 0.02 --lag15-entry-price-max 0.70 --lag15-up-entry-price-max 0.75 --lag15-min-remaining-sec 180 --lag15-max-remaining-sec 660 --lag15-require-aligned-momentum --pretty`
+  - `python scripts/run_pending_profit_accelerator.py --skip-yesno --run-tag redesign_up_drift_mom_px60_1 --lag15-run-seconds 1200 --lag15-allowed-side-mode up --lag15-fair-model drift --lag15-entry-edge-cents 1.0 --lag15-entry-price-min 0.60 --lag15-entry-price-max 0.75 --lag15-up-entry-price-min 0.60 --lag15-up-entry-price-max 0.75 --lag15-min-remaining-sec 180 --lag15-max-remaining-sec 660 --lag15-require-aligned-momentum --pretty`
+- Runs:
+  - `btc_15m_lag_observe`: `polymarket_btc15m_lag_observe.py` -> `report_btc5m_strategy_eval.py --mode lag15`
+  - `btc_shortwindow_yesno_arb_observe`: `polymarket_clob_arb_realtime.py --universe btc-updown --strategy yes-no` -> `replay_clob_arb_kelly.py`
+- Key flags:
+  - global: `--python-exe`, `--run-tag`（既定 `latest`。同一tagを使うとstate/metricsを累積）, `--child-timeout-sec`, `--skip-lag15/--no-skip-lag15`, `--skip-yesno`
+  - lag15 probe: `--lag15-run-seconds`, `--lag15-entry-edge-cents`, `--lag15-allowed-side-mode`, `--lag15-regime-mode`, `--lag15-fair-model`, `--lag15-drift-trend-lookback-sec`, `--lag15-drift-max-adjustment`, `--lag15-drift-trend-reference-move-pct`, `--lag15-drift-open-gap-reference-pct`, `--lag15-entry-price-min`, `--lag15-entry-price-max`, `--lag15-up-entry-price-min/max`, `--lag15-down-entry-price-min/max`, `--lag15-min-remaining-sec`, `--lag15-max-remaining-sec`, `--lag15-require-aligned-momentum`, `--lag15-require-reversal`, `--lag15-reversal-lookback-sec`, `--lag15-reversal-min-move-usd`, `--lag15-max-spread-cents`, `--lag15-min-ask-depth`, `--lag15-min-trades-gate`
+  - yes-no probe: `--yesno-run-seconds`, `--yesno-min-edge-cents`, `--yesno-windows-back`, `--yesno-windows-forward`, `--yesno-window-minutes`, `--yesno-min-samples-gate`, `--yesno-metrics-log-all-candidates`
+  - replay: `--replay-scales`, `--replay-bootstrap-iters`, `--replay-miss-penalty`, `--replay-stale-penalty-per-sec`, `--[no-]replay-require-threshold-pass`
+  - outputs: `--out-json`, `--out-txt`, `--pretty`
+  - as of `2026-03-08`, `lag15` stage is enabled by default; use `--skip-lag15` only when you want a yes-no-only refresh.
+
 Polymarket BTC short-window panic-fade monitor (observe-only):
 - Observe:
   - `python scripts/polymarket_btc5m_panic_observe.py`
   - `python scripts/polymarket_btc5m_panic_observe.py --cheap-ask-max-cents 8 --expensive-ask-min-cents 92 --shares 25`
+  - `python scripts/polymarket_btc5m_panic_observe.py --allowed-side-mode down --log-file logs/btc5m-panic-downonly-observe.log --state-file logs/btc5m_panic_downonly_observe_state.json --metrics-file logs/btc5m-panic-downonly-observe-metrics.jsonl`
   - `python scripts/polymarket_btc5m_panic_observe.py --window-minutes 15 --cheap-ask-max-cents 10 --expensive-ask-min-cents 90`
+  - `python scripts/polymarket_btc5m_panic_observe.py --reset-state --run-seconds 30`
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_btc5m_panic_observe_supervisor.ps1 -ConfigFile configs/bot_supervisor.btc5m_panic_down.observe.json -LogFile logs/btc5m_panic_downonly_supervisor.log -StateFile logs/btc5m_panic_downonly_supervisor_state.json -LockFile logs/btc5m_panic_downonly_observe_supervisor.lock`
+  - `python scripts/judge_btc5m_panic_downonly_trial.py --pretty`
 - Key flags:
   - `--window-minutes` (`5` or `15`; default `5`)
   - `--cheap-ask-max-cents`, `--expensive-ask-min-cents`, `--shares` (extreme-price trigger + paper size)
+  - `--allowed-side-mode` (`both` / `down` / `up`; side-restricted panic trial)
   - `--min-remaining-sec`, `--max-remaining-sec`, `--no-max-one-entry-per-window` (entry time window + per-window gating)
-  - `--settle-epsilon-usd`, `--taker-fee-rate` (settlement tolerance + cost assumption)
+  - `--settle-epsilon-usd`, `--taker-fee-rate`, `--slippage-cents` (settlement tolerance + conservative cost assumptions)
+  - `--max-spread-cents`, `--min-ask-depth` (cheap-side book-quality gating)
   - `--daily-loss-limit-usd`, `--max-consecutive-errors` (observe-side risk guardrails)
+  - `--reset-state` (backup current state JSON and rotate current log/metrics files to `*_backup_pre_oos*`, then start a fresh OOS artifact set)
   - `--summary-every-sec`, `--metrics-sample-sec`, `--log-file`, `--state-file`, `--metrics-file` (runtime outputs)
   - default runtime files auto-separate by window: `logs/btc5m-*` or `logs/btc15m-*` when paths are not explicitly specified
+  - down-only eval example: `python scripts/report_btc5m_strategy_eval.py --mode panic --trade-side down --log-file logs/btc5m-panic-downonly-observe.log --state-file logs/btc5m_panic_downonly_observe_state.json --metrics-file logs/btc5m-panic-downonly-observe-metrics.jsonl --out-json logs/btc5m_strategy_eval_downonly_latest.json --pretty`
+  - down-only judge defaults: `min_trades=100` or `min_hours=24`, `min_net_pnl_usd=10`, drawdown must improve to `<= 75%` of the old both-side max DD
 - Realtime dashboard (local web, observe-only visualization):
   - `python scripts/btc5m_monitor_dashboard.py --mode panic --window-minutes 5`
   - `python scripts/btc5m_monitor_dashboard.py --mode panic --window-minutes 15`
+
+Polymarket BTC short-window panic live wrapper (observe-first, guarded live):
+- Observe / dry-run:
+  - `python scripts/polymarket_btc5m_panic_live.py`
+  - `python scripts/polymarket_btc5m_panic_live.py --run-seconds 30`
+  - `python scripts/polymarket_btc5m_panic_live.py --reset-state --run-seconds 30`
+- Live execution:
+  - `python scripts/polymarket_btc5m_panic_live.py --execute --confirm-live YES`
+  - `python scripts/polymarket_btc5m_panic_live.py --execute --confirm-live YES --require-confirm`
+- Key flags:
+  - `--execute`, `--confirm-live YES` (double live gate; omitted by default)
+  - `--require-confirm` (manual Y/N prompt before each submitted live order)
+  - `--max-notional-per-trade`, `--max-entries-per-day`, `--daily-loss-limit-usd` (live risk limits)
+  - `--cheap-ask-max-cents`, `--expensive-ask-min-cents`, `--shares`, `--min-remaining-sec`, `--max-remaining-sec` (signal window / sizing inputs)
+  - `--max-spread-cents`, `--min-ask-depth` (book-quality gating before paper/live entry)
+  - `--log-file`, `--state-file`, `--metrics-file`, `--exec-log-file` (wrapper runtime outputs)
+  - default runtime files auto-separate by window: `logs/btc5m-panic-live*` or `logs/btc15m-panic-live*`
+  - live orders are `BUY` maker-posted `GTC` orders only; the wrapper cancels unfilled orders after a short reconciliation poll
+
+Polymarket BTC panic live reconcile report (observe-only):
+- Reconcile submitted live panic orders against CLOB trade history:
+  - `python scripts/report_btc5m_panic_reconcile.py --pretty`
+  - `python scripts/report_btc5m_panic_reconcile.py --hours 24 --exec-log-file logs/btc5m-panic-live-exec.jsonl`
+- Key flags:
+  - `--hours` (recent exec-log horizon; `0` means all recorded orders)
+  - `--exec-log-file`, `--state-file` (live audit sources)
+  - `--clob-host`, `--chain-id` (authenticated CLOB trade lookup)
+  - `--out-json`, `--pretty`
 
 Polymarket BTC short-window panic claim validator (observe-only):
 - Validate historical frequency claims from closed BTC up/down windows:

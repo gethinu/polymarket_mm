@@ -1110,17 +1110,21 @@ def _collect_day_rows(path: Path, strategy_id: str) -> Dict[str, dict]:
 def load_realized_daily_series(strategy_id: str = DEFAULT_REALIZED_STRATEGY_ID) -> dict:
     strategy_file = logs_dir() / "strategy_realized_pnl_daily.jsonl"
     clob_file = logs_dir() / "clob_arb_realized_daily.jsonl"
+    target_strategy_id = str(strategy_id or "").strip() or DEFAULT_REALIZED_STRATEGY_ID
+    allow_clob_fallback = target_strategy_id == DEFAULT_REALIZED_STRATEGY_ID
+    source_artifact_exists = strategy_file.exists() or (allow_clob_fallback and clob_file.exists())
 
     candidates: List[Path] = []
     preferred_rows: Dict[str, dict] = {}
     if strategy_file.exists():
-        preferred_rows = _collect_day_rows(strategy_file, strategy_id=strategy_id)
+        preferred_rows = _collect_day_rows(strategy_file, strategy_id=target_strategy_id)
     if preferred_rows:
         candidates = [strategy_file]
     else:
-        for p in (clob_file, strategy_file):
-            if p.exists():
-                candidates.append(p)
+        if allow_clob_fallback and clob_file.exists():
+            candidates.append(clob_file)
+        if strategy_file.exists():
+            candidates.append(strategy_file)
 
     per_day: Dict[str, float] = {}
     used_files: List[str] = []
@@ -1178,10 +1182,11 @@ def load_realized_daily_series(strategy_id: str = DEFAULT_REALIZED_STRATEGY_ID) 
 
     return {
         "per_day": per_day,
-        "strategy_id": str(strategy_id or "").strip(),
+        "strategy_id": target_strategy_id,
         "source_files": used_files,
         "source_modes": source_modes,
         "series_mode": series_mode,
+        "source_artifact_exists": bool(source_artifact_exists),
         "bankroll_usd": bankroll,
         "bankroll_source": bankroll_source,
     }
@@ -1262,7 +1267,8 @@ def evaluate_realized_30d_gate(min_days: int, series: Optional[dict] = None) -> 
         next_stage = None
 
     source_files = s.get("source_files") if isinstance(s.get("source_files"), list) else []
-    if not source_files:
+    source_artifact_exists = bool(s.get("source_artifact_exists"))
+    if not source_files and not source_artifact_exists:
         reason += "; realized daily artifact not found"
         reason_3stage += "; realized daily artifact not found"
 
@@ -1398,6 +1404,54 @@ def summarize_realized_monthly_return(min_days: int, series: Optional[dict] = No
     }
 
 
+def summarize_weather_profile_realized(records: List[dict], min_days: int) -> dict:
+    profile_names = sorted(
+        {
+            str(r.get("profile_name") or "").strip()
+            for r in records
+            if isinstance(r, dict) and str(r.get("profile_name") or "").strip()
+        }
+    )
+    rows: List[dict] = []
+    for profile_name in profile_names:
+        series = load_realized_daily_series(strategy_id=profile_name)
+        gate = evaluate_realized_30d_gate(min_days=min_days, series=series)
+        monthly = summarize_realized_monthly_return(min_days=min_days, series=series)
+        latest_path = logs_dir() / f"{profile_name}_realized_latest.json"
+        latest_payload = _read_json(latest_path) if latest_path.exists() else None
+        counts = latest_payload.get("counts") if isinstance(latest_payload, dict) and isinstance(latest_payload.get("counts"), dict) else {}
+        metrics = latest_payload.get("metrics") if isinstance(latest_payload, dict) and isinstance(latest_payload.get("metrics"), dict) else {}
+        rows.append(
+            {
+                "profile_name": profile_name,
+                "realized_latest_path": str(latest_path),
+                "realized_latest_exists": latest_path.exists(),
+                "decision": str(gate.get("decision") or ""),
+                "decision_3stage": str(gate.get("decision_3stage") or ""),
+                "decision_3stage_label_ja": str(gate.get("decision_3stage_label_ja") or ""),
+                "reason_3stage": str(gate.get("reason_3stage") or ""),
+                "observed_realized_days": gate.get("observed_realized_days"),
+                "latest_day": monthly.get("latest_day"),
+                "daily_realized_pnl_usd_latest": monthly.get("daily_realized_pnl_usd_latest"),
+                "projected_monthly_return_text": monthly.get("projected_monthly_return_text"),
+                "rolling_30d_return_text": monthly.get("rolling_30d_return_text"),
+                "bankroll_usd": monthly.get("bankroll_usd"),
+                "next_stage": gate.get("next_stage") if isinstance(gate.get("next_stage"), dict) else None,
+                "open_positions": metrics.get("open_positions"),
+                "resolved_positions": metrics.get("resolved_positions"),
+                "total_resolved_trades": metrics.get("total_resolved_trades"),
+                "total_realized_pnl_usd": metrics.get("total_realized_pnl_usd"),
+                "positions_total": counts.get("positions_total"),
+                "source_files": gate.get("source_files") if isinstance(gate.get("source_files"), list) else [],
+                "series_mode": str(monthly.get("series_mode") or gate.get("series_mode") or ""),
+            }
+        )
+    return {
+        "count": len(rows),
+        "profiles": rows,
+    }
+
+
 def build_kpi_core(no_longshot: dict, realized_monthly: dict) -> dict:
     no = no_longshot if isinstance(no_longshot, dict) else {}
     rm = realized_monthly if isinstance(realized_monthly, dict) else {}
@@ -1454,6 +1508,12 @@ def render_html_snapshot(payload: dict) -> str:
         payload.get("realized_monthly_return") if isinstance(payload.get("realized_monthly_return"), dict) else {}
     )
     kpi_core = payload.get("kpi_core") if isinstance(payload.get("kpi_core"), dict) else {}
+    weather_profiles = (
+        payload.get("weather_profile_realized")
+        if isinstance(payload.get("weather_profile_realized"), dict)
+        else {}
+    )
+    weather_profile_rows = weather_profiles.get("profiles") if isinstance(weather_profiles.get("profiles"), list) else []
 
     weather_view_specs = [
         (
@@ -1544,6 +1604,47 @@ def render_html_snapshot(payload: dict) -> str:
         )
         readiness_rows_html.append(
             f"<tr><td>{profile}</td><td>{mode}</td><td>{chip(decision)}</td><td>{row_count}</td><td>{both}</td><td>{yld}</td><td>{gen}</td></tr>"
+        )
+
+    weather_profile_rows_html: List[str] = []
+    for r in weather_profile_rows:
+        if not isinstance(r, dict):
+            continue
+        profile = html.escape(str(r.get("profile_name") or ""))
+        decision = str(r.get("decision_3stage") or r.get("decision") or "")
+        observed_days = html.escape(
+            str(r.get("observed_realized_days") if r.get("observed_realized_days") is not None else "-")
+        )
+        latest_day = html.escape(str(r.get("latest_day") or "-"))
+        daily = _as_float(r.get("daily_realized_pnl_usd_latest"))
+        daily_txt = f"{daily:+.4f}" if daily is not None else "n/a"
+        monthly_now = html.escape(str(r.get("projected_monthly_return_text") or "n/a"))
+        roll30 = html.escape(str(r.get("rolling_30d_return_text") or "n/a"))
+        open_pos = html.escape(str(r.get("open_positions") if r.get("open_positions") is not None else "-"))
+        resolved_pos = html.escape(str(r.get("resolved_positions") if r.get("resolved_positions") is not None else "-"))
+        next_stage = r.get("next_stage") if isinstance(r.get("next_stage"), dict) else {}
+        next_label = html.escape(str(next_stage.get("label_ja") or next_stage.get("label") or "-"))
+        next_remaining = html.escape(
+            str(next_stage.get("remaining_days") if next_stage.get("remaining_days") is not None else "-")
+        )
+        latest_path = str(r.get("realized_latest_path") or "")
+        latest_file = Path(latest_path).name if latest_path else ""
+        latest_link = html.escape(latest_file) if latest_file else "-"
+        if latest_file:
+            latest_link = f'<a href="{html.escape(latest_file)}" target="_blank" rel="noopener">{html.escape(latest_file)}</a>'
+        weather_profile_rows_html.append(
+            "<tr>"
+            f"<td><code>{profile}</code></td>"
+            f"<td>{chip(decision)}</td>"
+            f"<td>{observed_days}</td>"
+            f"<td>{next_label} / {next_remaining}</td>"
+            f"<td>{latest_day}</td>"
+            f"<td>{html.escape(daily_txt)}</td>"
+            f"<td>{monthly_now}</td>"
+            f"<td>{roll30}</td>"
+            f"<td>{open_pos} / {resolved_pos}</td>"
+            f"<td>{latest_link}</td>"
+            "</tr>"
         )
 
     strict = readiness_summary.get("strict") if isinstance(readiness_summary.get("strict"), dict) else {}
@@ -1847,6 +1948,14 @@ def render_html_snapshot(payload: dict) -> str:
     </div>
 
     <div class="section">
+      <h2>Weather Profile Realized</h2>
+      <table>
+        <thead><tr><th>profile</th><th>gate_stage</th><th>observed_days</th><th>next_stage</th><th>latest_day</th><th>daily_realized_pnl</th><th>monthly_now</th><th>rolling_30d</th><th>open/resolved</th><th>latest_artifact</th></tr></thead>
+        <tbody>{''.join(weather_profile_rows_html) if weather_profile_rows_html else '<tr><td colspan="10">no weather profile realized records</td></tr>'}</tbody>
+      </table>
+    </div>
+
+    <div class="section">
       <h2>Weather Views</h2>
       <table>
         <thead><tr><th>label</th><th>status</th><th>link</th><th>last_modified_utc</th></tr></thead>
@@ -1933,6 +2042,7 @@ def main() -> int:
     )
     realized_30d_gate = evaluate_realized_30d_gate(min_realized_days, series=realized_series)
     realized_monthly = summarize_realized_monthly_return(min_realized_days, series=realized_series)
+    weather_profile_realized = summarize_weather_profile_realized(readiness_latest_rows, min_realized_days)
     kpi_core = build_kpi_core(no_longshot_status, realized_monthly)
 
     payload = {
@@ -1959,6 +2069,7 @@ def main() -> int:
         },
         "kpi_core": kpi_core,
         "no_longshot_status": no_longshot_status,
+        "weather_profile_realized": weather_profile_realized,
         "realized_30d_gate": realized_30d_gate,
         "realized_monthly_return": realized_monthly,
     }

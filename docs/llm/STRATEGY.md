@@ -36,23 +36,25 @@ Secondary keys (diagnostics/compatibility):
 
 Quick-read index of all registered strategies. Use this for at-a-glance context; authoritative details remain in each strategy section below and in `logs/strategy_register_latest.json`.
 
-| strategy_id | status | What it does | Current intent |
-|---|---|---|---|
-| `weather_clob_arb_buckets_observe` | `ADOPTED` | Weather basket mispricing monitor (`buckets`), observe-only. | Keep active while default weather usefulness gates pass. |
-| `no_longshot_daily_observe` | `ADOPTED` | No-longshot daily monitor + gap scan + realized tracker. | Keep observe-first; allow tiny live only with explicit flags. |
-| `event_driven_mispricing_observe` | `ADOPTED` | Event-driven mispricing monitor across policy/geopolitical classes. | Keep active while profit-window quality gates remain `GO`. |
-| `gamma_eventpair_exec_edge_filter_observe` | `ADOPTED` | Gamma event-pair observe strategy with exec-edge safety filter. | Keep observe-only; demote to `REVIEW` if conservative release check turns `HOLD`. |
-| `social_profit_claim_validation_observe` | `PENDING` | Validate social/X profitability claims against realized windows. | Wait for sufficient observed days (`min-days` gate). |
-| `btc_shortwindow_yesno_arb_observe` | `PENDING` | Monitor short-window BTC binary sum-to-one dislocations. | Require repeatable positive net expectancy after costs. |
-| `btc_shortwindow_panic_observe` | `PENDING` | Contrarian panic-price entries in short-window BTC markets. | Require stable fee-adjusted expectancy and acceptable drawdown. |
-| `btc_shortwindow_lag_observe` | `PENDING` | Observe BTC short-window lag vs spot with paper-entry simulation. | Require stable positive edge under conservative fee/slippage assumptions. |
-| `copytrade_latency_sim_observe` | `PENDING` | Simulate delayed copy-trade outcomes under latency/slippage. | Require robustness across realistic latency buckets. |
-| `clob_fade_regime_side_redesign_observe` | `PENDING` | CLOB fade regime/side redesign shadow-run (both/long/short arms). | Keep observe-only and require staged gate evidence per arm before any promotion. |
-| `clob_fade_longonly_canary_observe` | `REJECTED` | Long-only CLOB fade canary observe profile. | Keep stopped; resume only after regime/side redesign clears new staged gates. |
-| `weather_clob_arb_yes_no_only` | `REJECTED` | Older weather yes/no-only approach. | Keep inactive; replaced by `buckets` strategy. |
-| `no_longshot_strict_lite_observe_experiment` | `REJECTED` | Strict-lite no-longshot side experiment. | Keep stopped; reconsider only with materially different rules and new dryrun evidence. |
+| strategy_id                                  | status     | What it does                                                        | Current intent                                                                                          |
+| -------------------------------------------- | ---------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `weather_clob_arb_buckets_observe`           | `ADOPTED`  | Weather basket mispricing monitor (`buckets`), observe-only.        | Keep active while default weather usefulness gates pass.                                                |
+| `no_longshot_daily_observe`                  | `ADOPTED`  | No-longshot daily monitor + gap scan + realized tracker.            | Keep observe-first; allow tiny live only with explicit flags.                                           |
+| `event_driven_mispricing_observe`            | `ADOPTED`  | Event-driven mispricing monitor across policy/geopolitical classes. | Keep active while profit-window quality gates remain `GO`.                                              |
+| `gamma_eventpair_exec_edge_filter_observe`   | `ADOPTED`  | Gamma event-pair observe strategy with exec-edge safety filter.     | Keep observe-only; demote to `REVIEW` if conservative release check turns `HOLD`.                       |
+| `social_profit_claim_validation_observe`     | `PENDING`  | Validate social/X profitability claims against realized windows.    | Wait for sufficient observed days (`min-days` gate).                                                    |
+| `btc_shortwindow_yesno_arb_observe`          | `REJECTED` | Monitor short-window BTC binary sum-to-one dislocations.            | Latest replay stayed non-positive (`sample_count=660`, `full_kelly=0`); keep inactive.                 |
+| `btc_shortwindow_panic_observe`              | `PENDING`  | Contrarian panic-price entries in short-window BTC markets.         | Current both-side run is marginal; keep observe-only and run one final clean `DOWN-only` OOS trial.    |
+| `btc_shortwindow_lag_observe`                | `REJECTED` | Observe BTC short-window lag vs spot with paper-entry simulation.   | Net PnL -$175, WR 21.4%, all buckets negative. GBM model unsuitable for 5-min windows.                  |
+| `btc_15m_lag_observe`                        | `PENDING`  | Observe BTC 15m lag vs spot with hybrid fair-probability model.     | Active redesign track; keep observe-only while rebuilding edge quality.                                 |
+| `copytrade_latency_sim_observe`              | `PENDING`  | Simulate delayed copy-trade outcomes under latency/slippage.        | Require robustness across realistic latency buckets.                                                    |
+| `clob_fade_regime_side_redesign_observe`     | `PENDING`  | CLOB fade regime/side redesign shadow-run (both/long/short arms).   | Keep observe-only and require staged gate evidence per arm before any promotion.                        |
+| `clob_fade_longonly_canary_observe`          | `REJECTED` | Long-only CLOB fade canary observe profile.                         | Keep stopped; resume only after regime/side redesign clears new staged gates.                           |
+| `weather_clob_arb_yes_no_only`               | `REJECTED` | Older weather yes/no-only approach.                                 | Keep inactive; replaced by `buckets` strategy.                                                          |
+| `no_longshot_strict_lite_observe_experiment` | `REJECTED` | Strict-lite no-longshot side experiment.                            | Keep stopped; reconsider only with materially different rules and new dryrun evidence.                  |
 
 Out-of-register support pipelines (not counted in strategy register totals):
+
 - `link_intake_walletseed_cohort_observe`
   - Scope: profile/wallet hints from social links are converted to reproducible cohort autopsy inputs.
   - Runtime: `python scripts/run_link_intake_cohort.py logs/link_intake_20260224_7links.json --profile-name linkseed_7links --min-confidence medium --max-trades 2500 --pretty`
@@ -292,47 +294,119 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 2. `btc_shortwindow_yesno_arb_observe`
 
-- Status: `PENDING` (as of 2026-02-28).
+- Status: `REJECTED` (as of 2026-03-08).
 - Scope: observe-only monitor for binary sum-to-one dislocations (`UP + DOWN < $1`) in short-window BTC up/down markets.
 - Runtime:
   - `python scripts/polymarket_clob_arb_realtime.py --universe btc-updown --strategy yes-no --btc-updown-window-minutes 5,15 --btc-5m-windows-back 1 --btc-5m-windows-forward 1 --min-edge-cents 1.0`
+  - `python scripts/run_pending_profit_accelerator.py --run-tag latest --skip-lag15 --yesno-run-seconds 300 --yesno-min-edge-cents 0.1 --yesno-metrics-log-all-candidates --no-replay-require-threshold-pass --pretty`
 - Evidence snapshot:
   - Link-intake note: `docs/knowledge/link-intake/sessions/2026-02-22_polymarket-5links/01_x_denis_2022989777796989373.md`
   - Smoke-run artifacts: `logs/_smoke_clob_arb_btc5m.log`, `logs/_smoke_clob_arb_btc5m_state.json`
-- Decision note: pure-arb hypothesis; keep `PENDING` until net edge is verified (fees/slippage + persisted edge time).
-- Operational gate: adopt only after repeatable positive net expectancy is shown under conservative cost assumptions.
+  - Accelerator replay snapshot: `logs/pending_profit_accelerator_latest.json` (`sample_count=660`, `full_kelly_estimate=0.0`, `best_expected_log_growth=0.0`)
+- Decision note: rejected after accelerated replay remained non-positive even with broad candidate logging (`--yesno-metrics-log-all-candidates`) and relaxed sampling (`--no-replay-require-threshold-pass`).
+- Operational gate: keep stopped. Re-open only with materially different hypothesis and fresh conservative replay showing positive `full_kelly` and positive expected log growth.
 
 3. `btc_shortwindow_panic_observe`
 
-- Status: `PENDING` (as of 2026-02-28).
-- Scope: contrarian tail-price entry hypothesis for BTC short windows (buy panic-sold outcomes around `3-10c`), observe-only with paper settlement.
+- Status: `PENDING` (as of 2026-03-14; `REVIEW`-equivalent hold).
+- Scope: contrarian tail-price entry strategy for BTC short windows (buy panic-sold outcomes around `3-10c`), with observe-first paper settlement and an explicitly gated live wrapper.
 - Runtime:
   - `python scripts/polymarket_btc5m_panic_observe.py --window-minutes 5 --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
+  - `python scripts/polymarket_btc5m_panic_observe.py --allowed-side-mode down --log-file logs/btc5m-panic-downonly-observe.log --state-file logs/btc5m_panic_downonly_observe_state.json --metrics-file logs/btc5m-panic-downonly-observe-metrics.jsonl`
   - `python scripts/polymarket_btc5m_panic_observe.py --window-minutes 15 --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
   - `python scripts/report_btc5m_panic_claims.py --window-minutes 5 --hours 24 --pretty`
+  - `python scripts/report_btc5m_strategy_eval.py --mode panic --pretty`
+  - `python scripts/report_btc5m_strategy_eval.py --mode panic --trade-side down --log-file logs/btc5m-panic-downonly-observe.log --state-file logs/btc5m_panic_downonly_observe_state.json --metrics-file logs/btc5m-panic-downonly-observe-metrics.jsonl --out-json logs/btc5m_strategy_eval_downonly_latest.json --pretty`
+  - `python scripts/polymarket_btc5m_panic_live.py --run-seconds 30`
 - Evidence snapshot:
   - Link-intake note: `docs/knowledge/link-intake/sessions/2026-02-22_polymarket-5links/02_x_archive_2022991876312252857.md`
   - Raw capture (5m panic pricing claim): `logs/link_intake_raw_20260224_123814/04.txt`
   - Claim validator outputs: `logs/btc5m-panic-claims-latest.json`, `logs/btc5m-panic-claims-markets-latest.csv`
   - Observe logs: `logs/btc5m-panic-observe.log`, `logs/btc5m_panic_observe_state.json`
-- Decision note: directional + adverse-selection risk; keep `PENDING` until fee-adjusted expectancy and drawdown are acceptable and stable.
-- Operational gate: adopt only if validator + forward observe agree on robust positive expectancy under conservative costs.
+  - Fee-adjusted evaluation snapshot: `logs/btc5m_strategy_eval_latest.json`
+  - Fresh supervised OOS check (2026-03-14): both-side run stayed fee-adjusted marginal with drawdown too large for promotion, while post-hoc `DOWN-only` remained the only positive branch
+  - Guarded live wrapper artifacts: `logs/btc5m-panic-live.log`, `logs/btc5m_panic_live_state.json`, `logs/btc5m-panic-live-exec.jsonl`
+- Decision note: the both-side 5m panic thesis no longer has strong enough fresh OOS quality to justify `ADOPTED`. Keep the family on hold, stop any live escalation, and run one final clean `DOWN-only` trial because the latest by-side split remains positive only on `DOWN`.
+- Operational gate:
+  - do not escalate to live while status is `PENDING`
+  - keep the current both-side baseline stopped for decision-making; use clean `DOWN-only` artifacts for the final salvage trial
+  - if `DOWN-only` fails to show clearly positive fee-adjusted net PnL with materially better drawdown after `24-48h` or `100+ trades`, mark the family `REJECTED`
+  - live orders, if ever reconsidered later, still require `--execute --confirm-live YES`
+  - use `python scripts/polymarket_btc5m_panic_observe.py --reset-state ...` for OOS resets and `python scripts/report_btc5m_panic_reconcile.py --pretty` to reconcile any live fills
 
 4. `btc_shortwindow_lag_observe`
 
-- Status: `PENDING` (as of 2026-02-28).
-- Scope: BTC short-window (5m/15m) lag observer vs external spot, with paper-entry simulation, observe-only.
+- Status: `REJECTED` (as of 2026-03-07).
+- Scope: legacy BTC 5m lag observer vs external spot, with paper-entry simulation, observe-only.
 - Runtime:
-  - `python scripts/polymarket_btc5m_lag_observe.py --window-minutes 15 --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
   - `python scripts/polymarket_btc5m_lag_observe.py --window-minutes 5 --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
 - Evidence snapshot:
   - Link-intake note: `docs/knowledge/link-intake/sessions/2026-02-28_x-w1nklerr-btc-lag-arb/01_winkle-on-x-guide-how-to-create-your-own.md`
   - Raw capture: `logs/link_intake_raw_20260228_143218/01.txt`
   - Observe logs: `logs/btc5m-lag-observe.log`, `logs/btc5m-lag-observe-metrics.jsonl`, `logs/btc5m_lag_observe_state.json`
-- Decision note: social-post latency/HFT claims are not evidence; use as hypothesis input only. Keep `PENDING` until lag frequency and paper PnL are validated under conservative costs.
-- Operational gate: adopt only after stable positive net expectancy is shown under fee/slippage assumptions.
+- Evaluation snapshot:
+  - 57 trades, win rate `21.4%`, fee-adjusted net PnL `-$175`
+  - all tested side/bucket slices negative after `2%` taker fee + `0.5c` slippage
+- Decision note: `REJECTED` for 5m. The GBM fair-value model was too fragile for 5-minute windows and there is no evidence of recoverable edge from threshold tightening alone.
+- Operational gate: keep stopped. Re-open only with a materially different model/window and new evidence.
 
-5. `copytrade_latency_sim_observe`
+5. `btc_15m_lag_observe`
+
+- Status: `PENDING` (active-redesign as of 2026-03-08).
+- Scope: dedicated BTC 15m lag observer with `hybrid` or `drift` fair-value modes, observe-only.
+- Runtime:
+  - `python scripts/polymarket_btc15m_lag_observe.py --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode down --log-file logs/btc15m-lag-downonly-observe.log --state-file logs/btc15m_lag_downonly_observe_state.json --metrics-file logs/btc15m-lag-downonly-observe-metrics.jsonl`
+  - `python scripts/polymarket_btc15m_lag_observe.py --regime-mode prefer --log-file logs/btc15m-lag-regime-observe.log --state-file logs/btc15m_lag_regime_observe_state.json --metrics-file logs/btc15m-lag-regime-observe-metrics.jsonl`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode down --regime-mode strict --entry-price-min 0.05 --entry-price-max 0.35 --min-remaining-sec 180 --max-remaining-sec 540 --require-reversal --reversal-lookback-sec 180 --reversal-min-move-usd 15 --log-file logs/btc15m-lag-redesign-observe.log --state-file logs/btc15m_lag_redesign_observe_state.json --metrics-file logs/btc15m-lag-redesign-observe-metrics.jsonl`
+  - `python scripts/polymarket_btc15m_lag_observe.py --allowed-side-mode both --regime-mode prefer --fair-model drift --entry-edge-cents 1.0 --entry-price-min 0.02 --entry-price-max 0.70 --up-entry-price-max 0.75 --down-entry-price-max 0.25 --min-remaining-sec 180 --max-remaining-sec 660 --require-aligned-momentum`
+  - `python scripts/run_pending_profit_accelerator.py --skip-yesno --run-tag redesign_up_drift_mom1 --lag15-run-seconds 1200 --lag15-allowed-side-mode up --lag15-regime-mode prefer --lag15-fair-model drift --lag15-entry-edge-cents 1.0 --lag15-entry-price-min 0.02 --lag15-entry-price-max 0.70 --lag15-up-entry-price-max 0.75 --lag15-min-remaining-sec 180 --lag15-max-remaining-sec 660 --lag15-require-aligned-momentum --pretty`
+  - `python scripts/report_btc5m_strategy_eval.py --mode lag15 --pretty`
+  - `python scripts/report_btc5m_strategy_eval.py --mode lag15 --trade-side down --out-json logs/btc15m_strategy_eval_down_latest.json --pretty`
+  - `python scripts/run_pending_profit_accelerator.py --run-tag latest --skip-yesno --lag15-run-seconds 300 --lag15-entry-edge-cents 1.0 --lag15-allowed-side-mode both --lag15-regime-mode prefer --lag15-entry-price-min 0.05 --lag15-entry-price-max 0.35 --lag15-min-remaining-sec 180 --lag15-max-remaining-sec 660 --lag15-require-reversal --lag15-reversal-lookback-sec 180 --lag15-reversal-min-move-usd 15 --pretty`
+- Runtime defaults:
+  - `window=15m`, `vol_lookback_sec=1800`, `entry_edge_cents=4.0`
+  - `taker_fee_rate=0.02`, `slippage_cents=0.5`
+  - `min_remaining_sec=60`, `max_spread_cents=6.0`, `min_ask_depth=15.0`
+  - CLI lower bound for `entry_edge_cents` is `1.0` (observe-only redesign)
+  - `allowed_side_mode` supports `both` / `down` / `up`
+  - redesign filters available: `regime_mode`, `entry_price_min/max`, `max_remaining_sec`, `require_reversal`
+  - redesign v2 adds `fair_model=drift`, side-aware price bands (`up/down entry price min/max`), and `require_aligned_momentum`
+  - built-in no-entry zone: first `30s` and last `60s` of each window
+- Evidence snapshot:
+  - Observe logs: `logs/btc15m-lag-observe.log`, `logs/btc15m-lag-observe-metrics.jsonl`, `logs/btc15m_lag_observe_state.json`
+  - Side-filter compare outputs: `logs/btc15m_strategy_eval_down_latest.json`, `logs/btc15m_strategy_eval_up_latest.json`
+  - Regime-aware compare run: `logs/btc15m-lag-regime-observe.log`, `logs/btc15m_lag_regime_observe_state.json`
+  - Redesign compare run: `logs/btc15m-lag-redesign-observe.log`, `logs/btc15m_lag_redesign_observe_state.json`
+  - Accelerator summary: `logs/pending_profit_accelerator_latest.txt` (`trade_count=11`, `net_pnl=-46.01`, `decision=ACCELERATE_OBSERVE`)
+  - Redesign probe (`2026-03-08`): `logs/btc15m_lag_observe_accel_redesign_probe3.json` showed `filter_skip_time=99`, `filter_skip_regime=92`, `trades_closed=0`; `raw_best_side=DOWN` was present while `best_side` stayed empty under `regime_mode=strict`
+  - Prefer probe (`2026-03-08`): `logs/btc15m_lag_observe_accel_redesign_prefer_probe1.json` showed `filter_skip_time=48`, `filter_skip_side=90`, `trades_closed=0`; `raw_best_side` was mostly `UP` while `allowed_side_mode=down` kept entries blocked
+  - Prefer+bothing probe (`2026-03-08`): `logs/btc15m_lag_observe_accel_redesign_prefer_both_probe1.json` showed `filter_skip_time=13`, all other skip counters `0`, `trades_closed=0`; positive signals appeared, but none stayed above the `2.0c` entry floor once the allowed entry band opened
+  - Loose-floor probe (`2026-03-08`): `logs/btc15m_lag_observe_accel_redesign_prefer_both_loose1.json` reached `trades_closed=1`, `net_pnl=-7.52`, `filter_skip_price_band=59`, `filter_skip_reversal=73`; the first fill was `DOWN @ 0.29` and settled loss when the window closed above open
+  - No-reversal A/B (`2026-03-08`): `logs/btc15m_lag_observe_accel_redesign_prefer_both_norev1.json` reached `trades_closed=2`, `net_pnl=-15.55`, `filter_skip_price_band=0`, `filter_skip_reversal=0`; removing reversal increased fills but both `DOWN @ 0.30` trades settled as losses
+  - Price-band A/B (`2026-03-08`): `logs/btc15m_lag_observe_accel_redesign_prefer_both_px45_rev1.json` widened `entry_price_max` to `0.45` and produced one `DOWN @ 0.40` fill (`40-50c` bucket), but the trade still settled loss and finished `net_pnl=-10.33`
+  - Up-only probe (`2026-03-08`): `logs/btc15m_lag_observe_accel_redesign_prefer_up_rev1.json` produced `trades_closed=0`, `filter_skip_side=157`, `filter_skip_price_band=63`, `filter_skip_reversal=29`; current fair-value outputs rarely survive `UP-only + price_max=0.35 + reversal on`
+  - Drift side-band probe (`2026-03-08`): `logs/btc15m_strategy_eval_accel_redesign_drift_bands1.json` flipped the redesign away from repeated `DOWN @ 0.29/0.30` fades and into one `UP @ 0.53` test; result was still loss (`trade_count=1`, `net_pnl=-13.64`), so direction bias improved but timing remained weak
+  - Drift + aligned-momentum probe (`2026-03-08`): `logs/btc15m_strategy_eval_accel_redesign_drift_mom1.json` improved the short-run basket to `trade_count=3`, `net_pnl=-3.69`, `win_rate=33.3%`; by side, `UP` reached `2 trades`, `net_pnl=+0.52` while `DOWN` stayed `1 trade`, `net_pnl=-4.21`
+  - Up-only drift + aligned-momentum probe (`2026-03-09`): `logs/btc15m_strategy_eval_accel_redesign_up_drift_mom1.json` reached `trade_count=1`, `net_pnl=+8.04`, `win_rate=100%`; first isolated `UP-only` run entered `UP @ 0.66` and settled win, while `filter_skip_side=80` shows `DOWN` candidates were intentionally ignored
+  - Up-only continuation accumulation (`2026-03-10`): `logs/btc15m_strategy_eval_accel_redesign_up_drift_mom1.json` moved to `trade_count=3`, `net_pnl=-19.75`, `win_rate=33.3%`; both follow-up losses landed in the `50-60c` bucket while the original `60-70c` winner stayed intact
+  - Up-only `60-75c` filter probe (`2026-03-10`): `logs/btc15m_strategy_eval_accel_redesign_up_drift_mom_px60_1.json` finished `trade_count=0`, `net_pnl=0.00`; narrowing the UP branch to the only non-negative bucket removed fills entirely in the short run
+  - Accelerator eval JSON: `logs/btc15m_strategy_eval_accel_latest.json` (`win_rate=22.22%`, `max_drawdown=59.41`)
+  - Strict comparison (`entry_edge_cents=2.0`, short run): `logs/btc15m_strategy_eval_accel_strict2.json` (`trade_count=0`)
+- Interim manual evaluation snapshot (2026-03-08):
+  - full lag15: `26 trades`, fee-adjusted `net_pnl=+$35.73`, `WR=44.0%`, `max_dd=$47.59`
+  - `DOWN` only on same log: `15 trades`, fee-adjusted `net_pnl=+$56.31`, `WR=53.3%`, `max_dd=$31.75`
+  - `UP` only on same log: `11 trades`, fee-adjusted `net_pnl=-$20.58`, `WR=30.0%`, `max_dd=$34.42`
+- Decision note: 15m is a new hypothesis, not a rescue of 5m lag. Recent fee-adjusted evidence is better than 5m and points to a `DOWN`-dominant edge, but that sample overlapped a broad BTC downtrend; continue observe-only accumulation with regime-aware side selection before any promotion.
+- Operational gate:
+  - pending accelerator defaults to active lag15 probing on `run-tag=latest`; keep observe-only.
+  - `DOWN` branch remains paused until by-side evidence turns positive.
+  - broad `UP-only + drift + aligned-momentum` is not yet viable by itself; current losses cluster in the `50-60c` bucket.
+  - `UP-only + 60-75c` is the only non-negative sub-bucket seen so far, but current sample is still `NO_DATA`.
+  - keep small incremental runs and verify fee-adjusted trend at each checkpoint.
+  - adopt only after `report_btc5m_strategy_eval.py --mode lag15` shows stable positive net PnL, acceptable drawdown, and sufficient sample size.
+
+6. `copytrade_latency_sim_observe`
 
 - Status: `PENDING` (as of 2026-02-28).
 - Scope: delayed copy-trade simulation to quantify latency + slippage impact before any mirroring discussion, observe-only.
@@ -346,7 +420,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 - Decision note: copy trading is latency- and liquidity-sensitive; keep `PENDING` until simulation shows robustness across realistic latency buckets.
 - Operational gate: adopt only if net PnL remains positive under conservative latency+cost assumptions (not just 0s latency).
 
-6. `clob_fade_regime_side_redesign_observe`
+7. `clob_fade_regime_side_redesign_observe`
 
 - Status: `PENDING` (as of 2026-03-01, post long-only rejection).
 - Scope: fade strategy redesign with explicit regime/side hypothesis split into three observe-only arms (`both core`, `long strict`, `short strict`).

@@ -1,0 +1,25 @@
+{
+  "name": "btc5m-panic-observe-supervisor",
+  "description": "Dedicated observe-only supervisor for BTC 5m panic monitor.",
+  "log_file": "logs/btc5m_panic_supervisor.log",
+  "state_file": "logs/btc5m_panic_supervisor_state.json",
+  "jobs": [
+    {
+      "name": "btc5m_panic",
+      "enabled": true,
+      "command": [
+        "python",
+        "scripts/polymarket_btc5m_panic_observe.py",
+        "--poll-sec",
+        "1",
+        "--summary-every-sec",
+        "15",
+        "--metrics-sample-sec",
+        "5"
+      ],
+      "restart": "always",
+      "restart_delay_sec": 4,
+      "max_restarts_per_hour": 60
+    }
+  ]
+}
