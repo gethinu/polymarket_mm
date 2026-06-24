@@ -508,6 +508,8 @@ def test_run_connected_monitor_loop_processes_one_message_then_times_out(monkeyp
     stats = RunStats()
     args = _mk_args(execute=False, run_seconds=0)
 
+    monkeypatch.setattr(runtime, "day_key_local", lambda: state.day)
+
     iter_count = {"n": 0}
 
     def _fake_timeout(**_kwargs):
@@ -576,6 +578,7 @@ def test_run_connected_monitor_loop_breaks_on_halt_guard(monkeypatch, tmp_path):
     args = _mk_args(execute=True, run_seconds=0)
     saves = []
 
+    monkeypatch.setattr(runtime, "day_key_local", lambda: state.day)
     monkeypatch.setattr(runtime, "run_timeout_reached", lambda **_kwargs: False)
 
     out_state = asyncio.run(

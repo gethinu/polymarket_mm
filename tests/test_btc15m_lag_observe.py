@@ -86,8 +86,9 @@ def test_is_side_allowed_matches_side_mode():
     assert lag15_mod.is_side_allowed("DOWN", "both") is True
 
 
-def test_compute_trend_return_pct_positive():
+def test_compute_trend_return_pct_positive(monkeypatch: pytest.MonkeyPatch):
     now = time.time()
+    monkeypatch.setattr(lag15_mod, "now_ts", lambda: now)
     history = deque(
         [
             (now - 7200.0, 100.0),
@@ -99,8 +100,9 @@ def test_compute_trend_return_pct_positive():
     assert math.isclose(ret, 0.02, rel_tol=0.0, abs_tol=1e-6)
 
 
-def test_classify_trend_regime_down():
+def test_classify_trend_regime_down(monkeypatch: pytest.MonkeyPatch):
     now = time.time()
+    monkeypatch.setattr(lag15_mod, "now_ts", lambda: now)
     history = deque(
         [
             (now - 7200.0, 100.0),
@@ -120,8 +122,9 @@ def test_classify_trend_regime_down():
     assert long_ret < 0
 
 
-def test_classify_trend_regime_mixed():
+def test_classify_trend_regime_mixed(monkeypatch: pytest.MonkeyPatch):
     now = time.time()
+    monkeypatch.setattr(lag15_mod, "now_ts", lambda: now)
     history = deque(
         [
             (now - 7200.0, 100.0),
