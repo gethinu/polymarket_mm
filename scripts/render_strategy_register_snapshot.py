@@ -171,7 +171,7 @@ def parse_strategy_register(md_path: Path) -> dict:
         raw_entries.append(cur)
 
     parsed: List[dict] = []
-    counts = {"ADOPTED": 0, "REJECTED": 0, "PENDING": 0, "UNKNOWN": 0}
+    counts = {"ADOPTED": 0, "REJECTED": 0, "PENDING": 0, "FROZEN": 0, "UNKNOWN": 0}
 
     for row in raw_entries:
         strategy_id = str(row.get("strategy_id") or "").strip()

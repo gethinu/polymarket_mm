@@ -8,6 +8,34 @@ For operational source-of-truth workflow, follow `docs/llm/CANON.md`.
 - `ADOPTED`: usable in current operations.
 - `REJECTED`: remove from active operation.
 - `PENDING`: not enough evidence yet (includes `REVIEW`-equivalent hold state).
+- `FROZEN`: parked during the 2026-06-24 re-baseline. Not part of the active core
+  and generates no gate/allocation decisions, but forensic evidence is preserved and
+  it can be revived later with a fresh evaluation window. See `## Re-baseline (2026-06-24)`.
+
+## Re-baseline (2026-06-24)
+
+Context: this workspace was idle from early March to 2026-06-24 (~3.5 months). All
+gate KPIs in this file's strategy sections are stale snapshots from Feb–Mar 2026, the
+runtime artifacts under `logs/` are not present in fresh checkouts, and every fixed
+judgment date (e.g. the no-longshot practical gate date `2026-03-02`) has long expired.
+
+Re-baseline decisions (operator, 2026-06-24):
+
+- Active core = the 4 `ADOPTED` strategies only:
+  - `weather_clob_arb_buckets_observe`
+  - `no_longshot_daily_observe`
+  - `event_driven_mispricing_observe`
+  - `gamma_eventpair_exec_edge_filter_observe`
+- Every non-`ADOPTED` strategy (previously `PENDING` or `REJECTED`) is set to `FROZEN`.
+  Their per-strategy sections retain prior status and decision notes for forensics;
+  reviving one requires an explicit fresh dryrun/evaluation window, not the stale evidence.
+- All historical gate decisions, fixed judgment dates, and KPI snapshots below are VOID
+  for go/no-go purposes. Do not act on any Feb–Mar 2026 KPI number. A fresh observation
+  window must be (re)started before any live escalation, and KPI authority remains
+  `logs/strategy_register_latest.json` once observe runners are running again.
+- The no-longshot capital gate (`rolling_30d_resolved_trades >= 30`) is reset: the prior
+  `21/30` progress and `2026-03-02` judgment date are discarded. The counter restarts from
+  the first day fresh observe data is collected after re-baseline.
 
 ## Current KPI
 
@@ -42,16 +70,16 @@ Quick-read index of all registered strategies. Use this for at-a-glance context;
 | `no_longshot_daily_observe`                  | `ADOPTED`  | No-longshot daily monitor + gap scan + realized tracker.            | Keep observe-first; allow tiny live only with explicit flags.                                           |
 | `event_driven_mispricing_observe`            | `ADOPTED`  | Event-driven mispricing monitor across policy/geopolitical classes. | Keep active while profit-window quality gates remain `GO`.                                              |
 | `gamma_eventpair_exec_edge_filter_observe`   | `ADOPTED`  | Gamma event-pair observe strategy with exec-edge safety filter.     | Keep observe-only; demote to `REVIEW` if conservative release check turns `HOLD`.                       |
-| `social_profit_claim_validation_observe`     | `PENDING`  | Validate social/X profitability claims against realized windows.    | Wait for sufficient observed days (`min-days` gate).                                                    |
-| `btc_shortwindow_yesno_arb_observe`          | `REJECTED` | Monitor short-window BTC binary sum-to-one dislocations.            | Latest replay stayed non-positive (`sample_count=660`, `full_kelly=0`); keep inactive.                 |
-| `btc_shortwindow_panic_observe`              | `PENDING`  | Contrarian panic-price entries in short-window BTC markets.         | Current both-side run is marginal; keep observe-only and run one final clean `DOWN-only` OOS trial.    |
-| `btc_shortwindow_lag_observe`                | `REJECTED` | Observe BTC short-window lag vs spot with paper-entry simulation.   | Net PnL -$175, WR 21.4%, all buckets negative. GBM model unsuitable for 5-min windows.                  |
-| `btc_15m_lag_observe`                        | `PENDING`  | Observe BTC 15m lag vs spot with hybrid fair-probability model.     | Active redesign track; keep observe-only while rebuilding edge quality.                                 |
-| `copytrade_latency_sim_observe`              | `PENDING`  | Simulate delayed copy-trade outcomes under latency/slippage.        | Require robustness across realistic latency buckets.                                                    |
-| `clob_fade_regime_side_redesign_observe`     | `PENDING`  | CLOB fade regime/side redesign shadow-run (both/long/short arms).   | Keep observe-only and require staged gate evidence per arm before any promotion.                        |
-| `clob_fade_longonly_canary_observe`          | `REJECTED` | Long-only CLOB fade canary observe profile.                         | Keep stopped; resume only after regime/side redesign clears new staged gates.                           |
-| `weather_clob_arb_yes_no_only`               | `REJECTED` | Older weather yes/no-only approach.                                 | Keep inactive; replaced by `buckets` strategy.                                                          |
-| `no_longshot_strict_lite_observe_experiment` | `REJECTED` | Strict-lite no-longshot side experiment.                            | Keep stopped; reconsider only with materially different rules and new dryrun evidence.                  |
+| `social_profit_claim_validation_observe`     | `FROZEN`   | Validate social/X profitability claims against realized windows.    | Frozen 2026-06-24 (prior `PENDING`). Revive only with a fresh ≥30-day observe window.                   |
+| `btc_shortwindow_yesno_arb_observe`          | `FROZEN`   | Monitor short-window BTC binary sum-to-one dislocations.            | Frozen 2026-06-24 (prior `REJECTED`; replay non-positive). Revive only with new hypothesis + replay.   |
+| `btc_shortwindow_panic_observe`              | `FROZEN`   | Contrarian panic-price entries in short-window BTC markets.         | Frozen 2026-06-24 (prior `PENDING`, marginal). Revive only with a fresh clean OOS trial.               |
+| `btc_shortwindow_lag_observe`                | `FROZEN`   | Observe BTC short-window lag vs spot with paper-entry simulation.   | Frozen 2026-06-24 (prior `REJECTED`; net PnL -$175, GBM unfit for 5-min windows).                       |
+| `btc_15m_lag_observe`                        | `FROZEN`   | Observe BTC 15m lag vs spot with hybrid fair-probability model.     | Frozen 2026-06-24 (prior `PENDING` redesign track). Revive only with rebuilt edge + fresh evidence.    |
+| `copytrade_latency_sim_observe`              | `FROZEN`   | Simulate delayed copy-trade outcomes under latency/slippage.        | Frozen 2026-06-24 (prior `PENDING`). Revive only with robustness across realistic latency buckets.     |
+| `clob_fade_regime_side_redesign_observe`     | `FROZEN`   | CLOB fade regime/side redesign shadow-run (both/long/short arms).   | Frozen 2026-06-24 (prior `PENDING`). Revive only with fresh staged gate evidence per arm.               |
+| `clob_fade_longonly_canary_observe`          | `FROZEN`   | Long-only CLOB fade canary observe profile.                         | Frozen 2026-06-24 (prior `REJECTED`; failed FINAL_500 gate).                                            |
+| `weather_clob_arb_yes_no_only`               | `FROZEN`   | Older weather yes/no-only approach.                                 | Frozen 2026-06-24 (prior `REJECTED`; replaced by `buckets`).                                            |
+| `no_longshot_strict_lite_observe_experiment` | `FROZEN`   | Strict-lite no-longshot side experiment.                            | Frozen 2026-06-24 (prior `REJECTED`). Revive only with materially different rules + new dryrun.         |
 
 Out-of-register support pipelines (not counted in strategy register totals):
 
@@ -70,8 +98,9 @@ Out-of-register support pipelines (not counted in strategy register totals):
    - prioritize reaching `rolling_30d_resolved_trades >= 30` (new-condition basis) before any practical live escalation.
 2. Staged live only after gate pass:
    - keep tiny-size explicit-flag operation (`LiveExecute + LiveConfirm YES`, `LiveMaxOrders=1`, small notional cap) and never jump directly to larger size.
-3. Keep non-promoted strategies as validation assets:
-   - all current `PENDING` strategies remain evidence-building tracks; do not assume production return contribution until promotion gates pass.
+3. Non-`ADOPTED` strategies are `FROZEN` (2026-06-24 re-baseline):
+   - they are not active evidence-building tracks and contribute nothing to production return;
+   - reviving any of them requires an explicit fresh evaluation window (see `## Re-baseline (2026-06-24)`).
 
 ## Bankroll Policy
 
@@ -146,12 +175,15 @@ Out-of-register support pipelines (not counted in strategy register totals):
   - `rolling_30d_monthly_return=+9.89%`, `rolling_30d_resolved_trades=21`（new-condition）
 - Decision note: maintain fast realized band `YES 0.16-0.20` (`entry_no_price<=0.84` equivalent) as the live/observe共通の entry policy. Live は明示 `LiveExecute + LiveConfirm YES` でのみ許可し、既定は observe-only を維持する。実測トラッカーは `RealizedEntryTopN=2`（`AllowRealizedEntryIngest` 明示必須）で少量追加を許可し、`rolling_30d_resolved_trades>=30` 判定までの前進性を確保する。Latest canonical monthly return snapshot (`logs/strategy_register_latest.json`, refreshed on 2026-02-27): new-condition `+9.89%` (`no_longshot_status.monthly_return_now_new_condition_text`) vs all-pop comparator `-14.82%` (`no_longshot_status.monthly_return_now_all_text`).
 - Operational gate: authority は `logs/strategy_register_latest.json` の `kpi_core`（`daily_realized_pnl_usd`, `monthly_return_now_text`, `max_drawdown_30d_text`）を最優先とし、補助として `logs/no_longshot_monthly_return_latest.txt` / `logs/no_longshot_realized_latest.json` を参照する。latest summary の fast band が `[0.16,0.2]` から逸脱した場合は `REVIEW`。
-- Capital gate checkpoint (fixed on 2026-02-27):
+- Capital gate checkpoint (RESET on 2026-06-24 re-baseline):
   - Core threshold: `no_longshot_status.rolling_30d_resolved_trades >= 30`（new-condition basis）
-  - Current: `21`（need `9` more）
-  - Recent pace reference (new-condition resolved): `2026-02-25=9`, `2026-02-26=11`（`10/day`）
-  - Fixed practical judgment date: `2026-03-02`（conservative half-speed assumption `5/day` + 1-day buffer）
-  - If threshold is still unmet on `2026-03-02`, keep live disabled and slide judgment date by `+3` calendar days.
+  - The prior `21/30` progress and the `2026-02-27` snapshot are VOID. The rolling-30d
+    resolved-trade window only counts data collected after observe runners resume, so the
+    counter effectively restarts from `0` on re-baseline.
+  - The fixed `2026-03-02` judgment date is discarded. Do not slide it; set a fresh judgment
+    date once a continuous observe window has been running long enough to accumulate trades.
+  - Until the gate is freshly met, keep live disabled. KPI authority is
+    `logs/strategy_register_latest.json` (`kpi_core` keys), regenerated after observe resumes.
 
 3. `event_driven_mispricing_observe`
 
@@ -241,12 +273,12 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 1. `weather_clob_arb_yes_no_only`
 
-- Status: `REJECTED`.
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `REJECTED`).
 - Reason: low usefulness in this workspace run; switched to `buckets` as default.
 
 2. `no_longshot_strict_lite_observe_experiment`
 
-- Status: `REJECTED` (as of 2026-02-27, operator decision).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `REJECTED` as of 2026-02-27, operator decision).
 - Scope: strict-lite no-longshot side experiment (`non-crypto`, shorter horizon focus) tracked in isolated logs, observe-only.
 - Runtime (experiment-only):
   - `powershell -NoProfile -ExecutionPolicy Bypass -File logs/run_no_longshot_strict_lite_watch.ps1`
@@ -260,7 +292,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 3. `clob_fade_longonly_canary_observe`
 
-- Status: `REJECTED` (as of 2026-03-01 staged checkpoint final gate).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `REJECTED` as of 2026-03-01 staged checkpoint final gate).
 - Scope: CLOB fade long-only canary (`allowed_sides=long`) observe profile for consensus fade entry/exit tuning.
 - Runtime (historical profile, now disabled):
   - `python scripts/polymarket_clob_fade_observe.py --allowed-sides long --consensus-min-score 0.86 --consensus-min-agree 2 --take-profit-cents 0.16 --stop-loss-cents 0.20 --expected-move-cost-ratio 1.50 --min-expected-edge-cents 0.12`
@@ -277,7 +309,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 1. `social_profit_claim_validation_observe`
 
-- Status: `PENDING` (as of 2026-02-25).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `PENDING` as of 2026-02-25).
 - Scope: social/X performance claims around Polymarket bot profitability, observe-only.
 - Runtime:
   - `python scripts/report_social_profit_claims.py`
@@ -294,7 +326,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 2. `btc_shortwindow_yesno_arb_observe`
 
-- Status: `REJECTED` (as of 2026-03-08).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `REJECTED` as of 2026-03-08).
 - Scope: observe-only monitor for binary sum-to-one dislocations (`UP + DOWN < $1`) in short-window BTC up/down markets.
 - Runtime:
   - `python scripts/polymarket_clob_arb_realtime.py --universe btc-updown --strategy yes-no --btc-updown-window-minutes 5,15 --btc-5m-windows-back 1 --btc-5m-windows-forward 1 --min-edge-cents 1.0`
@@ -308,7 +340,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 3. `btc_shortwindow_panic_observe`
 
-- Status: `PENDING` (as of 2026-03-14; `REVIEW`-equivalent hold).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `PENDING` as of 2026-03-14, `REVIEW`-equivalent hold).
 - Scope: contrarian tail-price entry strategy for BTC short windows (buy panic-sold outcomes around `3-10c`), with observe-first paper settlement and an explicitly gated live wrapper.
 - Runtime:
   - `python scripts/polymarket_btc5m_panic_observe.py --window-minutes 5 --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
@@ -336,7 +368,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 4. `btc_shortwindow_lag_observe`
 
-- Status: `REJECTED` (as of 2026-03-07).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `REJECTED` as of 2026-03-07).
 - Scope: legacy BTC 5m lag observer vs external spot, with paper-entry simulation, observe-only.
 - Runtime:
   - `python scripts/polymarket_btc5m_lag_observe.py --window-minutes 5 --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
@@ -352,7 +384,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 5. `btc_15m_lag_observe`
 
-- Status: `PENDING` (active-redesign as of 2026-03-08).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `PENDING` active-redesign as of 2026-03-08).
 - Scope: dedicated BTC 15m lag observer with `hybrid` or `drift` fair-value modes, observe-only.
 - Runtime:
   - `python scripts/polymarket_btc15m_lag_observe.py --poll-sec 1 --summary-every-sec 15 --metrics-sample-sec 5`
@@ -408,7 +440,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 6. `copytrade_latency_sim_observe`
 
-- Status: `PENDING` (as of 2026-02-28).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `PENDING` as of 2026-02-28).
 - Scope: delayed copy-trade simulation to quantify latency + slippage impact before any mirroring discussion, observe-only.
 - Runtime:
   - `python scripts/simulate_wallet_copy_latency.py 0x63ce342161250d705dc0b16df89036c8e5f9ba9a --max-trades 2000 --out 0x8dxd_copy_latency_latest.json --pretty`
@@ -422,7 +454,7 @@ Out-of-register support pipelines (not counted in strategy register totals):
 
 7. `clob_fade_regime_side_redesign_observe`
 
-- Status: `PENDING` (as of 2026-03-01, post long-only rejection).
+- Status: `FROZEN` (2026-06-24 re-baseline; prior `PENDING` as of 2026-03-01, post long-only rejection).
 - Scope: fade strategy redesign with explicit regime/side hypothesis split into three observe-only arms (`both core`, `long strict`, `short strict`).
 - Runtime:
   - `python scripts/bot_supervisor.py run --config logs/bot_supervisor.fade.observe.json --poll-sec 1 --write-state-sec 2`

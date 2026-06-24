@@ -1,10 +1,10 @@
 # IMPLEMENTATION LEDGER
 
-- source_repo: `C:\Repos\polymarket_mm`
-- output_path: `C:\Repos\polymarket_mm\docs\llm\IMPLEMENTATION_LEDGER.md`
-- commits_scanned: `54`
-- worktree_changes: `33`
-- link_intake_sessions: `9`
+- source_repo: `/home/user/polymarket_mm`
+- output_path: `/home/user/polymarket_mm/docs/llm/IMPLEMENTATION_LEDGER.md`
+- commits_scanned: `51`
+- worktree_changes: `2`
+- link_intake_sessions: `7`
 
 ## Purpose
 - Keep one canonical history document to avoid duplicate implementation work across chats.
@@ -20,19 +20,21 @@
 ## Area Index
 | area | commits | latest_date_utc | latest_commit | latest_subject |
 |---|---:|---|---|---|
-| `docs_llm` | 37 | `2026-03-07 17:50` | `9df5d32f` | docs: refresh implementation ledger |
+| `docs_llm` | 38 | `2026-03-17 22:18` | `d0c8ce89` | feat: Implement the BTC 5m panic strategy, including observation, evaluation, and rec... |
 | `knowledge_intake` | 3 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
 | `misc` | 2 | `2026-02-27 09:08` | `05342527` | docs: label uncorrelated memo scope for explicit cohorts |
 | `no_longshot` | 17 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
-| `security_or_ops` | 21 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
-| `simmer_clob` | 28 | `2026-03-07 17:49` | `b277ab06` | feat: add fade staged-check pipeline and checkpoint tooling |
-| `strategy_register` | 15 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
-| `task_automation` | 26 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
-| `weather_pipeline` | 8 | `2026-02-28 23:42` | `bd8f2e11` | 20260228_1 |
+| `security_or_ops` | 20 | `2026-03-07 17:50` | `1d7db082` | feat: harden no-longshot KPI sourcing and ops health guards |
+| `simmer_clob` | 24 | `2026-06-24 15:58` | `635cd67a` | chore: refresh deps + fix time-dependent test rot |
+| `strategy_register` | 16 | `2026-03-17 22:18` | `d0c8ce89` | feat: Implement the BTC 5m panic strategy, including observation, evaluation, and rec... |
+| `task_automation` | 27 | `2026-03-17 22:18` | `d0c8ce89` | feat: Implement the BTC 5m panic strategy, including observation, evaluation, and rec... |
+| `weather_pipeline` | 9 | `2026-03-17 22:18` | `d0c8ce89` | feat: Implement the BTC 5m panic strategy, including observation, evaluation, and rec... |
 
 ## Recent Commit Timeline
 | date_utc | commit | areas | summary | key_files |
 |---|---|---|---|---|
+| `2026-06-24 15:58` | `635cd67a` | `simmer_clob` | chore: refresh deps + fix time-dependent test rot | `pytest.ini`, `requirements-dev.txt`, `requirements.txt`, `tests/test_btc15m_lag_observe.py`, +1 |
+| `2026-03-17 22:18` | `d0c8ce89` | `docs_llm,strategy_register,task_automation,weather_pipeline` | feat: Implement the BTC 5m panic strategy, including observation, evaluation, and reconci... | `configs/bot_supervisor.btc5m_panic.observe.json`, `configs/bot_supervisor.btc5m_panic_down.observe.json`, `docs/llm/CANON.md`, `docs/llm/IMPLEMENTATION_LEDGER.md`, +29 |
 | `2026-03-07 17:50` | `9df5d32f` | `docs_llm` | docs: refresh implementation ledger | `docs/llm/IMPLEMENTATION_LEDGER.md` |
 | `2026-03-07 17:50` | `1d7db082` | `docs_llm,no_longshot,security_or_ops,strategy_register,task_automation` | feat: harden no-longshot KPI sourcing and ops health guards | `docs/llm/CANON.md`, `docs/llm/INTERFACES.md`, `docs/llm/PROFIT_STAGE_PROMPTS.md`, `docs/llm/STATE.md`, +7 |
 | `2026-03-07 17:49` | `b277ab06` | `simmer_clob,task_automation` | feat: add fade staged-check pipeline and checkpoint tooling | `scripts/capture_fade_checkpoint_baseline.py`, `scripts/fade_monitor_dashboard.py`, `scripts/install_fade_regime_staged_checks_task.ps1`, `scripts/judge_fade_longonly_checkpoint.py`, +8 |
@@ -81,55 +83,17 @@
 | `2026-02-17 14:46` | `1dc49806` | `simmer_clob` | Enforce event-only Discord notifications | `docs/CLOB_MM.md`, `docs/SIMMER_PINGPONG.md` |
 | `2026-02-17 14:41` | `34298381` | `simmer_clob` | Limit Discord notifications to event-driven signals | `scripts/polymarket_clob_arb_realtime.py`, `scripts/polymarket_clob_mm.py`, `scripts/simmer_pingpong_mm.py` |
 | `2026-02-17 14:21` | `82f44078` | `misc` | Update architecture docs and set terminal cwd | `.vscode/settings.json`, `docs/ARCHITECTURE.md` |
-| `2026-02-15 15:35` | `5fda37c7` | `simmer_clob` | Log SIMMER_API_KEY source and hourly summary | `scripts/simmer_pingpong_mm.py` |
-| `2026-02-15 15:28` | `e836cc39` | `simmer_clob` | Timestamp Simmer fatal logs | `scripts/simmer_pingpong_mm.py` |
-| `2026-02-15 15:15` | `117d7cd1` | `simmer_clob` | Document scheduled task reuse fallback | `docs/SIMMER_PINGPONG.md` |
-| `2026-02-15 14:47` | `51143607` | `security_or_ops,simmer_clob` | Harden Discord webhook handling | `scripts/polymarket_clob_arb_realtime.py`, `scripts/polymarket_clob_mm.py`, `scripts/report_clob_mm_observation.py`, `scripts/report_clob_observation.py`, +2 |
-| `2026-02-15 14:39` | `7187b123` | `simmer_clob` | Add Simmer observation report | `docs/INTERFACES.md`, `scripts/report_simmer_observation.py` |
-| `2026-02-15 14:28` | `83ac6d3e` | `security_or_ops,simmer_clob,task_automation` | Initial commit | `.gitignore`, `AGENTS.md`, `README.md`, `docs/ARCHITECTURE.md`, +18 |
+| `2026-02-15 15:35` | `5fda37c7` | `security_or_ops,simmer_clob,task_automation` | Log SIMMER_API_KEY source and hourly summary | `.gitignore`, `AGENTS.md`, `README.md`, `docs/ARCHITECTURE.md`, +19 |
 
 ## Working Tree (Uncommitted)
 | status | path |
 |---|---|
-| `M` | `docs/llm/CANON.md` |
-| `M` | `docs/llm/IMPLEMENTATION_LEDGER.md` |
-| `M` | `docs/llm/INTERFACES.md` |
-| `M` | `docs/llm/STATE.md` |
 | `M` | `docs/llm/STRATEGY.md` |
-| `M` | `scripts/polymarket_btc5m_lag_observe.py` |
-| `M` | `scripts/polymarket_btc5m_panic_observe.py` |
 | `M` | `scripts/render_strategy_register_snapshot.py` |
-| `M` | `scripts/run_weather_mimic_pipeline_daily.ps1` |
-| `M` | `scripts/run_weather_top30_readiness_daily.ps1` |
-| `M` | `tests/test_render_strategy_register_snapshot.py` |
-| `??` | `configs/bot_supervisor.btc5m_panic.observe.json` |
-| `??` | `configs/bot_supervisor.btc5m_panic_down.observe.json` |
-| `??` | `scripts/judge_btc5m_panic_downonly_trial.py` |
-| `??` | `scripts/lib/btc5m_eval_helpers.py` |
-| `??` | `scripts/polymarket_btc15m_lag_observe.py` |
-| `??` | `scripts/polymarket_btc5m_panic_live.py` |
-| `??` | `scripts/record_weather_mimic_realized_daily.py` |
-| `??` | `scripts/report_btc5m_panic_reconcile.py` |
-| `??` | `scripts/report_btc5m_strategy_eval.py` |
-| `??` | `scripts/run_btc5m_panic_observe_supervisor.ps1` |
-| `??` | `scripts/run_pending_profit_accelerator.py` |
-| `??` | `tests/test_btc15m_lag_observe.py` |
-| `??` | `tests/test_btc5m_eval_helpers.py` |
-| `??` | `tests/test_btc5m_lag_observe.py` |
-| `??` | `tests/test_btc5m_panic_live.py` |
-| `??` | `tests/test_btc5m_panic_observe.py` |
-| `??` | `tests/test_btc5m_panic_reconcile.py` |
-| `??` | `tests/test_judge_btc5m_panic_downonly_trial.py` |
-| `??` | `tests/test_record_weather_mimic_realized_daily.py` |
-| `??` | `tests/test_report_btc5m_strategy_eval.py` |
-| `??` | `tests/test_run_btc5m_panic_observe_supervisor_ps1.py` |
-| `??` | `tests/test_run_pending_profit_accelerator.py` |
 
 ## Link-Intake Session Artifacts
 | date | session | topic | md_files | overview | path |
 |---|---|---|---:|---|---|
-| `2026-02-21` | `2026-02-21_autogen-smoketest` | autogen-smoketest | 0 | no | `docs/knowledge/link-intake/sessions/2026-02-21_autogen-smoketest` |
-| `2026-02-21` | `2026-02-21_autogen-smoketest2` | autogen-smoketest2 | 0 | no | `docs/knowledge/link-intake/sessions/2026-02-21_autogen-smoketest2` |
 | `2026-02-21` | `2026-02-21_polymarket-5links` | polymarket-5links | 12 | yes | `docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links` |
 | `2026-02-21` | `2026-02-21_polymarket-5links-auto` | polymarket-5links-auto | 6 | yes | `docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto` |
 | `2026-02-21` | `2026-02-21_polymarket-5links-auto-v5` | polymarket-5links-auto-v5 | 7 | yes | `docs/knowledge/link-intake/sessions/2026-02-21_polymarket-5links-auto-v5` |
