@@ -19,6 +19,8 @@ import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
+
+from lib.runtime_common import backup_corrupt_file, replace_with_retry
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -226,7 +228,15 @@ def load_state(path: Path) -> RuntimeState:
             halted=bool(raw.get("halted") or False),
             halt_reason=str(raw.get("halt_reason") or ""),
         )
-    except Exception:
+    except Exception as exc:
+        # Existing-but-corrupt state: preserve for forensics instead of silently
+        # zeroing accumulated success dates / failure counters.
+        bak = backup_corrupt_file(path)
+        print(
+            f"[weather_daily_daemon] WARNING: corrupt state {path} ({exc}); "
+            f"preserved={bak}; starting from fresh state",
+            file=sys.stderr,
+        )
         return RuntimeState()
 
 
@@ -234,7 +244,7 @@ def save_state(path: Path, state: RuntimeState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(asdict(state), ensure_ascii=True, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    replace_with_retry(tmp, path)
 
 
 def _kill_proc_tree(proc: subprocess.Popen) -> None:

@@ -54,6 +54,57 @@ def parse_iso_or_epoch_to_ms(value) -> Optional[int]:
     return None
 
 
+def is_windows_sharing_error(exc: BaseException) -> bool:
+    """True for transient Windows file-sharing/permission errors on replace()."""
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        winerr = int(getattr(exc, "winerror", 0) or 0)
+        if winerr in (5, 32):
+            return True
+    return False
+
+
+def replace_with_retry(tmp: Path, path: Path, retries: int = 10) -> None:
+    """os.replace with retry on transient Windows sharing conflicts (AV, readers)."""
+    delay = 0.01
+    for i in range(max(1, int(retries))):
+        try:
+            Path(tmp).replace(path)
+            return
+        except Exception as exc:
+            if (not is_windows_sharing_error(exc)) or i >= int(retries) - 1:
+                raise
+            time.sleep(delay)
+            delay = min(0.2, delay * 2.0)
+
+
+def write_json_atomic(path: Path, payload: Any, *, indent: int = 2) -> None:
+    """Atomic JSON write: temp file + replace-with-retry (Windows-safe)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=True, indent=indent), encoding="utf-8")
+    replace_with_retry(tmp, path)
+
+
+def backup_corrupt_file(path: Path) -> Optional[Path]:
+    """Preserve an existing-but-unparseable file as <name>.corrupt for forensics.
+
+    Returns the backup path on success. Used so a daemon never silently zeroes
+    accumulated state on a corrupt read (it self-heals but leaves evidence).
+    """
+    path = Path(path)
+    if not path.exists():
+        return None
+    bak = path.with_suffix(path.suffix + ".corrupt")
+    try:
+        bak.write_bytes(path.read_bytes())
+        return bak
+    except Exception:
+        return None
+
+
 def env_str(name: str) -> str:
     return str(os.environ.get(name, "") or "").strip()
 

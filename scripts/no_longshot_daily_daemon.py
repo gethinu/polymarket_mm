@@ -21,6 +21,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
+from lib.runtime_common import backup_corrupt_file, replace_with_retry
+
 
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SCRIPT_PATH = str(Path("scripts") / "run_no_longshot_daily_report.ps1")
@@ -224,7 +226,15 @@ def load_state(path: Path) -> RuntimeState:
             last_realized_exit_code=raw.get("last_realized_exit_code"),
             realized_consecutive_failures=int(raw.get("realized_consecutive_failures") or 0),
         )
-    except Exception:
+    except Exception as exc:
+        # Existing-but-corrupt state: preserve for forensics instead of silently
+        # zeroing accumulated last_success_date / failure counters.
+        bak = backup_corrupt_file(path)
+        print(
+            f"[no_longshot_daily_daemon] WARNING: corrupt state {path} ({exc}); "
+            f"preserved={bak}; starting from fresh state",
+            file=sys.stderr,
+        )
         return RuntimeState()
 
 
@@ -232,7 +242,7 @@ def save_state(path: Path, state: RuntimeState) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(json.dumps(asdict(state), ensure_ascii=True, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    replace_with_retry(tmp, path)
 
 
 def _kill_proc_tree(proc: subprocess.Popen) -> None:
