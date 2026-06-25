@@ -13,7 +13,7 @@ param(
   [int]$UncorrelatedMinRealizedDaysForCorrelation = 7,
   [string]$GateAlarmStateJson = "logs/strategy_gate_alarm_state.json",
   [string]$GateAlarmLogFile = "logs/strategy_gate_alarm.log",
-  [string]$NoLongshotPracticalDecisionDate = "2026-03-02",
+  [string]$NoLongshotPracticalDecisionDate = "",
   [int]$NoLongshotPracticalSlideDays = 3,
   [int]$NoLongshotPracticalMinResolvedTrades = 30,
   [string]$SimmerAbDecisionJson = "logs/simmer-ab-decision-latest.json",

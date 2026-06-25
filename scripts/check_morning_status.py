@@ -312,8 +312,12 @@ def main() -> int:
     )
     p.add_argument(
         "--no-longshot-practical-decision-date",
-        default="2026-03-02",
-        help="Initial practical judgment date for no_longshot resolved-trade gate (YYYY-MM-DD).",
+        default="",
+        help=(
+            "Initial practical judgment date for no_longshot resolved-trade gate "
+            "(YYYY-MM-DD). Empty (default) lets the gate alarm anchor a fresh window "
+            "relative to today instead of a hardcoded calendar date that rots."
+        ),
     )
     p.add_argument(
         "--no-longshot-practical-slide-days",
@@ -426,13 +430,16 @@ def main() -> int:
                 str(args.gate_alarm_log_file),
                 "--strategy-id",
                 str(args.strategy_id),
-                "--no-longshot-practical-decision-date",
-                str(args.no_longshot_practical_decision_date),
                 "--no-longshot-practical-slide-days",
                 str(max(1, int(args.no_longshot_practical_slide_days))),
                 "--no-longshot-practical-min-resolved-trades",
                 str(max(1, int(args.no_longshot_practical_min_resolved_trades))),
             ]
+            # Only forward an explicit decision date; empty => let the gate alarm
+            # anchor a fresh today-relative window (avoids the rotted hardcoded date).
+            practical_date = str(args.no_longshot_practical_decision_date or "").strip()
+            if practical_date:
+                alarm_cmd.extend(["--no-longshot-practical-decision-date", practical_date])
             if args.discord_gate_alarm:
                 alarm_cmd.append("--discord")
                 discord_webhook_env = str(args.discord_webhook_env or "").strip()
