@@ -4,8 +4,24 @@ import asyncio
 from types import SimpleNamespace
 
 import lib.clob_arb_execution as exec_mod
-from lib.clob_arb_execution import can_execute_candidate, estimate_simmer_total_amount, extract_order_ids
+from lib.clob_arb_execution import (
+    can_execute_candidate,
+    estimate_simmer_total_amount,
+    extract_order_ids,
+    trade_matches_order_ids,
+)
 from lib.clob_arb_models import Candidate, EventBasket, Leg, RuntimeState
+
+
+def test_trade_matches_order_ids_taker_and_maker():
+    ids = {"o1", "o2"}
+    assert trade_matches_order_ids({"taker_order_id": "o1"}, ids) is True
+    assert trade_matches_order_ids({"maker_orders": [{"order_id": "o2"}]}, ids) is True
+    # a foreign trade on the same token must NOT match our orders
+    assert trade_matches_order_ids({"taker_order_id": "other", "id": "trade99"}, ids) is False
+    # the trade's own id is not an order id
+    assert trade_matches_order_ids({"id": "o1"}, ids) is False
+    assert trade_matches_order_ids({"taker_order_id": "o1"}, set()) is False
 
 
 def _candidate(shares_per_leg: float = 2.0) -> Candidate:
@@ -144,7 +160,9 @@ def test_maybe_execute_candidate_live_success_clob_updates_state(monkeypatch):
 
     assert state.executions_today == 1
     assert state.consecutive_failures == 0
-    assert state.notional_today == 1.11
+    # notional accrues capital deployed (basket_cost=1.2), consistent with the gate's
+    # reservation -- not the slippage-inflated exec-cost estimate (1.11).
+    assert state.notional_today == 1.2
     assert basket.last_exec_ts == 123.0
     assert state_saves == ["saved"]
     assert any("ENTRY (clob)" in m for m in notices)
