@@ -108,8 +108,13 @@ def _apply_env_overrides(args, cli_tokens: Sequence[str], default_espn_paths: Se
     execute = _env_bool("CLOBBOT_EXECUTE")
     if execute is True and not args.execute:
         args.execute = True
-        if not args.confirm_live:
-            args.confirm_live = "YES"
+    # Never auto-synthesize the live confirmation token. Require it explicitly via
+    # --confirm-live YES or CLOBBOT_CONFIRM_LIVE=YES, so a stray CLOBBOT_EXECUTE env
+    # var cannot put real money live without an auditable, deliberate confirmation.
+    if not args.confirm_live:
+        confirm_env = _env_str("CLOBBOT_CONFIRM_LIVE")
+        if confirm_env:
+            args.confirm_live = confirm_env
 
     allow_best_only = _env_bool("CLOBBOT_ALLOW_BEST_ONLY")
     if allow_best_only is True and not getattr(args, "allow_best_only", False):

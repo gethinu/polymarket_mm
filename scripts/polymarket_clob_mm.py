@@ -121,7 +121,12 @@ def _apply_env_overrides(args):
     Apply CLOBMM_* environment variables onto argparse args.
     """
     prefix = "CLOBMM_"
+    # execute / confirm_live are NOT mapped via the generic loop: live enablement
+    # must stay explicit and auditable, never riding a generic typed override.
+    skip = {"execute", "confirm_live"}
     for k, v in vars(args).items():
+        if k in skip:
+            continue
         env_name = prefix + k.upper()
         if isinstance(v, bool):
             b = _env_bool(env_name)
@@ -139,6 +144,12 @@ def _apply_env_overrides(args):
             s = _env_str(env_name)
             if s:
                 setattr(args, k, s)
+    # Explicit, two-factor env live-enable (both required; confirm never auto-filled).
+    if _env_bool(prefix + "EXECUTE") is True and not args.execute:
+        args.execute = True
+    confirm_env = _env_str(prefix + "CONFIRM_LIVE")
+    if confirm_env and not args.confirm_live:
+        args.confirm_live = confirm_env
     return args
 
 
