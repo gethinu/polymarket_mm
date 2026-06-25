@@ -46,6 +46,82 @@ def test_load_no_longshot_fallback_without_builder(monkeypatch):
     assert out["monthly_return_now_source"] == "snapshot_src"
 
 
+def test_load_no_longshot_does_not_fall_back_to_all_time_count(monkeypatch):
+    # H5: missing rolling-30d field must NOT fall back to lifetime resolved_positions.
+    snapshot = {
+        "no_longshot_status": {
+            "resolved_positions": 50,
+            "monthly_return_now_all_text": "+3.00%",
+        }
+    }
+    monkeypatch.setattr(mod, "_NO_LONGSHOT_KPI_BUILDER", None)
+    out = mod.load_no_longshot(snapshot)
+    assert out["rolling_30d_resolved_trades"] == 0
+
+
+def test_load_no_longshot_gate_ratio_uses_all_population(monkeypatch):
+    # C1/C2: gate ratio must come from the all-population figure, not the
+    # cherry-picked new-condition headline.
+    snapshot = {
+        "no_longshot_status": {
+            "rolling_30d_resolved_trades": 30,
+            "monthly_return_now_text": "+9.89%",
+            "monthly_return_now_source": "realized_rolling_30d_new_condition",
+            "monthly_return_now_all_text": "-14.82%",
+        }
+    }
+    monkeypatch.setattr(mod, "_NO_LONGSHOT_KPI_BUILDER", None)
+    out = mod.load_no_longshot(snapshot)
+    assert out["gate_monthly_return_ratio"] is not None
+    assert abs(out["gate_monthly_return_ratio"] - (-0.1482)) < 1e-9
+
+
+def test_capital_gate_core_eligible_when_profitable():
+    gate, reason = mod.capital_gate_core(
+        decision_3stage="READY_FINAL",
+        resolved_trades=30,
+        min_resolved_trades=30,
+        monthly_return_ratio=0.0989,
+        min_monthly_return_ratio=0.0,
+    )
+    assert gate == "ELIGIBLE_REVIEW"
+
+
+def test_capital_gate_core_holds_on_nonpositive_return():
+    # The previously-dangerous case: counts met but the strategy is losing money.
+    gate, reason = mod.capital_gate_core(
+        decision_3stage="READY_FINAL",
+        resolved_trades=30,
+        min_resolved_trades=30,
+        monthly_return_ratio=-0.1482,
+        min_monthly_return_ratio=0.0,
+    )
+    assert gate == "HOLD"
+    assert "monthly_return_all" in reason
+
+
+def test_capital_gate_core_holds_when_return_unavailable():
+    gate, reason = mod.capital_gate_core(
+        decision_3stage="READY_FINAL",
+        resolved_trades=30,
+        min_resolved_trades=30,
+        monthly_return_ratio=None,
+    )
+    assert gate == "HOLD"
+    assert "unavailable" in reason
+
+
+def test_capital_gate_core_holds_before_ready_final():
+    gate, reason = mod.capital_gate_core(
+        decision_3stage="PENDING_TENTATIVE",
+        resolved_trades=30,
+        min_resolved_trades=30,
+        monthly_return_ratio=0.50,
+    )
+    assert gate == "HOLD"
+    assert "strategy_stage" in reason
+
+
 def test_evaluate_no_longshot_practical_gate_threshold_reached():
     out = mod.evaluate_no_longshot_practical_gate(
         today_local=dt.date(2026, 2, 27),

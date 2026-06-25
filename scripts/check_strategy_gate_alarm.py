@@ -25,6 +25,9 @@ except Exception:
 
 DEFAULT_STRATEGY_ID = "weather_clob_arb_buckets_observe"
 DEFAULT_MIN_RESOLVED_TRADES = 30
+# Capital gate requires the all-population monthly return to exceed this ratio
+# (0.0 == "must be strictly positive"). Profitability is a HARD gate input, not display.
+DEFAULT_MIN_MONTHLY_RETURN_RATIO = 0.0
 # Empty default => anchor a fresh judgment window to (today + window days) at run time.
 # A hardcoded calendar date silently rots when the project sits idle (it did: the old
 # "2026-03-02" default went 100+ days overdue). Pass --no-longshot-practical-decision-date
@@ -149,6 +152,16 @@ def parse_args() -> argparse.Namespace:
         help="Minimum rolling-30d resolved trades required for capital gate ELIGIBLE_REVIEW.",
     )
     p.add_argument(
+        "--min-monthly-return-ratio",
+        type=float,
+        default=DEFAULT_MIN_MONTHLY_RETURN_RATIO,
+        help=(
+            "Minimum all-population rolling-30d monthly return (ratio, e.g. 0.0 == "
+            "strictly positive) required for capital gate ELIGIBLE_REVIEW. The gate "
+            "uses the all-population figure, never the new-condition subset."
+        ),
+    )
+    p.add_argument(
         "--no-longshot-practical-decision-date",
         default=DEFAULT_NO_LONGSHOT_PRACTICAL_DECISION_DATE,
         help=(
@@ -199,6 +212,23 @@ def _as_int(v: object, default: int = 0) -> int:
         return default
 
 
+def _parse_percent_ratio(text: object) -> Optional[float]:
+    """Parse a percent string like '+9.89%' to a ratio 0.0989. None if not numeric."""
+    s = str(text or "").strip()
+    if not s:
+        return None
+    s = s.replace("%", "").replace("+", "").strip()
+    if not s or s.lower() in ("n/a", "na", "none", "-"):
+        return None
+    try:
+        v = float(s)
+    except (TypeError, ValueError):
+        return None
+    if v != v or v in (float("inf"), float("-inf")):
+        return None
+    return v / 100.0
+
+
 def _as_iso_date(raw: object) -> Optional[dt.date]:
     s = str(raw or "").strip()
     if not s:
@@ -219,25 +249,53 @@ def load_no_longshot(snapshot: dict) -> dict:
                 kpi = raw
         except Exception:
             kpi = {}
+    # Trailing-30d distinct resolved trades only. Do NOT fall back to the all-time
+    # `resolved_positions` count: that would let lifetime trades clear the 30d gate.
     resolved = _as_int(
         kpi.get("rolling_30d_resolved_trades"),
-        _as_int(no_longshot.get("rolling_30d_resolved_trades"), _as_int(no_longshot.get("resolved_positions"), 0)),
+        _as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
     )
     monthly_now = str(kpi.get("monthly_return_now_text") or no_longshot.get("monthly_return_now_text") or "").strip()
     monthly_src = str(kpi.get("monthly_return_now_source") or no_longshot.get("monthly_return_now_source") or "").strip()
+    monthly_all = str(
+        kpi.get("monthly_return_now_all_text") or no_longshot.get("monthly_return_now_all_text") or ""
+    ).strip()
+    # The capital gate must use the HONEST all-population return, never the
+    # post-hoc "new-condition" subset (which can be tuned to look profitable).
+    gate_ratio = _parse_percent_ratio(monthly_all)
+    if gate_ratio is None and "new_condition" not in monthly_src.lower():
+        # No subset override is in effect, so the headline figure is itself all-population.
+        gate_ratio = _parse_percent_ratio(monthly_now)
     return {
         "rolling_30d_resolved_trades": resolved,
         "monthly_return_now_text": monthly_now,
         "monthly_return_now_source": monthly_src,
+        "monthly_return_now_all_text": monthly_all,
+        "gate_monthly_return_ratio": gate_ratio,
     }
 
 
-def capital_gate_core(decision_3stage: str, resolved_trades: int, min_resolved_trades: int) -> tuple[str, str]:
+def capital_gate_core(
+    decision_3stage: str,
+    resolved_trades: int,
+    min_resolved_trades: int,
+    monthly_return_ratio: Optional[float] = None,
+    min_monthly_return_ratio: float = DEFAULT_MIN_MONTHLY_RETURN_RATIO,
+) -> tuple[str, str]:
     stage = str(decision_3stage or "").strip() or "UNKNOWN"
     if stage != "READY_FINAL":
         return "HOLD", f"strategy_stage={stage}"
     if int(resolved_trades) < int(max(1, min_resolved_trades)):
         return "HOLD", f"rolling_30d_resolved_trades={int(resolved_trades)}<{int(max(1, min_resolved_trades))}"
+    # Profitability is a HARD gate input: a money-losing strategy must NOT pass on
+    # day/trade counts alone. Gate on the all-population return; missing => HOLD.
+    if monthly_return_ratio is None:
+        return "HOLD", "all_population_monthly_return_unavailable"
+    if float(monthly_return_ratio) <= float(min_monthly_return_ratio):
+        return "HOLD", (
+            f"monthly_return_all={float(monthly_return_ratio) * 100.0:.2f}%"
+            f"<=min={float(min_monthly_return_ratio) * 100.0:.2f}%"
+        )
     return "ELIGIBLE_REVIEW", "all core checks passed"
 
 
@@ -343,10 +401,14 @@ def main() -> int:
         print(f"[strategy-gate-alarm] gate data missing in snapshot: {snapshot_path}")
         return 2
     min_resolved = max(1, int(args.capital_min_resolved_trades))
+    min_monthly_ratio = float(args.min_monthly_return_ratio)
+    gate_monthly_ratio = no_longshot.get("gate_monthly_return_ratio")
     current_capital_gate, current_capital_reason = capital_gate_core(
         decision_3stage=current_decision,
         resolved_trades=_as_int(no_longshot.get("rolling_30d_resolved_trades"), 0),
         min_resolved_trades=min_resolved,
+        monthly_return_ratio=gate_monthly_ratio,
+        min_monthly_return_ratio=min_monthly_ratio,
     )
 
     prev = read_json(state_path) or {}
