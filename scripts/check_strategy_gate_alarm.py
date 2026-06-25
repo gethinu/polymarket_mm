@@ -25,7 +25,12 @@ except Exception:
 
 DEFAULT_STRATEGY_ID = "weather_clob_arb_buckets_observe"
 DEFAULT_MIN_RESOLVED_TRADES = 30
-DEFAULT_NO_LONGSHOT_PRACTICAL_DECISION_DATE = "2026-03-02"
+# Empty default => anchor a fresh judgment window to (today + window days) at run time.
+# A hardcoded calendar date silently rots when the project sits idle (it did: the old
+# "2026-03-02" default went 100+ days overdue). Pass --no-longshot-practical-decision-date
+# to override explicitly.
+DEFAULT_NO_LONGSHOT_PRACTICAL_DECISION_DATE = ""
+DEFAULT_NO_LONGSHOT_PRACTICAL_WINDOW_DAYS = 35
 DEFAULT_NO_LONGSHOT_PRACTICAL_SLIDE_DAYS = 3
 DEFAULT_NO_LONGSHOT_PRACTICAL_MIN_RESOLVED_TRADES = 30
 
@@ -146,7 +151,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--no-longshot-practical-decision-date",
         default=DEFAULT_NO_LONGSHOT_PRACTICAL_DECISION_DATE,
-        help="Initial practical judgment date for no_longshot resolved-trade threshold tracking (YYYY-MM-DD).",
+        help=(
+            "Initial practical judgment date for no_longshot resolved-trade threshold "
+            "tracking (YYYY-MM-DD). Empty (default) anchors a fresh window at "
+            f"today + {DEFAULT_NO_LONGSHOT_PRACTICAL_WINDOW_DAYS} days."
+        ),
     )
     p.add_argument(
         "--no-longshot-practical-slide-days",
@@ -307,6 +316,14 @@ def main() -> int:
     practical_decision_date = str(args.no_longshot_practical_decision_date or "").strip()
     practical_slide_days = max(1, int(args.no_longshot_practical_slide_days))
     practical_min_resolved = max(1, int(args.no_longshot_practical_min_resolved_trades))
+    if not practical_decision_date:
+        # Re-baseline behaviour: start a fresh judgment window relative to today instead
+        # of a fixed calendar date. Persisted state (active_decision_date) still wins on
+        # subsequent runs, so clear the alarm state file to truly restart the gate.
+        practical_decision_date = (
+            dt.datetime.now().date()
+            + dt.timedelta(days=DEFAULT_NO_LONGSHOT_PRACTICAL_WINDOW_DAYS)
+        ).isoformat()
     if _as_iso_date(practical_decision_date) is None:
         print(
             "[strategy-gate-alarm] invalid --no-longshot-practical-decision-date "
