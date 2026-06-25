@@ -254,11 +254,27 @@ def ingest_entries(positions: List[dict], screen_rows: List[dict], top_n: int, p
     return added
 
 
+def market_is_settled(market: dict) -> bool:
+    """True only when the market has actually settled on-chain/resolution, not just
+    when its price momentarily touches an extreme (avoids early/false realized wins)."""
+    if not isinstance(market, dict):
+        return False
+    if bool(market.get("closed")):
+        return True
+    status = str(market.get("umaResolutionStatus") or "").strip().lower()
+    if status in ("resolved", "settled"):
+        return True
+    if bool(market.get("resolved")):
+        return True
+    return False
+
+
 def try_resolve_position(
     pos: dict,
     timeout_sec: float,
     win_threshold: float,
     lose_threshold: float,
+    require_settled: bool = True,
 ) -> bool:
     if str(pos.get("status") or "") != "open":
         return False
@@ -274,6 +290,12 @@ def try_resolve_position(
         return False
     yes_price, no_price = yn
 
+    # Require ACTUAL settlement, not just a price proxy, before booking realized PnL.
+    # The price proxy alone marks favorites as wins before they settle, biasing the
+    # rolling-30d KPI optimistic (and that KPI now gates real money).
+    if require_settled and not market_is_settled(market):
+        return False
+
     no_wins = no_price >= win_threshold and yes_price <= lose_threshold
     yes_wins = yes_price >= win_threshold and no_price <= lose_threshold
     if not no_wins and not yes_wins:
@@ -287,7 +309,9 @@ def try_resolve_position(
     ret = (pnl / cost_basis) if cost_basis > 1e-12 else None
 
     now = now_utc()
-    resolved_day = day_from_iso(str(market.get("endDate") or "")) or now.date().isoformat()
+    # Stamp the resolution to the OBSERVATION day, never the market endDate: back-dating
+    # into an already-reported window retro-changes closed rolling-30d figures.
+    resolved_day = now.date().isoformat()
 
     pos["status"] = "resolved"
     pos["resolved_utc"] = now.isoformat()
@@ -429,6 +453,19 @@ def main() -> int:
     p.add_argument("--per-trade-cost", type=float, default=0.002, help="Per-trade cost used in paper realized calc")
     p.add_argument("--win-threshold", type=float, default=0.99, help="Resolution threshold for settled winner price")
     p.add_argument("--lose-threshold", type=float, default=0.01, help="Resolution threshold for settled loser price")
+    p.add_argument(
+        "--require-settled",
+        dest="require_settled",
+        action="store_true",
+        default=True,
+        help="Only book realized PnL when the market is actually settled (default).",
+    )
+    p.add_argument(
+        "--no-require-settled",
+        dest="require_settled",
+        action="store_false",
+        help="Diagnostic only: resolve on the price proxy without a settlement flag (biases optimistic).",
+    )
     p.add_argument("--api-timeout-sec", type=float, default=20.0, help="Gamma market fetch timeout seconds")
     p.add_argument("--pretty", action="store_true")
     args = p.parse_args()
@@ -467,6 +504,7 @@ def main() -> int:
             timeout_sec=max(1.0, float(args.api_timeout_sec)),
             win_threshold=max(0.5, min(1.0, float(args.win_threshold))),
             lose_threshold=max(0.0, min(0.5, float(args.lose_threshold))),
+            require_settled=bool(args.require_settled),
         ):
             resolved_now += 1
 
