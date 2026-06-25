@@ -359,10 +359,12 @@ def _update_inventory_from_fill(s: TokenMMState, fill: TradeFill) -> None:
         s.inventory_shares += fill.size
         s.avg_cost = (total_cost / s.inventory_shares) if s.inventory_shares > 0 else 0.0
     else:
-        # SELL
+        # SELL: realize PnL ONLY on shares we actually hold a cost basis for.
+        # Booking pnl on the full fill.size when it exceeds tracked inventory (e.g.
+        # after a restart with unknown starting inventory) invents profit/loss on
+        # phantom shares and corrupts realized_pnl / the daily-loss guard.
         size = min(fill.size, s.inventory_shares) if s.inventory_shares > 0 else 0.0
-        # If we can't reconcile (unknown starting inventory), still compute pnl vs avg_cost.
-        pnl = (fill.price - s.avg_cost) * fill.size
+        pnl = (fill.price - s.avg_cost) * size
         s.realized_pnl += pnl
         s.inventory_shares = max(0.0, s.inventory_shares - size)
         if s.inventory_shares <= 0:
