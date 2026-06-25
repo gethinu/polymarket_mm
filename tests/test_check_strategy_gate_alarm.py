@@ -46,6 +46,16 @@ def test_load_no_longshot_fallback_without_builder(monkeypatch):
     assert out["monthly_return_now_source"] == "snapshot_src"
 
 
+def test_snapshot_age_hours_parses_and_flags_old():
+    fresh = mod.now_utc().isoformat()
+    assert mod._snapshot_age_hours({"generated_utc": fresh}) is not None
+    assert mod._snapshot_age_hours({"generated_utc": fresh}) < 1.0
+    old = (mod.now_utc() - dt.timedelta(hours=100)).isoformat()
+    assert mod._snapshot_age_hours({"generated_utc": old}) > 99.0
+    assert mod._snapshot_age_hours({}) is None
+    assert mod._snapshot_age_hours({"generated_utc": "garbage"}) is None
+
+
 def test_load_no_longshot_does_not_fall_back_to_all_time_count(monkeypatch):
     # H5: missing rolling-30d field must NOT fall back to lifetime resolved_positions.
     snapshot = {

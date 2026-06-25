@@ -28,6 +28,9 @@ DEFAULT_MIN_RESOLVED_TRADES = 30
 # Capital gate requires the all-population monthly return to exceed this ratio
 # (0.0 == "must be strictly positive"). Profitability is a HARD gate input, not display.
 DEFAULT_MIN_MONTHLY_RETURN_RATIO = 0.0
+# If the register snapshot is older than this, the capital gate is forced HOLD so
+# dead automation cannot read as a valid GO. 0 disables the check.
+DEFAULT_SNAPSHOT_MAX_STALE_HOURS = 48.0
 # Empty default => anchor a fresh judgment window to (today + window days) at run time.
 # A hardcoded calendar date silently rots when the project sits idle (it did: the old
 # "2026-03-02" default went 100+ days overdue). Pass --no-longshot-practical-decision-date
@@ -152,6 +155,16 @@ def parse_args() -> argparse.Namespace:
         help="Minimum rolling-30d resolved trades required for capital gate ELIGIBLE_REVIEW.",
     )
     p.add_argument(
+        "--snapshot-max-stale-hours",
+        type=float,
+        default=DEFAULT_SNAPSHOT_MAX_STALE_HOURS,
+        help=(
+            "If the register snapshot generated_utc is older than this many hours, "
+            "force the capital gate to HOLD (dead automation must not read as GO). "
+            "0 disables the check."
+        ),
+    )
+    p.add_argument(
         "--min-monthly-return-ratio",
         type=float,
         default=DEFAULT_MIN_MONTHLY_RETURN_RATIO,
@@ -210,6 +223,20 @@ def _as_int(v: object, default: int = 0) -> int:
         return int(v)  # type: ignore[arg-type]
     except Exception:
         return default
+
+
+def _snapshot_age_hours(snapshot: dict) -> Optional[float]:
+    """Hours since the snapshot's generated_utc. None if absent/unparseable."""
+    gen = str((snapshot or {}).get("generated_utc") or "").strip()
+    if not gen:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(gen.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return (now_utc() - d).total_seconds() / 3600.0
 
 
 def _parse_percent_ratio(text: object) -> Optional[float]:
@@ -410,6 +437,16 @@ def main() -> int:
         monthly_return_ratio=gate_monthly_ratio,
         min_monthly_return_ratio=min_monthly_ratio,
     )
+    # Stale-data guard: a snapshot from dead automation must not authorize go-live.
+    snapshot_age_hours = _snapshot_age_hours(snapshot)
+    max_stale_hours = float(args.snapshot_max_stale_hours)
+    if max_stale_hours > 0 and current_capital_gate == "ELIGIBLE_REVIEW":
+        if snapshot_age_hours is None:
+            current_capital_gate = "HOLD"
+            current_capital_reason = "snapshot_generated_utc_missing"
+        elif snapshot_age_hours > max_stale_hours:
+            current_capital_gate = "HOLD"
+            current_capital_reason = f"snapshot_stale={snapshot_age_hours:.1f}h>{max_stale_hours:.1f}h"
 
     prev = read_json(state_path) or {}
     prev_decision = str(prev.get("last_decision_3stage") or "").strip()
