@@ -972,10 +972,12 @@ def main() -> int:
             continue
 
         notional = float(plan["notional_usd"])
-        if float(args.max_daily_notional_usd) > 0.0 and (daily_notional + notional) > float(args.max_daily_notional_usd):
+        daily_cap = float(args.max_daily_notional_usd)
+        # A non-positive cap means "no new entries", never "unlimited" (money-cap footgun).
+        if daily_cap <= 0.0 or (daily_notional + notional) > daily_cap:
             logger.info(
                 f"skip market={market_id} side={side}: daily_notional cap "
-                f"{daily_notional:.4f}+{notional:.4f}>{float(args.max_daily_notional_usd):.4f}"
+                f"{daily_notional:.4f}+{notional:.4f}>{daily_cap:.4f}"
             )
             skipped += 1
             continue

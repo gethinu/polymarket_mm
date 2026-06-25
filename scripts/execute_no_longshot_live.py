@@ -453,7 +453,9 @@ def main() -> int:
 
         size = round(float(args.order_size_shares), 2)
         notional = float(limit_price) * float(size)
-        if float(args.max_daily_notional_usd) > 0 and (daily_notional + notional) > float(args.max_daily_notional_usd):
+        daily_cap = float(args.max_daily_notional_usd)
+        # A non-positive cap means "no new entries", never "unlimited".
+        if daily_cap <= 0 or (daily_notional + notional) > daily_cap:
             logger.info(
                 f"skip market={market_id}: daily_notional cap "
                 f"{daily_notional:.4f}+{notional:.4f}>{float(args.max_daily_notional_usd):.4f}"

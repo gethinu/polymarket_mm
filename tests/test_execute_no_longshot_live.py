@@ -131,6 +131,30 @@ def test_main_live_blocks_on_daily_notional_cap(monkeypatch, tmp_path: Path):
     assert state.get("positions") == []
 
 
+def test_main_live_zero_daily_cap_blocks_all(monkeypatch, tmp_path: Path):
+    # A non-positive daily-notional cap must mean "no new entries", never unlimited.
+    screen_csv = tmp_path / "logs" / "screen.csv"
+    _write_screen_csv(
+        screen_csv,
+        [{"market_id": "mkt1", "question": "Will X?", "yes_price": "0.18",
+          "no_price": "0.82", "liquidity_num": "10000", "volume_24h": "5000",
+          "net_yield_per_day": "0.001"}],
+    )
+    client = _FakeClient({"orderID": "oid123", "success": True})
+    monkeypatch.setattr(mod, "fetch_market_by_id", lambda mid, timeout_sec: _fake_market(mid))
+    monkeypatch.setattr(mod, "build_clob_client_from_env", lambda **kw: client)
+    monkeypatch.setattr(
+        mod.sys, "argv",
+        _live_argv(tmp_path, screen_csv, max_new_orders=1, order_size_shares=5,
+                   max_daily_notional_usd=0, max_entry_no_price=0.84),
+    )
+    assert mod.main() == 0
+    assert len(client.posted) == 0
+    state = mod.read_json(tmp_path / "logs" / "state.json", {})
+    assert int(state["last_run"]["submitted"]) == 0
+    assert state.get("positions") == []
+
+
 def test_main_live_rejected_order_records_no_position(monkeypatch, tmp_path: Path):
     screen_csv = tmp_path / "logs" / "screen.csv"
     _write_screen_csv(
