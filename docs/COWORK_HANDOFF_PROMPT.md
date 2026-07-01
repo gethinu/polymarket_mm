@@ -26,7 +26,7 @@ Authoritative runbook: docs/RESTART_RUNBOOK.md. Follow it. Operating rules:
    - confirm PM_PRIVATE_KEY_DPAPI_FILE and PM_FUNDER are set (presence only — do
      NOT print values).
    - python -m pip install -r requirements-dev.txt ; python -m pytest -q
-     (expect ~344 passed, 7 skipped; report if not).
+     (expect ~369 passed, 7 skipped; report if not).
 3. Reset the gate so the re-baseline is real:
    - Remove-Item logs/strategy_gate_alarm_state.json -ErrorAction SilentlyContinue
    - Remove-Item logs/no_longshot_realized_daily.jsonl, logs/no_longshot_forward_positions.json -ErrorAction SilentlyContinue
@@ -44,7 +44,9 @@ Authoritative runbook: docs/RESTART_RUNBOOK.md. Follow it. Operating rules:
    errors. Then STOP and wait. Do not escalate to live.
 
 Re-baseline / gate facts: the prior 21/30 progress and the 2026-03-02 judgment
-date are VOID. The gate (rolling_30d_resolved_trades >= 30, new-condition basis)
+date are VOID. The capital gate now requires ALL of: decision_3stage READY_FINAL
+(>=30 observed days), rolling_30d_resolved_trades >= 30, a positive all-population
+monthly return (not the new-condition subset), and a fresh snapshot (<48h). It
 restarts from 0 on fresh data. Live escalation only after the gate is freshly met
 AND I confirm in a later session. Expectation: on the $60 bankroll this is
 ~$1–5/month gross paper even if the edge holds — the point now is to prove the
