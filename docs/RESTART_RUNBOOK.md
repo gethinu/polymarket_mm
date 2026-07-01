@@ -161,10 +161,22 @@ IMPORTANT — make the re-baseline reset real on your machine:
   Remove-Item logs/strategy_gate_alarm_state.json -ErrorAction SilentlyContinue
   # also clear the old no-longshot realized tracker so rolling-30d restarts clean:
   Remove-Item logs/no_longshot_realized_daily.jsonl, logs/no_longshot_forward_positions.json -ErrorAction SilentlyContinue
+  # AND clear the derived KPI snapshots — render_strategy_register_snapshot.py's
+  # load_no_longshot_status() re-reads these three, so if they survive the reset the
+  # snapshot re-derives the OLD rolling_30d/monthly_return (e.g. 74 trades / -6.21%)
+  # and the gate reads THRESHOLD_MET instead of PENDING (verified 2026-07-01):
+  Remove-Item logs/no_longshot_daily_summary.txt, logs/no_longshot_realized_latest.json, logs/no_longshot_monthly_return_latest.txt -ErrorAction SilentlyContinue
   ```
 
+  Tip: instead of `Remove-Item`, moving these files to a timestamped backup dir
+  (e.g. `logs/rebaseline_reset_backup_<date>/`) has the same effect and is
+  reversible — the repo already carries prior `*.pre_*_reset_*` backups of the
+  same files, so this backup-not-delete convention is the established pattern.
+
 After that, the gate should report `PENDING` / `remaining_days≈35` /
-`rolling_30d_resolved_trades=0`, counting up from fresh data.
+`rolling_30d_resolved_trades=0`, counting up from fresh data. (On a fresh git
+checkout these six files do not exist, so only a machine that carried the old
+runtime artifacts needs the extra three.)
 
 ## 7. Capital → return projection (paper, pre-cost)
 

@@ -320,6 +320,21 @@ function Run-PythonSafe([string[]]$CmdArgs, [string]$Label) {
   }
 }
 
+function Run-PythonTolerant([string[]]$CmdArgs, [string]$Label, [int[]]$TolerateCodes) {
+  # Like Run-Python (fatal on error) but tolerates specific benign exit codes
+  # (e.g. walkforward exit=2 "no usable rows" on a fresh/empty snapshot), so the
+  # downstream realized-tracking + gate accumulation is not blocked by an empty
+  # analytic refresh. Non-tolerated nonzero codes still throw.
+  & $PythonExe @CmdArgs
+  $code = $LASTEXITCODE
+  if ($code -eq 0) { return $true }
+  if ($TolerateCodes -contains $code) {
+    Log "$Label tolerated: exit=$code (no usable rows / benign data condition; continuing)"
+    return $false
+  }
+  throw "python failed with code ${code}: $($CmdArgs -join ' ')"
+}
+
 function Remove-FileSafe([string]$Path) {
   try {
     if (Test-Path $Path) {
@@ -702,7 +717,7 @@ Log "start yes=[$YesMin,$YesMax] cost=$PerTradeCost min_hist=$MinHistoryPoints s
 
 if (-not $SkipRefresh) {
   Log "refresh samples start"
-  Run-Python @(
+  Run-PythonTolerant @(
     $tool, "walkforward",
     "--sampling-mode", "stratified",
     "--offset-step", "5000",
@@ -722,7 +737,7 @@ if (-not $SkipRefresh) {
     "--min-test-n", "$AllMinTestN",
     "--out-samples-csv", $sampleCsv,
     "--out-summary-json", (Join-Path $logDir "no_longshot_daily_refresh_tmp.json")
-  )
+  ) "refresh samples" @(2)
   Log "refresh samples done -> $sampleCsv"
 } else {
   Log "skip refresh"
@@ -733,7 +748,7 @@ if (-not (Test-Path $sampleCsv)) {
 }
 
 Log "walkforward allfolds"
-Run-Python @(
+Run-PythonTolerant @(
   $tool, "walkforward",
   "--input-csv", $sampleCsv,
   "--yes-min", "$YesMin",
@@ -751,10 +766,10 @@ Run-Python @(
   "--min-train-n", "$AllMinTrainN",
   "--min-test-n", "$AllMinTestN",
   "--out-summary-json", $oosAllJson
-)
+) "walkforward allfolds" @(2)
 
 Log "walkforward guarded"
-Run-Python @(
+Run-PythonTolerant @(
   $tool, "walkforward",
   "--input-csv", $sampleCsv,
   "--yes-min", "$YesMin",
@@ -772,7 +787,7 @@ Run-Python @(
   "--min-train-n", "$GuardMinTrainN",
   "--min-test-n", "$GuardMinTestN",
   "--out-summary-json", $oosGuardJson
-)
+) "walkforward guarded" @(2)
 
 Log "screen active candidates"
 Run-Python @(
