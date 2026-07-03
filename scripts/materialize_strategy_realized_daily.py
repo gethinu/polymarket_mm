@@ -20,7 +20,16 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 
-DEFAULT_STRATEGY_ID = "weather_clob_arb_buckets_observe"
+# NOTE: default is a neutral ACCOUNT id, not a strategy edge id. The source of this
+# script (logs/clob_arb_realized_daily.jsonl) is a whole-account Simmer balance
+# snapshot; attributing its day-over-day delta to a specific strategy such as
+# weather basket-arb produced a phantom "+53.72%" headline. Per-strategy realized
+# PnL must come from that strategy's own settlement recorder (e.g.
+# scripts/record_weather_arb_realized_daily.py), not this account snapshot.
+DEFAULT_STRATEGY_ID = "simmer_account_observe"
+
+# Strategy ids that must never be sourced from an account-level cumulative snapshot.
+_ACCOUNT_SNAPSHOT_FORBIDDEN_SUBSTRINGS = ("weather", "clob_arb_buckets", "no_longshot", "event_driven", "eventpair")
 
 
 def now_utc() -> dt.datetime:
@@ -320,6 +329,15 @@ def main() -> int:
         help="Latest summary json (default logs/strategy_realized_latest.json)",
     )
     p.add_argument("--pretty", action="store_true", help="Pretty-print latest JSON")
+    p.add_argument(
+        "--allow-account-snapshot-attribution",
+        action="store_true",
+        help=(
+            "Override the safety guard that refuses to attribute an account-level "
+            "cumulative snapshot (e.g. the Simmer balance) to a specific strategy "
+            "edge id. Only use when you truly intend account-scoped attribution."
+        ),
+    )
     args = p.parse_args()
 
     strategy_id = str(args.strategy_id or "").strip()
@@ -346,6 +364,25 @@ def main() -> int:
     source_rows_by_day = _load_source_rows_by_day(source_path)
     source_rows_sorted = [source_rows_by_day[d] for d in sorted(source_rows_by_day.keys())]
     source_mode = _infer_series_mode(str(args.source_series_mode), source_path, source_rows_sorted)
+
+    # Guard against the phantom-attribution class of bug: an account-level
+    # cumulative snapshot (Simmer balance) must not be booked as a specific
+    # strategy's realized edge. This is exactly what produced the fake weather
+    # "+53.72%" (see docs / memory). Refuse unless explicitly overridden.
+    sid_low = strategy_id.lower()
+    if (
+        source_mode == "cumulative_snapshot"
+        and any(tok in sid_low for tok in _ACCOUNT_SNAPSHOT_FORBIDDEN_SUBSTRINGS)
+        and not bool(args.allow_account_snapshot_attribution)
+    ):
+        raise SystemExit(
+            "refusing to attribute an account-level cumulative snapshot "
+            f"({source_path.name}) to strategy '{strategy_id}'. This is the phantom-"
+            "attribution bug that faked weather '+53.72%'. Use the strategy's own "
+            "settlement recorder (e.g. scripts/record_weather_arb_realized_daily.py) "
+            "for real per-strategy realized PnL, or pass "
+            "--allow-account-snapshot-attribution if you truly mean account scope."
+        )
 
     new_rows = _build_strategy_rows(
         source_rows_by_day=source_rows_by_day,

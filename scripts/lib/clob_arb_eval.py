@@ -327,6 +327,12 @@ def compute_candidate_metrics_row(
         "event_slug": basket.event_slug,
         "sports_market_type": str(getattr(basket, "sports_market_type", "") or ""),
         "leg_count": len(candidate.leg_costs),
+        # Settlement metadata so an observe-only paper recorder can resolve the
+        # basket via Gamma (by conditionId) without needing live order state.
+        "leg_condition_ids": [
+            _leg_condition_id(leg) for leg, _c in candidate.leg_costs if _leg_condition_id(leg)
+        ],
+        "end_ms": (int(basket.end_ms) if getattr(basket, "end_ms", None) else None),
         "shares_per_leg": float(candidate.shares_per_leg),
         "payout_after_fee": float(candidate.payout_after_fee),
         "fixed_cost": float(candidate.fixed_cost),

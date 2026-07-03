@@ -25,6 +25,13 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 
 DEFAULT_REALIZED_STRATEGY_ID = "weather_clob_arb_buckets_observe"
+
+# Map strategy edge ids to their dedicated settlement ledgers (real per-strategy
+# realized PnL). Anything not listed here uses the shared strategy ledger only and
+# NEVER the account-level Simmer snapshot.
+_DEDICATED_REALIZED_LEDGERS = {
+    "weather_clob_arb_buckets_observe": "weather_arb_paper_realized_daily.jsonl",
+}
 LEGACY_READINESS_PROFILE_ALIASES = {
     # Consolidated into weather_7acct_auto; keep older *_latest.json compatible.
     "weather_visual_test": "weather_7acct_auto",
@@ -1109,22 +1116,30 @@ def _collect_day_rows(path: Path, strategy_id: str) -> Dict[str, dict]:
 
 def load_realized_daily_series(strategy_id: str = DEFAULT_REALIZED_STRATEGY_ID) -> dict:
     strategy_file = logs_dir() / "strategy_realized_pnl_daily.jsonl"
-    clob_file = logs_dir() / "clob_arb_realized_daily.jsonl"
     target_strategy_id = str(strategy_id or "").strip() or DEFAULT_REALIZED_STRATEGY_ID
-    allow_clob_fallback = target_strategy_id == DEFAULT_REALIZED_STRATEGY_ID
-    source_artifact_exists = strategy_file.exists() or (allow_clob_fallback and clob_file.exists())
+
+    # Per-strategy dedicated settlement ledgers (real edge PnL from the strategy's
+    # own recorder). These take precedence over the shared strategy ledger.
+    dedicated_name = _DEDICATED_REALIZED_LEDGERS.get(target_strategy_id)
+    dedicated_file = (logs_dir() / dedicated_name) if dedicated_name else None
+
+    source_artifact_exists = strategy_file.exists() or bool(dedicated_file and dedicated_file.exists())
 
     candidates: List[Path] = []
     preferred_rows: Dict[str, dict] = {}
-    if strategy_file.exists():
+    # 1) dedicated per-strategy settlement ledger wins.
+    if dedicated_file and dedicated_file.exists():
+        preferred_rows = _collect_day_rows(dedicated_file, strategy_id=target_strategy_id)
+        if preferred_rows:
+            candidates = [dedicated_file]
+    # 2) else strategy-scoped rows in the shared ledger.
+    if not preferred_rows and strategy_file.exists():
         preferred_rows = _collect_day_rows(strategy_file, strategy_id=target_strategy_id)
-    if preferred_rows:
-        candidates = [strategy_file]
-    else:
-        if allow_clob_fallback and clob_file.exists():
-            candidates.append(clob_file)
-        if strategy_file.exists():
-            candidates.append(strategy_file)
+        if preferred_rows:
+            candidates = [strategy_file]
+    # NOTE: intentionally NO fallback to the Simmer account snapshot
+    # (logs/clob_arb_realized_daily.jsonl). Attributing that whole-account balance
+    # delta to a strategy edge id produced the phantom weather "+53.72%".
 
     per_day: Dict[str, float] = {}
     used_files: List[str] = []
