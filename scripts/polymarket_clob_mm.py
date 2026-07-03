@@ -265,6 +265,11 @@ class TokenMMState:
     last_logged_buy_price: float = 0.0
     last_logged_sell_price: float = 0.0
     seen_trade_ids: List[str] = field(default_factory=list)
+    # Paper fill simulation (observe-only): maker fills modelled when the live book
+    # crosses a resting sim quote. These fields are ignored in live mode.
+    paper_buy_fills: int = 0
+    paper_sell_fills: int = 0
+    paper_fill_notional: float = 0.0
 
 
 @dataclass
@@ -409,6 +414,118 @@ def _maybe_append_metrics(metrics_file: str, payload: dict) -> None:
     # JSONL append.
     with p.open("a", encoding="utf-8", newline="\n") as f:
         f.write(json.dumps(payload, ensure_ascii=True) + "\n")
+
+
+def _simulate_paper_fills(
+    s: TokenMMState,
+    best_bid: Optional[float],
+    best_ask: Optional[float],
+    max_inventory_shares: float,
+) -> List[TradeFill]:
+    """
+    Maker fill model for observe/paper mode.
+
+    A resting maker BUY at price P is filled only when the market comes to us:
+    a taker willing to sell at <= P (i.e. best_ask <= P) crosses our bid. Because we
+    post strictly inside the spread, this requires the book to move DOWN into our
+    quote -- capturing the real adverse-selection cost of market-making, not a
+    risk-free spread. The symmetric rule holds for a resting SELL (best_bid >= P).
+
+    Fills execute at OUR limit price (maker fill), size = our resting quote size
+    (SELL capped at held inventory). Returns the synthetic fills applied.
+    """
+    fills: List[TradeFill] = []
+    eps = 1e-9
+    now = now_ts()
+
+    # BUY side: only if we are not already over the inventory cap.
+    cap = float(max_inventory_shares or 0.0)
+    room = (cap <= 0.0) or (s.inventory_shares < cap)
+    if (
+        room
+        and s.buy_ts > 0.0
+        and s.buy_price > 0.0
+        and s.buy_size > 0.0
+        and best_ask is not None
+        and best_ask <= s.buy_price + eps
+    ):
+        f = TradeFill(
+            trade_id=f"paper-{s.token_id}-B-{int(now * 1000.0)}",
+            ts=now,
+            created_at_raw=0,
+            token_id=s.token_id,
+            side="BUY",
+            price=float(s.buy_price),
+            size=float(s.buy_size),
+        )
+        _update_inventory_from_fill(s, f)
+        s.paper_buy_fills += 1
+        s.paper_fill_notional += float(s.buy_price) * float(s.buy_size)
+        # Consume the resting quote so it cannot re-fill until re-quoted.
+        s.buy_ts = 0.0
+        s.buy_price = 0.0
+        s.buy_size = 0.0
+        fills.append(f)
+
+    # SELL side: only meaningful while we hold inventory.
+    if (
+        s.sell_ts > 0.0
+        and s.sell_price > 0.0
+        and s.sell_size > 0.0
+        and s.inventory_shares > 0.0
+        and best_bid is not None
+        and best_bid >= s.sell_price - eps
+    ):
+        size = min(float(s.sell_size), float(s.inventory_shares))
+        if size > 0.0:
+            f = TradeFill(
+                trade_id=f"paper-{s.token_id}-S-{int(now * 1000.0)}",
+                ts=now,
+                created_at_raw=0,
+                token_id=s.token_id,
+                side="SELL",
+                price=float(s.sell_price),
+                size=float(size),
+            )
+            _update_inventory_from_fill(s, f)
+            s.paper_sell_fills += 1
+            s.paper_fill_notional += float(s.sell_price) * float(size)
+            s.sell_ts = 0.0
+            s.sell_price = 0.0
+            s.sell_size = 0.0
+            fills.append(f)
+
+    return fills
+
+
+def _upsert_daily_paper_realized(path: str, day: str, payload: dict) -> None:
+    """Upsert one row per local day into a dedicated MM paper realized ledger.
+
+    Kept strictly separate from the Simmer account snapshot
+    (logs/clob_arb_realized_daily.jsonl) so MM paper PnL is never conflated with
+    another strategy's account balance.
+    """
+    if not path or not day:
+        return
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    rows: Dict[str, dict] = {}
+    if p.exists():
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                d = str(obj.get("day") or "").strip()
+                if d:
+                    rows[d] = obj
+        except Exception:
+            rows = {}
+    rows[day] = payload
+    with p.open("w", encoding="utf-8", newline="\n") as f:
+        for d in sorted(rows.keys()):
+            f.write(json.dumps(rows[d], ensure_ascii=True) + "\n")
 
 
 async def run(args) -> int:
@@ -612,6 +729,18 @@ async def run(args) -> int:
                 s.last_best_bid = float(best_bid or 0.0)
                 s.last_best_ask = float(best_ask or 0.0)
 
+                # Paper fill simulation (observe-only). Never runs in live mode:
+                # live fills come from the exchange via get_trades().
+                if (not args.execute) and bool(args.paper_fills):
+                    sim_fills = _simulate_paper_fills(
+                        s, best_bid, best_ask, float(args.max_inventory_shares or 0.0)
+                    )
+                    for f in sim_fills:
+                        logger.info(
+                            f"[{iso_now()}] paperfill {s.label[:60]} | {f.side} {f.size:g} @ {f.price:.3f} | "
+                            f"inv={s.inventory_shares:g} avg={s.avg_cost:.3f} pnl={s.realized_pnl:+.4f}"
+                        )
+
                 half = max(tick, float(args.spread_cents or 2.0) / 200.0)  # cents -> dollars, half spread
                 desired_buy = _q_down(max(0.001, mid - half), tick)
                 desired_sell = _q_up(min(0.999, mid + half), tick)
@@ -763,6 +892,10 @@ async def run(args) -> int:
                     bb = float(s.last_best_bid or 0.0)
                     ba = float(s.last_best_ask or 0.0)
                     spr = (ba - bb) if (bb > 0 and ba > 0) else 0.0
+                    mid = float(s.last_mid or 0.0)
+                    inv = float(s.inventory_shares or 0.0)
+                    avg = float(s.avg_cost or 0.0)
+                    unreal = (mid - avg) * inv if (inv > 0 and mid > 0 and avg > 0) else 0.0
                     _maybe_append_metrics(
                         args.metrics_file,
                         {
@@ -772,9 +905,44 @@ async def run(args) -> int:
                             "label": s.label[:180],
                             "best_bid": bb,
                             "best_ask": ba,
-                            "mid": float(s.last_mid or 0.0),
+                            "mid": mid,
                             "spread": float(spr),
-                            "inv": float(s.inventory_shares or 0.0),
+                            "inv": inv,
+                            "avg_cost": avg,
+                            "realized_pnl": float(s.realized_pnl or 0.0),
+                            "unrealized_pnl": float(unreal),
+                            "paper_buy_fills": int(s.paper_buy_fills or 0),
+                            "paper_sell_fills": int(s.paper_sell_fills or 0),
+                        },
+                    )
+
+                # Dedicated MM paper realized daily snapshot (observe/paper only).
+                # Cumulative-since-inception realized + mark-to-mid unrealized, upserted
+                # by local day. A downstream reporter can delta this into per-day PnL.
+                if (not args.execute) and bool(args.paper_fills) and args.paper_realized_jsonl:
+                    realized_total = float(sum(float(x.realized_pnl or 0.0) for x in state.token_states.values()))
+                    total_pnl = _compute_total_pnl(state)
+                    unreal_total = float(total_pnl - realized_total)
+                    buy_fills = int(sum(int(x.paper_buy_fills or 0) for x in state.token_states.values()))
+                    sell_fills = int(sum(int(x.paper_sell_fills or 0) for x in state.token_states.values()))
+                    inv_total = float(sum(float(x.inventory_shares or 0.0) for x in state.token_states.values()))
+                    _upsert_daily_paper_realized(
+                        args.paper_realized_jsonl,
+                        local_day_key(),
+                        {
+                            "day": local_day_key(),
+                            "captured_utc": iso_now(),
+                            "strategy_id": "clob_mm_paper_observe",
+                            "observe_only": True,
+                            "source": "polymarket_clob_mm.py",
+                            "series_mode": "cumulative_snapshot",
+                            "realized_pnl_usd": round(realized_total, 6),
+                            "unrealized_pnl_usd": round(unreal_total, 6),
+                            "total_pnl_usd": round(float(total_pnl), 6),
+                            "paper_buy_fills": buy_fills,
+                            "paper_sell_fills": sell_fills,
+                            "inventory_shares": round(inv_total, 4),
+                            "tokens": len(state.token_states),
                         },
                     )
 
@@ -871,6 +1039,9 @@ def parse_args():
 
     p.add_argument("--metrics-file", default=DEFAULT_METRICS_FILE, help="JSONL metrics file path (separate from event log)")
     p.add_argument("--metrics-sample-sec", type=float, default=60.0, help="Write one metrics sample per token every N sec (0=disabled)")
+
+    p.add_argument("--paper-fills", action="store_true", help="Observe-only: simulate maker fills when the live book crosses a resting sim quote (produces paper realized PnL). Ignored under --execute.")
+    p.add_argument("--paper-realized-jsonl", default=str(_SCRIPT_DIR.parent / "logs" / "clob_mm_paper_realized_daily.jsonl"), help="Observe-only: dedicated daily MM paper realized ledger (kept separate from the Simmer account snapshot)")
 
     p.add_argument("--log-quotes", action="store_true", help="Log quote updates (debug). Default is quiet.")
     p.add_argument("--quote-log-min-change-ticks", type=float, default=1.0, help="When --log-quotes, only log if price changed by >= N ticks")
