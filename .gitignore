@@ -10,6 +10,7 @@ venv/
 # Local config / secrets
 .env
 .env.*
+!.env.example
 secrets/
 *.dpapi.txt
 

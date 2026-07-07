@@ -1059,6 +1059,21 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    # Load local .env (if any) into os.environ before arg/env resolution so the
+    # CLOB client reliably picks up PM_PRIVATE_KEY / PM_FUNDER. Secret-safe:
+    # prints KEY NAMES ONLY, never values; refuses execute/confirm-live keys.
+    try:
+        from lib.env_bootstrap import load_dotenv_files
+
+        _envload = load_dotenv_files()
+        if _envload.get("files"):
+            print(
+                f"[env] loaded .env files={_envload['files']} "
+                f"set={_envload['set_names']} alias={_envload['alias_applied']} "
+                f"refused_execute_keys={_envload['denied_execute_keys']}"
+            )
+    except Exception:
+        pass
     args = parse_args()
     try:
         raise SystemExit(asyncio.run(run(args)))

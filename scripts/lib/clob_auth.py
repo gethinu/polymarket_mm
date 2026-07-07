@@ -21,6 +21,15 @@ def build_clob_client_from_env(
     except ImportError as e:
         raise RuntimeError("py-clob-client is not installed. Run: python -m pip install py-clob-client") from e
 
+    # Ensure a local .env (if present) is loaded into os.environ before we read
+    # PM_* auth vars. Non-override + secret-safe; never enables live execution.
+    try:
+        from lib.env_bootstrap import load_dotenv_files
+
+        load_dotenv_files()
+    except Exception:
+        pass
+
     private_key = (env_str("PM_PRIVATE_KEY") or "").strip()
     if not private_key:
         private_key = load_plaintext_secret_file(env_str("PM_PRIVATE_KEY_FILE"), mode="hex_private_key")
