@@ -39,6 +39,7 @@ from typing import Dict, List, Optional
 import record_weather_mimic_realized_daily as mimic
 
 GAMMA_API_BASE = "https://gamma-api.polymarket.com"
+CLOB_API_BASE = "https://clob.polymarket.com"
 DEFAULT_STRATEGY_ID = "weather_clob_arb_buckets_observe"
 DEFAULT_METRICS_FILE = "clob-arb-monitor-metrics.jsonl"
 DEFAULT_ASSUMED_BANKROLL_USD = 60.0
@@ -151,16 +152,72 @@ def ingest_exec_candidates(
     return added
 
 
-def fetch_market_by_condition(cond_id: str, timeout_sec: float) -> Optional[dict]:
+def fetch_market_clob(cond_id: str, timeout_sec: float) -> Optional[dict]:
+    """Look up a market by conditionId via the CLOB API.
+
+    Unlike Gamma's ``/markets?condition_ids=`` filter (which returns an empty
+    list once a daily-weather market resolves), CLOB ``/markets/{cid}`` keeps
+    returning resolved markets with ``closed=true`` and ``tokens[].winner``.
+    This is the endpoint that actually lets a settled basket book its PnL.
+    """
     cid = as_str(cond_id)
     if not cid:
         return None
+    data = mimic.fetch_json(f"{CLOB_API_BASE}/markets/{cid}", timeout_sec=timeout_sec, retries=3)
+    if isinstance(data, dict) and as_str(data.get("condition_id")):
+        return data
+    return None
+
+
+def fetch_market_by_condition(cond_id: str, timeout_sec: float) -> Optional[dict]:
+    """Fetch a market by conditionId, CLOB first then Gamma fallback.
+
+    CLOB is primary because Gamma's condition_ids filter silently drops resolved
+    daily-weather markets, which left settled baskets stuck ``open`` and faked a
+    permanent realized=$0 (see module header / memory). Gamma remains a fallback
+    for any market CLOB does not serve.
+    """
+    cid = as_str(cond_id)
+    if not cid:
+        return None
+    m = fetch_market_clob(cid, timeout_sec=timeout_sec)
+    if m is not None:
+        return m
     data = mimic.fetch_json(
         f"{GAMMA_API_BASE}/markets?condition_ids={cid}", timeout_sec=timeout_sec, retries=3
     )
     if isinstance(data, list) and data and isinstance(data[0], dict):
         return data[0]
     return None
+
+
+def leg_closed_and_yes_price(market: dict):
+    """Return ``(closed, yes_price)`` for a leg market in CLOB or Gamma shape.
+
+    CLOB shape carries a ``tokens`` list with per-outcome ``winner``/``price``;
+    a confirmed ``winner=true`` YES token is treated as yes_price 1.0. Gamma
+    shape is parsed via the mimic ``outcomes``/``outcomePrices`` extractor.
+    """
+    toks = market.get("tokens")
+    if isinstance(toks, list) and toks:
+        closed = bool(market.get("closed"))
+        yes_price: Optional[float] = None
+        for t in toks:
+            if not isinstance(t, dict):
+                continue
+            if as_str(t.get("outcome")).lower() == "yes":
+                if t.get("winner") is True:
+                    yes_price = 1.0
+                else:
+                    p = as_float(t.get("price"), None)
+                    if p is not None:
+                        yes_price = float(p)
+        return closed, yes_price
+    closed = bool(market.get("closed"))
+    yn = mimic.extract_yes_no_prices(market)
+    if yn is not None:
+        return closed, float(yn[0])
+    return closed, None
 
 
 def try_resolve_basket(pos: dict, timeout_sec: float, win_threshold: float) -> bool:
@@ -183,14 +240,12 @@ def try_resolve_basket(pos: dict, timeout_sec: float, win_threshold: float) -> b
         if market is None:
             closed_all = False
             break
-        if not bool(market.get("closed")):
+        closed, yes_price = leg_closed_and_yes_price(market)
+        if not closed:
             closed_all = False
             break
-        yn = mimic.extract_yes_no_prices(market)
-        if yn is not None:
-            yes_price, _no_price = yn
-            if yes_price >= win_threshold:
-                winners += 1
+        if yes_price is not None and yes_price >= win_threshold:
+            winners += 1
 
     if not closed_all:
         return False
